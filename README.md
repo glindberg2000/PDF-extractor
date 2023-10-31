@@ -26,7 +26,6 @@ pip install -r requirements.txt
 ## Usage
 To run the project, put your bank statements in the corresponding folder, navigate to the project directory and run the following command:
 
-# Replace 'script_name' with the actual script name
 python pdf_bofa_extract.py
 python pdf_chase_extract.py
 
