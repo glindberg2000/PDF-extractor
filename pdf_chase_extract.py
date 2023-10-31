@@ -1,7 +1,11 @@
 """PDF Data Extractor for Chase VISA Statements.
 
-This script serves as a starting point for handling Chase's specific format.
+This script serves as a starting point for handling Chase VISA statement format, 2023 version.
 It reads transaction data from PDF statements and exports it to Excel and CSV files.
+
+usage:
+python pdf_chase_extract.py
+
 """
 
 import os
@@ -10,11 +14,12 @@ import pandas as pd
 from PyPDF2 import PdfFileReader
 from datetime import datetime
 
+SOURCE_DIR = "SourceStatements/Chase"
+OUTPUT_PATH_CSV = "ConsolidatedReports/Chase_all.csv"
+OUTPUT_PATH_XLSX = "ConsolidatedReports/Chase_all.xlsx"
+
 # Initialize an empty DataFrame to store all the extracted data
 all_data = pd.DataFrame()
-
-# Directory path where all the PDF files are stored
-directory_path = "Chase"
 
 
 def clean_dates_enhanced(df):
@@ -97,13 +102,13 @@ def extract_chase_statements(pdf_path, statement_date):
 def main():
     """Main function to loop through all PDF files in a directory and extract data."""
     all_data = pd.DataFrame()
-    for filename in os.listdir(directory_path):
+    for filename in os.listdir(SOURCE_DIR):
         if filename.endswith(".pdf") and "statements" in filename:
             statement_date = filename.split("-")[0]
             statement_date = (
                 f"{statement_date[:4]}-{statement_date[4:6]}-{statement_date[6:8]}"
             )
-            pdf_path = os.path.join(directory_path, filename)
+            pdf_path = os.path.join(SOURCE_DIR, filename)
             print(f"Processing {pdf_path}...")
             df = extract_chase_statements(pdf_path, statement_date)
             all_data = pd.concat([all_data, df])
@@ -113,8 +118,8 @@ def main():
     all_data_sorted = all_data.sort_values(by="Date")
 
     # Save to Excel and CSV files
-    all_data_sorted.to_excel("transactions_Chase_all.xlsx", index=False)
-    all_data_sorted.to_csv("transactions_Chase_all.csv", index=False)
+    all_data_sorted.to_excel(OUTPUT_PATH_XLSX, index=False)
+    all_data_sorted.to_csv(OUTPUT_PATH_CSV, index=False)
 
 
 if __name__ == "__main__":

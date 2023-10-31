@@ -40,6 +40,16 @@ logs/
 *.seed
 
 # Directories to ignore
-Source_Statements/
-Output_Data/
+# Ignore everything in these directories
+ConsolidatedReports/*
+SourceStatements/*
+
+# Except for .gitkeep
+!ConsolidatedReports/.gitkeep
+!SourceStatements/.gitkeep
+!SourceStatements/BOA/.gitkeep
+!SourceStatements/Chase/.gitkeep
+
+
 .DS_Store
+BofA_extract_bak.py
