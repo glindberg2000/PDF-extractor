@@ -43,6 +43,7 @@ logs/
 # Ignore everything in these directories
 ConsolidatedReports/*
 SourceStatements/*
+backups/*
 
 # Except for .gitkeep
 !ConsolidatedReports/.gitkeep
@@ -52,4 +53,4 @@ SourceStatements/*
 
 
 .DS_Store
-BofA_extract_bak.py
+
