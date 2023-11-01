@@ -1,11 +1,11 @@
 # PDF Extractor for VISA Card Statements
 
 ## Description
-This project is designed to extract VISA card purchases from PDF statements provided by Bank of America and Chase. It then consolidates all transaction rows into Excel or CSV files for further processing.
+This project is designed to extract VISA card purchases from PDF statements provided by Bank of America and Chase as well as Amazon Invoices. It then consolidates all transaction rows into Excel or CSV files for further processing.
 
 ## Features
 - Extracts VISA card transactions from PDF statements for 2023 card statement formats.
-- Supports Bank of America and Chase VISA formats.
+- Supports Bank of America and Chase VISA formats and Amazon Invoices.
 - Outputs consolidated transaction data to Excel and CSV formats.
 
 ## Prerequisites
@@ -24,7 +24,7 @@ pip install -r requirements.txt
 
 
 ## Usage
-To run the project, put your VISA card and/or Amazon Invoice PDF statements in the corresponding folders, navigate to the project directory and run the following command(s):
+To run the project, put your VISA card and/or Amazon Invoice PDF statements in the corresponding folders. For Amazon Invoices click on Invoice details, then click on the print to pdf option on the top of the page to generate PDF for each invoice. Navigate to the project directory and run the following command(s):
 
 python pdf_bofa_extract.py
 python pdf_chase_extract.py
