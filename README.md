@@ -1,4 +1,4 @@
-# PDF Extractor for VISA Card Statements
+# PDF Extractor for VISA Card Statements and Amazon Invoices
 
 ## Description
 This project is designed to extract VISA card purchases from PDF statements provided by Bank of America and Chase as well as Amazon Invoices. It then consolidates all transaction rows into Excel or CSV files for further processing.
