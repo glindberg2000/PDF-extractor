@@ -16,8 +16,8 @@ import re
 import PyPDF2
 
 SOURCE_DIR = "SourceStatements/BofA"
-OUTPUT_PATH_CSV = "ConsolidatedReports/BOA_all.csv"
-OUTPUT_PATH_XLSX = "ConsolidatedReports/BOA_all.xlsx"
+OUTPUT_PATH_CSV = "ConsolidatedReports/BofA_all.csv"
+OUTPUT_PATH_XLSX = "ConsolidatedReports/BofA_all.xlsx"
 
 
 def append_year(row):
