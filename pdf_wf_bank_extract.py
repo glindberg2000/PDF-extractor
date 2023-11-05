@@ -1,3 +1,22 @@
+"""
+This script processes PDF bank statements from Wells Fargo and extracts transactions into a structured data format. It scans the provided PDFs, identifies and parses transaction information, and then exports this data to both CSV and XLSX formats for further analysis.
+
+The script is designed to handle multiple types of transaction entries, including those that span multiple lines, and to differentiate between deposits and withdrawals based on pattern recognition.
+
+Author: Gregory Lindberg
+Date: November 4, 2023
+
+Usage:
+    Ensure that all dependencies are installed and that the SOURCE_DIR variable is set to the directory containing the PDF statements. Run this script directly to process the files and generate the reports in the specified output paths.
+"""
+
+__author__ = "Gregory Lindberg"
+__version__ = "1.0"
+__license__ = "MIT"
+__description__ = (
+    "Process Wells Fargo bank statement PDFs and extract transaction data."
+)
+
 import re
 import pandas as pd
 from datetime import datetime
@@ -8,62 +27,23 @@ import fitz  # PyMuPDF
 import json
 import csv
 
-SOURCE_DIR = "SourceStatements/BOA_Bank"
-OUTPUT_PATH_CSV = "ConsolidatedReports/BofA_bank.csv"
-OUTPUT_PATH_XLSX = "ConsolidatedReports/Amazon_bank.xlsx"
-
-
-def analyze_line_for_transaction_type(line):
-    """
-    Classify the transaction as deposit or withdrawal based on the spacing pattern.
-    Assuming that a deposit will have 5 spaces until the EOL and withdrawals will have 3 spaces until EOL.
-
-    :param analysis: List of tuples with the structure (type, length)
-    :return: 'deposit' if it's likely a deposit, 'withdrawal' if it's likely a withdrawal
-    """
-
-    analysis = analyze_line_elements(line)
-
-    # This will hold the classification and trailing value
-    result = {"classification": "unknown"}
-
-    last_spaces = next(
-        (item for item in reversed(analysis) if item[0] == "spaces"), None
-    )
-    if last_spaces:
-        # Determine the classification based on the number of spaces
-        if last_spaces[1] == 5:
-            result["classification"] = "deposit"
-        elif last_spaces[1] == 3:
-            result["classification"] = "withdrawal"
-
-    return result
+SOURCE_DIR = "SourceStatements/WF_Bank"
+OUTPUT_PATH_CSV = "ConsolidatedReports/WF_Bank.csv"
+OUTPUT_PATH_XLSX = "ConsolidatedReports/WF_Bank.xlsx"
 
 
 def analyze_line_for_transaction_type_all(line):
     """
-    Classify the transaction as deposit or withdrawal based on the spacing pattern.
-    For no balance rows:
-    Deposit will have 5 spaces until the EOL and withdrawals will have 3 spaces until EOL:
+    Analyze a line of text and determine the transaction type based on pattern recognition.
 
-    Deposit = #SSSSSE
-    Withdrawal = #SSSE
+    Parameters:
+    line : str, the line of text to analyze
 
-    For single line rows with two monetary values:
-    Deposit will have Number | 2 spaces | Number | EOL
-    Withdrawal will have Number | 1 space | Number | EOL
-
-    Deposit = #SS#SE
-    Withdrawal = #S#SE
-
-    :param line: The transaction line from the bank statement.
-    :return: 'deposit' if it's likely a deposit, 'withdrawal' if it's likely a withdrawal
+    Returns:
+    str, the determined transaction type ('deposit', 'withdrawal', or 'unknown')
     """
     result = {}
     elements = analyze_line_elements(line)
-    print(line, "\n")
-    print(f"ELEMENTS: {elements}\n")
-    result["elements"] = elements
     test_for_group = line
     # Check for number of monetary values
     monetary_values = re.findall(r"\d{1,3}(?:,\d{3})*\.\d{2}", test_for_group)
@@ -74,10 +54,6 @@ def analyze_line_for_transaction_type_all(line):
     spaces_elements = [item for item in elements if item[0] == "spaces"]
     last_spaces = spaces_elements[-1]
     second_last_spaces = spaces_elements[-2]
-    # print(
-    #     f"\nLast_spaces: {spaces_elements[-1]} 2nd last spaces: {spaces_elements[-2]}\n"
-    # )
-
     if len(monetary_values) == 1:
         result["isMultiLine"] = True
         if last_spaces:
@@ -93,23 +69,34 @@ def analyze_line_for_transaction_type_all(line):
             result["classification"] = "deposit"
         elif second_last_spaces[1] == 1:
             result["classification"] = "withdrawal"
-    print(
-        f'Is MultiLine: {result["isMultiLine"]} \nClassification: {result["classification"]}\nDeposit = #SS#SE Withdrawal = #S#SE\n\n'
-    )
     return result
 
 
 def analyze_line_elements(line):
-    # Example usage
-    # lines = [
-    #     "1/4 Forisus_Metrcobk Cardtobank 220103 From Card to Bank Account 200.00 4,712.05",
-    #     "1/5 Transamerica Ins Inspayment 37L/A 6600026825 Gregory Lindberg 148.35 4,563.70",
-    #     # Add more lines as needed
-    # ]
+    """
+    Analyze the given line of text and categorize each segment as text, spaces, or numbers.
 
-    # for line in lines:
-    #     result = analyze_line_elements(line)
-    #     print(result)
+    This function uses a regular expression to identify different elements within a bank statement line.
+    It categorizes each element as 'text' for strings, 'spaces' for whitespace, and 'number' for numerical values
+    that represent transaction amounts. It adds an end-of-line character to the list of elements at the end.
+
+    Parameters
+    ----------
+    line : str
+        The line of text from a bank statement to be analyzed.
+
+    Returns
+    -------
+    list of tuples
+        A list of tuples where each tuple contains an element type ('text', 'spaces', 'number', or 'endoflinechar')
+        and the length of that element in the line.
+
+    Examples
+    --------
+    >>> line = "1/4 Forisus_Metrcobk Cardtobank 220103 From Card to Bank Account 200.00 4,712.05"
+    >>> analyze_line_elements(line)
+    [('text', 1), ('number', 1), ('text', 15), ('number', 6), ... , ('endoflinechar', 1)]
+    """
 
     elements = []
     # Define a regex pattern to identify text, spaces, and numbers
@@ -133,28 +120,87 @@ def analyze_line_elements(line):
     return elements
 
 
-def add_statement_date_and_file_path(df, pdf_path):
-    # Extract the base name without extension
-    base_name = os.path.basename(pdf_path).split(".")[0]
+def add_statement_date_and_file_path(transaction, pdf_path):
+    """
+    Enhance a transaction dictionary with the statement date and file path information.
 
-    # Assuming the date is at the beginning of the filename in MMDDYY format
+    This function extracts the date from the filename of a PDF bank statement, formats it, and then updates
+    the transaction dictionary with this statement date and the path of the PDF file. If the transaction dictionary
+    has a 'date' field with a datetime object, it strips the time part, leaving only the date.
+
+    Parameters
+    ----------
+    transaction : dict
+        The transaction dictionary to be updated.
+    pdf_path : str
+        The file path of the PDF bank statement.
+
+    Returns
+    -------
+    dict
+        The updated transaction dictionary with the 'Statement Date' and 'File Path' included.
+
+    Raises
+    ------
+    ValueError
+        If the date in the filename does not match the expected format MMDDYY.
+
+    Examples
+    --------
+    >>> transaction = {'date': datetime(2023, 1, 4), 'amount': 200.00}
+    >>> pdf_path = '/path/to/statement010423.pdf'
+    >>> add_statement_date_and_file_path(transaction, pdf_path)
+    {
+        'date': '2023-01-04',
+        'amount': 200.00,
+        'Statement Date': '2023-01-04',
+        'File Path': '/path/to/statement010423.pdf'
+    }
+    """
+
+    base_name = os.path.basename(pdf_path).split(".")[0]
     date_str = base_name[:6]
     try:
-        # Parse the date. Adjust the format if the actual filename date format is different.
         statement_date = datetime.strptime(date_str, "%m%d%y").date()
     except ValueError:
         raise ValueError(
             f"Date in filename {base_name} does not match expected format MMDDYY."
         )
 
-    # Add the statement date and file path columns
-    df["Statement Date"] = statement_date
-    df["File Path"] = pdf_path
+    # Add or update the statement date and file path in the transaction dictionary
+    transaction["Statement Date"] = statement_date.strftime("%Y-%m-%d")
+    transaction["File Path"] = pdf_path
+    # Remove the time part from the date if present
+    if isinstance(transaction.get("date"), datetime):
+        transaction["date"] = transaction["date"].date()
 
-    return df
+    return transaction
 
 
 def parse_transactions(text):
+    """
+    Parse the provided text from a bank statement and extract transactions.
+
+    This function splits the input text into lines and uses a regular expression to identify the start of a transaction by a date pattern. Each transaction is gathered into a block, which is then processed to extract detailed transaction data. Lines indicating 'Ending balance on' are ignored as they do not represent transaction entries.
+
+    Parameters
+    ----------
+    text : str
+        The complete text from a bank statement where transactions are separated by newline characters.
+
+    Returns
+    -------
+    list of dicts
+        A list of dictionaries, each representing a transaction with its extracted data.
+
+    Examples
+    --------
+    >>> text = "1/4 Grocery Store 50.00\n1/5 Online Payment Received 100.00\nEnding balance on 1/6"
+    >>> parse_transactions(text)
+    [{'Date': '1/4', 'Description': 'Grocery Store', 'Amount': 50.00},
+     {'Date': '1/5', 'Description': 'Online Payment Received', 'Amount': 100.00}]
+    """
+
     lines = text.split("\n")
     transactions = []
     current_transaction = []
@@ -176,193 +222,245 @@ def parse_transactions(text):
 
 
 def process_transaction_block(lines):
-    # Join the lines and use regex to extract the data
+    """
+    Process a block of text representing a single transaction and structure the data.
+
+    This function joins a list of lines representing a transaction into a single string and analyzes it to identify
+    monetary values and classify the transaction type. It then extracts the date, description, and amounts for deposits
+    or withdrawals, and formats this information into a dictionary. If a transaction spans multiple lines, it is
+    handled accordingly. The balance is extracted if present.
+
+    Parameters
+    ----------
+    lines : list of str
+        The list of lines from a bank statement that together represent a single transaction.
+
+    Returns
+    -------
+    dict
+        A dictionary with structured transaction data, including date, description, deposits, withdrawals,
+        and ending daily balance.
+
+    Examples
+    --------
+    >>> lines = ["1/4 Some Description - 50.00", " Ending Daily Balance 1,500.00"]
+    >>> process_transaction_block(lines)
+    {
+        'date': datetime.date(2022, 1, 4),
+        'description': 'Some Description',
+        'deposits': '0.00',
+        'withdrawals': '50.00',
+        'ending_daily_balance': '1,500.00'
+    }
+    """
+
     transaction_text = " ".join(lines)
-    test_for_group = transaction_text
-    # Check for number of monetary values
-    monetary_values = re.findall(r"\d{1,3}(?:,\d{3})*\.\d{2}", test_for_group)
-    transaction_analysis = {}
     transaction_analysis = analyze_line_for_transaction_type_all(transaction_text)
 
-    # Working version except for inline integers in the Description
-    pattern = re.compile(
-        r"(?P<date>\d{1,2}/\d{1,2})\s+"  # Date
-        r"(?:Check\s+(?P<check_number>\d+)\s+)?"  # Optional Check number
-        r"(?P<description>.+?)\s+"  # Description (non-greedy match)
-        r"(?P<deposits>-?\d{1,3}(?:,\d{3})*\.\d{2})?\s+"  # Optional Deposits (allowing negative)
-        r"(?P<withdrawals>-?\d{1,3}(?:,\d{3})*\.\d{2})?\s+"  # Optional Withdrawals (allowing negative)
-        r"(?P<balance>-?\d{1,3}(?:,\d{3})*\.\d{2})",  # Balance (allowing negative)
-        re.DOTALL,
-    )
-    # pattern = re.compile(
-    #     r"(?P<date>\d{1,2}/\d{1,2})\s+"  # Date with one or more spaces after
-    #     r"(?:Check\s+(?P<check_number>\d+)\s+)?"  # Optional Check number with spaces after
-    #     r"(?P<description>.*?)"  # Description (non-greedy match)
-    #     r"(?=\s+(?P<deposits>-?\d{1,3}(?:,\d{3})*\.\d{2})|\s+(?P<withdrawals>-?\d{1,3}(?:,\d{3})*\.\d{2})|\s+(?P<balance>-?\d{1,3}(?:,\d{3})*\.\d{2}))"  # Lookahead for deposits, withdrawals, or balance
-    # )
+    monetary_values = re.findall(r"-?\d{1,3}(?:,\d{3})*\.\d{2}", transaction_text)
+    if not monetary_values:
+        # Handle error: no monetary values found
+        return {}
 
-    match = pattern.search(transaction_text)
-
-    if match:
-        # Extract data from the match object
-        store_bal = match.group("balance")
-        date_str = match.group("date")
-        check_number = match.group("check_number") or ""
-        description = match.group("description").strip()
-        deposits = match.group("deposits") or "0.00"
-        withdrawals = match.group("withdrawals") or "0.00"
-        balance = match.group("balance") or "0.00"  # Set a default value if None
-
-        if transaction_analysis["isMultiLine"]:
-            if transaction_analysis["classification"] == "deposit":
-                deposits = store_bal
-            elif transaction_analysis["classification"] == "withdrawal":
-                withdrawals = store_bal
-
-        # Construct the transaction dictionary
-        transaction_dict = {
-            "date": datetime.strptime(date_str, "%m/%d").replace(
-                year=2022
-            ),  # Year is assumed
-            "check_number": check_number,
-            "description": description,
-            "deposits": deposits,
-            "withdrawals": withdrawals,
-            "ending_daily_balance": balance,
-        }
-        return transaction_dict
+    # Assume the last one or two monetary patterns are withdrawals/deposits and balance
+    if transaction_analysis["isMultiLine"]:
+        balance = None
+        transaction_amount = monetary_values[-1]
+        # Remove the last monetary value (the transaction amount) from the text
+        transaction_text = transaction_text.rsplit(transaction_amount, 1)[0]
     else:
-        # If the pattern did not match, log the transaction block for review
-        print(f"Could not parse transaction block: {' '.join(lines)}")
-        print(transaction_text)
-        print(f"ANALYSIS:{transaction_analysis}")
-        # print(f"{analyze_line_elements(transaction_text)} \n")
-        # Return an empty dictionary or a dictionary with specific keys and None values to avoid TypeError
-        return {
-            "date": None,
-            "check_number": None,
-            "description": None,
-            "deposits": None,
-            "withdrawals": None,
-            "ending_daily_balance": None,
-        }
+        balance = monetary_values[-1]
+        transaction_amount = monetary_values[-2] if len(monetary_values) > 1 else "0.00"
+        # Remove the last two monetary values (the transaction amount and the balance) from the text
+        transaction_text = transaction_text.rsplit(transaction_amount, 1)[0].rsplit(
+            balance, 1
+        )[0]
 
-        # print(f"Could not parse transaction block: {' '.join(lines)}")
-        # return None
+    # Extract date
+    date_match = re.search(r"\d{1,2}/\d{1,2}", transaction_text)
+    if date_match:
+        date_str = date_match.group()
+        # Remove the date from the text to leave only the description
+        description_text = transaction_text.split(date_str, 1)[1]
+    else:
+        # Handle error: no date found
+        return {}
 
+    # Clean up the description
+    description = description_text.strip()
 
-def find_balances_for_missing_transactions(transactions):
-    last_transaction_balance_per_day = {}
-    for transaction in transactions:
-        # Skip transactions that are None or missing a 'date' key or have a None 'date'
-        if (
-            transaction is None
-            or "date" not in transaction
-            or transaction["date"] is None
-        ):
-            continue
-        date = transaction["date"].date() if transaction["date"] else None
-        balance = transaction.get("ending_daily_balance")
-        if balance:  # If balance is not 0 or None
-            last_transaction_balance_per_day[date] = balance
-    return last_transaction_balance_per_day
+    # Classify the transaction as deposit or withdrawal
+    if transaction_analysis["classification"] == "deposit":
+        deposits = transaction_amount
+        withdrawals = "0.00"
+    elif transaction_analysis["classification"] == "withdrawal":
+        withdrawals = transaction_amount
+        deposits = "0.00"
+    else:
+        # Handle error: classification not found
+        return {}
 
+    # Construct the transaction dictionary
+    transaction_dict = {
+        "date": datetime.strptime(date_str, "%m/%d")
+        .replace(year=2022)
+        .date(),  # Convert to date to remove time part
+        "description": description,
+        "deposits": deposits,
+        "withdrawals": withdrawals,
+        "ending_daily_balance": balance or "0.00",
+    }
 
-def update_main_transaction_list(transactions, balances):
-    """
-    Update the main transaction list with the balances.
-    """
-    updated_transactions = []
-    for transaction in transactions:
-        # Skip transactions that are None or missing a 'date' key or have a None 'date'
-        if (
-            transaction is None
-            or "date" not in transaction
-            or transaction["date"] is None
-        ):
-            continue
-        date = transaction["date"].date() if transaction["date"] else None
-        if date in balances:
-            transaction["ending_daily_balance"] = balances[date]
-        updated_transactions.append(transaction)
-    return updated_transactions
+    return transaction_dict
 
 
 def extract_transactions_from_page(pdf_path):
-    # Open the PDF file
-    pdf_document = fitz.open(pdf_path)
-    page = pdf_document[1]  # Assume transactions are on the second page
-    page_text = page.get_text()
-    pdf_document.close()  # Close the PDF after processing
+    """
+    Open a PDF bank statement, extract transactions from the second page, and return them in JSON format.
+
+    The function uses the PyMuPDF library to open a PDF document and extract the text from its second page. It then
+    parses the text to identify and structure transaction data, which is subsequently converted into a JSON string
+    using Python's built-in json module.
+
+    Parameters
+    ----------
+    pdf_path : str
+        The file path to the PDF bank statement.
+
+    Returns
+    -------
+    str
+        A JSON string representing the list of structured transactions extracted from the page.
+
+    Examples
+    --------
+    >>> pdf_path = '/path/to/bank_statement.pdf'
+    >>> json_data = extract_transactions_from_page(pdf_path)
+    >>> print(json_data)
+    "[{'date': '1/4', 'description': 'Grocery Store', 'amount': 50.00}, {'date': '1/5', 'description': 'Online Payment Received', 'amount': 100.00}]"
+    """
+
+    # Open the PDF file and extract the text from the second page
+    with fitz.open(pdf_path) as pdf_document:
+        page_text = pdf_document[1].get_text()
 
     # Extract transactions from the page text
-    parsed_transactions = parse_transactions(page_text)
-
-    structured_transactions = []
-    transactions_with_missing_balances = []
-
-    # Process each transaction and collect those with missing balances
-    for transaction_dict in parsed_transactions:
-        if transaction_dict is None or len(transaction_dict) != 6:
-            print(f"Unexpected transaction data: {transaction_dict}")
-            continue  # Skip this transaction
-        if len(transaction_dict) != 6:
-            print(f"Unexpected transaction tuple length: {len(transaction_dict)}")
-            print(transaction_dict)
-            continue  # Skip this transaction
-        # Check if the description is None before trying to strip it
-        description = (
-            transaction_dict["description"].strip()
-            if transaction_dict["description"]
-            else ""
-        )
-
-        # Use the processed values directly
-        transaction_entry = {
-            "date": transaction_dict["date"],  # Ensure this is a datetime object
-            #    "description": transaction_dict["description"].strip(),
-            "description": description,
-            "deposits": transaction_dict["deposits"],
-            "withdrawals": transaction_dict["withdrawals"],
-            "ending_daily_balance": transaction_dict.get(
-                "balance", 0
-            ),  # Default to 0 if missing
-        }
-
-        # Collect transactions with missing balances for a second pass
-        if transaction_entry["ending_daily_balance"] == 0:
-            transactions_with_missing_balances.append(transaction_entry)
-
-        structured_transactions.append(transaction_entry)
-
-    # Perform a second pass to fill in missing balances
-    updated_transactions_with_balances = find_balances_for_missing_transactions(
-        structured_transactions
-    )
-
-    # Merge the updated transactions into the main list
-    final_transaction_list = update_main_transaction_list(
-        structured_transactions, updated_transactions_with_balances
-    )
+    structured_transactions = parse_transactions(page_text)
 
     # Convert to JSON
-    json_data = json.dumps(final_transaction_list, default=str, indent=4)
+    json_data = json.dumps(structured_transactions, default=str, indent=4)
     return json_data
 
 
-# Call main function with your PDF path
-# pdf_path = "SourceStatements/WF_Bank/013122 WellsFargo.pdf"
-pdf_path = "SourceStatements/WF_Bank/022822 WellsFargo.pdf"
-# pdf_path = "SourceStatements/WF_Bank/033122 WellsFargo.pdf"
+def process_all_pdfs(source_dir):
+    """
+    Iterate through a directory of PDF bank statements, extract transactions, and compile them.
 
-extracted_page = extract_transactions_from_page(pdf_path)
+    This function scans a specified directory for PDF files, processes each file to extract transaction data,
+    and appends each transaction to a master list. It also enhances each transaction with the statement date and
+    file path using the 'add_statement_date_and_file_path' function.
+
+    Parameters
+    ----------
+    source_dir : str
+        The directory path where PDF bank statements are stored.
+
+    Returns
+    -------
+    list of dict
+        A list of transaction dictionaries, each containing transaction data and additional information like
+        statement date and file path.
+
+    Examples
+    --------
+    >>> source_dir = '/path/to/pdf/statements/'
+    >>> all_transactions = process_all_pdfs(source_dir)
+    >>> print(all_transactions[0])
+    {
+        'date': '2023-01-04',
+        'description': 'Grocery Store',
+        'amount': 50.00,
+        'Statement Date': '2023-01-04',
+        'File Path': '/path/to/pdf/statements/statement010423.pdf'
+    }
+    """
+    all_transactions = []
+    for filename in os.listdir(source_dir):
+        if filename.endswith(".pdf"):
+            pdf_path = os.path.join(source_dir, filename)
+            transactions_json = extract_transactions_from_page(pdf_path)
+            transactions_data = json.loads(transactions_json)
+            # Add additional data like statement date
+        for transaction in transactions_data:
+            updated_transaction = add_statement_date_and_file_path(
+                transaction, pdf_path
+            )
+            all_transactions.append(updated_transaction)
+
+    return all_transactions
 
 
-print(
-    f"extracted_transactions from fitz: {extracted_page}"
-)  # This will display all transactions extracted
+def export_transactions_to_files(transactions_list, csv_file_path, excel_file_path):
+    """
+    Export the list of transaction dictionaries to CSV and Excel files.
 
-# extracted_transactions = extract_transactions_from_pdfminer(pdf_path)
-# print(
-#     f"extracted_transactions from pdfminer: {extracted_transactions}"
-# )  # This will display all transactions extracted
+    This function converts a list of transaction dictionaries into a pandas DataFrame and then exports the data to
+    the specified CSV and Excel file paths. It prints out the paths where the files are exported.
+
+    Parameters
+    ----------
+    transactions_list : list of dict
+        The list of transaction dictionaries to be exported.
+    csv_file_path : str
+        The file path where the CSV file will be saved.
+    excel_file_path : str
+        The file path where the Excel file will be saved.
+
+    Returns
+    -------
+    None
+
+    Examples
+    --------
+    >>> transactions_list = [{'date': '2023-01-04', 'description': 'Grocery Store', 'amount': 50.00}]
+    >>> csv_file_path = '/path/to/transactions.csv'
+    >>> excel_file_path = '/path/to/transactions.xlsx'
+    >>> export_transactions_to_files(transactions_list, csv_file_path, excel_file_path)
+    Transactions exported to CSV at /path/to/transactions.csv
+    Transactions exported to Excel at /path/to/transactions.xlsx
+    """
+
+    # Convert the list of transaction dictionaries into a DataFrame
+    df_transactions = pd.DataFrame(transactions_list)
+
+    # Export to CSV
+    df_transactions.to_csv(csv_file_path, index=False)
+    print(f"Transactions exported to CSV at {csv_file_path}")
+
+    # Export to Excel
+    df_transactions.to_excel(excel_file_path, index=False)
+    print(f"Transactions exported to Excel at {excel_file_path}")
+
+
+def main(source_dir, csv_output_path, xlsx_output_path):
+    """Process all PDF bank statements and export transactions to CSV and Excel.
+
+    Parameters:
+    source_dir (str): The directory where PDF bank statements are located.
+    csv_output_path (str): The file path for the output CSV file.
+    xlsx_output_path (str): The file path for the output Excel file.
+    """
+    # Process all PDFs and extract transactions
+    all_transactions = process_all_pdfs(source_dir)
+
+    # Export the transactions to CSV and Excel
+    export_transactions_to_files(all_transactions, csv_output_path, xlsx_output_path)
+
+    print(
+        f"Processed all PDFs in {source_dir} and exported the transactions to {csv_output_path} and {xlsx_output_path}"
+    )
+
+
+# Call the main function with constants
+if __name__ == "__main__":
+    main(SOURCE_DIR, OUTPUT_PATH_CSV, OUTPUT_PATH_XLSX)

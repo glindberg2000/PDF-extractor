@@ -1,7 +1,7 @@
 """
 PDF Data Extractor for Bank of America Bank Statements
 
-This script serves as a starting point for handling pyBank of America's bank format.
+This script serves as a starting point for handling Bank of America's bank format.
 It reads transaction data from PDF statements and exports it to Excel and CSV files.
 The script scans through each page of each PDF file, extracts the relevant information,
 and then sorts the transactions by date.
