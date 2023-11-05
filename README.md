@@ -39,9 +39,10 @@ python pdf_amazon_extract.py
 - `datetime` for manipulating dates and times.
 
 ## To-Do
-- [ ] Add support for Wells Fargo statements.
 - [X] Add support for Amazon purchase records.
 - [ ] Implement AI analysis for categorizing all transactions based on descriptions.
+- [ ] Add support for Bank of America Bank Account Statements.
+- [ ] Add support for Wells Fargo statements Visa Statements.
 
 ## Contributing
 Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.

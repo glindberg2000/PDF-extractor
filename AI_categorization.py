@@ -336,12 +336,14 @@ def read_and_standardize_file(file_path):
         # Identify the source (e.g., BofA, Chase, Amazon) based on the file name
         file_name = os.path.splitext(os.path.basename(file_path))[0]
         source = None
-        if "BofA" in file_name:
-            source = "BofA"
+        if "BofA_visa" in file_name:
+            source = "BOA_VISA"
+        elif "BofA_bank" in file_name:
+            source = "BOA_BANK"
         elif "Chase" in file_name:
-            source = "Chase"
+            source = "CHASE"
         elif "Amazon" in file_name:
-            source = "Amazon"
+            source = "AMAZON"
 
         if source is None:
             print(f"Unknown source: {file_name}")
@@ -350,7 +352,7 @@ def read_and_standardize_file(file_path):
         df["Source"] = source
 
         # Standardize the column names based on the actual headers for each source
-        if source == "BofA":
+        if source == "BOA_VISA":
             df.rename(
                 columns={
                     "Transaction Date": "Transaction_Date",
@@ -365,7 +367,7 @@ def read_and_standardize_file(file_path):
             )
             df["TransactionID"] = df.index + 1  # Generate a TransactionID
 
-        elif source == "Chase":
+        elif source == "CHASE":
             df.rename(
                 columns={
                     "Date of Transaction": "Transaction_Date",
@@ -378,7 +380,7 @@ def read_and_standardize_file(file_path):
             )
             df["TransactionID"] = df.index + 1  # Generate a TransactionID
 
-        elif source == "Amazon":
+        elif source == "AMAZON":
             # Assume the 'Items' column contains the list of objects
             # Each object has a 'description' and 'price' (this is a simplification for demonstration purposes)
             sub_orders = []

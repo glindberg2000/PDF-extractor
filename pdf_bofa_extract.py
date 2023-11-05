@@ -15,7 +15,7 @@ import pandas as pd
 import re
 import PyPDF2
 
-SOURCE_DIR = "SourceStatements/BofA"
+SOURCE_DIR = "SourceStatements/BOA_Visa"
 OUTPUT_PATH_CSV = "ConsolidatedReports/BofA_all.csv"
 OUTPUT_PATH_XLSX = "ConsolidatedReports/BofA_all.xlsx"
 

@@ -24,8 +24,8 @@ import pandas as pd
 import csv
 
 SOURCE_DIR = "SourceStatements/Amazon"
-OUTPUT_PATH_CSV = "ConsolidatedReports/Amazon_all.csv"
-OUTPUT_PATH_XLSX = "ConsolidatedReports/Amazon_all.xlsx"
+OUTPUT_PATH_CSV = "ConsolidatedReports/Amazon_invoices.csv"
+OUTPUT_PATH_XLSX = "ConsolidatedReports/Amazon_invoices.xlsx"
 
 
 def clean_currency_string(currency_str):
@@ -236,7 +236,7 @@ def extract_amazon_invoice_data(pdf_path):
             -1
         ]  # Get the text from the last page
         extracted_data["Gift Card Amount:"] = extract_gift_card_amount(last_page_text)
-
+        extracted_data["File Path"] = pdf_path
         return extracted_data
     except Exception as e:
         return {"error": str(e)}
@@ -306,7 +306,7 @@ for file_name in os.listdir(SOURCE_DIR):
 
 
 cleaned_list = [clean_keys(item) for item in master_list]
-pprint.pprint(cleaned_list)
+# pprint.pprint(cleaned_list)
 print(f"MasterList Quantity: {len(cleaned_list)}")
 
 # Save the cleaned master list to CSV and XLSX files

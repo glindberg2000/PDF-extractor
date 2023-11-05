@@ -137,7 +137,8 @@ backups/*
 # Except for .gitkeep
 !ConsolidatedReports/.gitkeep
 !SourceStatements/.gitkeep
-!SourceStatements/BOA/.gitkeep
+!SourceStatements/BOA_Bank/.gitkeep
+!SourceStatements/BOA_Visa/.gitkeep
 !SourceStatements/Chase/.gitkeep
 
 # Operating system files
