@@ -7,7 +7,7 @@ Author: Gregory Lindberg
 Date: November 4, 2023
 
 Usage:
-    Ensure that all dependencies are installed and that the SOURCE_DIR variable is set to the directory containing the PDF statements. Run this script directly to process the files and generate the reports in the specified output paths.
+   python3 -m dataextractai.parsers.wellsfargo_bank_parser
 """
 
 __author__ = "Gregory Lindberg"
@@ -26,10 +26,11 @@ import pprint
 import fitz  # PyMuPDF
 import json
 import csv
+from ..utils.config import PARSER_INPUT_DIRS, PARSER_OUTPUT_PATHS
 
-SOURCE_DIR = "data/input/wellsfargo_bank"
-OUTPUT_PATH_CSV = "data/output/wellsfargo_bank.csv"
-OUTPUT_PATH_XLSX = "data/output/wellsfargo_bank.xlsx"
+SOURCE_DIR = PARSER_INPUT_DIRS["wellsfargo_bank"]
+OUTPUT_PATH_CSV = PARSER_OUTPUT_PATHS["wellsfargo_bank"]["csv"]
+OUTPUT_PATH_XLSX = PARSER_OUTPUT_PATHS["wellsfargo_bank"]["xlsx"]
 
 
 def analyze_line_for_transaction_type_all(line):
@@ -388,6 +389,7 @@ def process_all_pdfs(source_dir):
     for filename in os.listdir(source_dir):
         if filename.endswith(".pdf"):
             pdf_path = os.path.join(source_dir, filename)
+            print(f"processing file: {filename}")
             transactions_json = extract_transactions_from_page(pdf_path)
             transactions_data = json.loads(transactions_json)
             # Add additional data like statement date
@@ -456,9 +458,7 @@ def main(source_dir, csv_output_path, xlsx_output_path):
     # Export the transactions to CSV and Excel
     export_transactions_to_files(all_transactions, csv_output_path, xlsx_output_path)
 
-    print(
-        f"Processed all PDFs in {source_dir} and exported the transactions to {csv_output_path} and {xlsx_output_path}"
-    )
+    print(f"Total Transactions: {len(all_transactions)}")
 
 
 def run():

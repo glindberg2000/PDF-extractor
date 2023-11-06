@@ -4,7 +4,7 @@ This script serves as a starting point for handling Chase VISA statement format,
 It reads transaction data from PDF statements and exports it to Excel and CSV files.
 
 usage:
-python pdf_chase_extract.py
+python3 -m dataextractai.parsers.chase_visa
 
 """
 
@@ -13,10 +13,11 @@ import re
 import pandas as pd
 from PyPDF2 import PdfReader
 from datetime import datetime
+from ..utils.config import PARSER_INPUT_DIRS, PARSER_OUTPUT_PATHS
 
-SOURCE_DIR = "data/input/chase_visa"
-OUTPUT_PATH_CSV = "data/output/chase_visa.csv"
-OUTPUT_PATH_XLSX = "data/output/chase_visa.xlsx"
+SOURCE_DIR = PARSER_INPUT_DIRS["chase_visa"]
+OUTPUT_PATH_CSV = PARSER_OUTPUT_PATHS["chase_visa"]["csv"]
+OUTPUT_PATH_XLSX = PARSER_OUTPUT_PATHS["chase_visa"]["xlsx"]
 
 # Initialize an empty DataFrame to store all the extracted data
 all_data = pd.DataFrame()
@@ -73,7 +74,7 @@ def extract_chase_statements(pdf_path, statement_date):
     Returns:
         DataFrame: The DataFrame containing the extracted transaction data.
     """
-    # pdf_reader = PdfFileReader(open(pdf_path, "rb"))
+    skipped_pages = 0
     pdf_reader = PdfReader(pdf_path)
     transactions = []
     statement_year, statement_month, _ = map(int, statement_date.split("-"))
@@ -90,7 +91,7 @@ def extract_chase_statements(pdf_path, statement_date):
                     date, description, amount = match.groups()
                     transactions.append([date, description, amount])
         except Exception as e:
-            print(f"Skipping page {page_num + 1}")
+            skipped_pages = +1
 
     df = pd.DataFrame(
         transactions,
@@ -128,10 +129,10 @@ def main():
                 f"{statement_date[:4]}-{statement_date[4:6]}-{statement_date[6:8]}"
             )
             pdf_path = os.path.join(SOURCE_DIR, filename)
-            print(f"Processing {pdf_path}...")
+            print(f"Processing File: {pdf_path}...")
             df = extract_chase_statements(pdf_path, statement_date)
             all_data = pd.concat([all_data, df], ignore_index=True)
-
+    print(f"Total Transactions:{len(all_data)}")
     # Save to Excel and CSV files
     all_data.to_excel(OUTPUT_PATH_XLSX, index=False)
     all_data.to_csv(OUTPUT_PATH_CSV, index=False)

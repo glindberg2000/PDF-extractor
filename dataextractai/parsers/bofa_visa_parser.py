@@ -7,7 +7,7 @@ The script scans through each page of each PDF file, extracts the relevant infor
 and then sorts the transactions by date.
 
 Usage:
-    python bofa_visa_parser.py
+    python3 -m dataextractai.parsers.bofa_visa_parser
 """
 
 import os
@@ -15,11 +15,12 @@ import pandas as pd
 import re
 import PyPDF2
 from PyPDF2 import PdfReader
+from ..utils.config import PARSER_INPUT_DIRS, PARSER_OUTPUT_PATHS
 
 
-SOURCE_DIR = "data/input/bofa_visa"
-OUTPUT_PATH_CSV = "data/output/bofa_visa_statements.csv"
-OUTPUT_PATH_XLSX = "data/output/bofa_visa_statements.xlsx"
+SOURCE_DIR = PARSER_INPUT_DIRS["bofa_visa"]
+OUTPUT_PATH_CSV = PARSER_OUTPUT_PATHS["bofa_visa"]["csv"]
+OUTPUT_PATH_XLSX = PARSER_OUTPUT_PATHS["bofa_visa"]["xlsx"]
 
 
 def append_year(row):
@@ -52,6 +53,7 @@ def append_year(row):
 
 
 def main():
+    skipped_pages = 0
     # Initialize an empty DataFrame to store all data
     all_data = pd.DataFrame(
         columns=[
@@ -68,7 +70,7 @@ def main():
     for filename in os.listdir(SOURCE_DIR):
         if filename.endswith(".pdf"):
             statement_date = filename.split("_")[1].split(".")[0]
-            print(statement_date)
+            print(f"processing file: {filename}")
             # Full path to the PDF file
             filepath = os.path.join(SOURCE_DIR, filename)
 
@@ -117,7 +119,7 @@ def main():
                                     ]
                                 )
                 except Exception as e:
-                    print(f"Skipping page {page_num + 1}")
+                    skipped_pages = +1
 
             # Create a DataFrame from the list of rows
             df = pd.DataFrame(
@@ -145,7 +147,7 @@ def main():
 
     # Sort by "Transaction Date"
     all_data_sorted = all_data.sort_values(by="Transaction Date")
-
+    print(f"Total Transactions: {len(all_data_sorted)}")
     # Save to Excel and CSV files
     all_data_sorted.to_excel(OUTPUT_PATH_XLSX, index=False)
     all_data_sorted.to_csv(OUTPUT_PATH_CSV, index=False)

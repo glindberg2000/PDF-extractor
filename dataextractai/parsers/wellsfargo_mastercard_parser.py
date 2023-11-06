@@ -7,7 +7,7 @@ Author: Gregory Lindberg
 Date: November 4, 2023
 
 Usage:
-    Ensure that all dependencies are installed and that the SOURCE_DIR variable is set to the directory containing the PDF statements. Run this script directly to process the files and generate the reports in the specified output paths.
+      python3 -m dataextractai.parsers.wellsfargo_mastercard_parser
 """
 
 __author__ = "Gregory Lindberg"
@@ -25,10 +25,11 @@ import os
 import pprint
 import json
 import csv
+from ..utils.config import PARSER_INPUT_DIRS, PARSER_OUTPUT_PATHS
 
-SOURCE_DIR = "data/input/wellsfargo_mastercard"
-OUTPUT_PATH_CSV = "data/output/wellsfargo_mastercard.csv"
-OUTPUT_PATH_XLSX = "data/output/wellsfargo_mastercard.xlsx"
+SOURCE_DIR = PARSER_INPUT_DIRS["wellsfargo_mastercard"]
+OUTPUT_PATH_CSV = PARSER_OUTPUT_PATHS["wellsfargo_mastercard"]["csv"]
+OUTPUT_PATH_XLSX = PARSER_OUTPUT_PATHS["wellsfargo_mastercard"]["xlsx"]
 
 
 def analyze_line_for_transaction_type_all(line):
@@ -202,7 +203,6 @@ def process_transaction_block(lines):
 
     if not monetary_values:
         # Handle error: no monetary values found
-        print("no monetary values found")
         return {}
 
     # Assume the last one monetary patterns are withdrawals/deposits and balance
@@ -247,7 +247,6 @@ def process_transaction_block(lines):
             charges = transaction_amount
             credits = "0.00"
         else:
-            print("Classifier Not Determined. Defaulting to Charge")
             charges = transaction_amount
             credits = "0.00"
 
@@ -260,11 +259,9 @@ def process_transaction_block(lines):
             "credits": credits,
             "charges": charges,
         }
-        print(transaction_dict)
         return transaction_dict
     else:
         # Handle error: no match found, which means the line didn't have the expected format
-        print("transaction not parsed.")
         return {}
 
     return transaction_dict
@@ -306,6 +303,7 @@ def extract_transactions_from_page(pdf_path):
 
     # Open the PDF file
     with pdfplumber.open(pdf_path) as pdf:
+        print(f"processing file: {pdf_path}")
         # Extract the text of the third page
         page_text = pdf.pages[2].extract_text()  # pages[2] is the third page
 
@@ -475,9 +473,7 @@ def main(source_dir, csv_output_path, xlsx_output_path):
     # Export the transactions to CSV and Excel
     export_transactions_to_files(all_transactions, csv_output_path, xlsx_output_path)
 
-    print(
-        f"Processed all PDFs in {source_dir} and exported the transactions to {csv_output_path} and {xlsx_output_path}"
-    )
+    print(f"Total Transactions {len(all_transactions)}")
 
 
 def run():

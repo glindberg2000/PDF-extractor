@@ -13,7 +13,7 @@ Functions:
     - clean_keys: Cleans dictionary keys.
 
 Usage:
-    >>> python amazon_parser.py
+    >>>python3 -m dataextractai.parsers.amazon_parser
 """
 
 import re
@@ -23,10 +23,6 @@ import pprint
 import pandas as pd
 import csv
 from ..utils.config import PARSER_INPUT_DIRS, PARSER_OUTPUT_PATHS
-
-# SOURCE_DIR = "data/input/amazon"
-# OUTPUT_PATH_CSV = "data/output/amazon_invoices.csv"
-# OUTPUT_PATH_XLSX = "data/output/amazon_invoices.xlsx"
 
 SOURCE_DIR = PARSER_INPUT_DIRS["amazon"]
 OUTPUT_PATH_CSV = PARSER_OUTPUT_PATHS["amazon"]["csv"]
@@ -310,7 +306,7 @@ def main(write_to_file=True):
 
     cleaned_list = [clean_keys(item) for item in master_list]
     # pprint.pprint(cleaned_list)
-    print(f"Items Quantity: {len(cleaned_list)}")
+    print(f"Total Orders: {len(cleaned_list)}")
 
     # Convert parsed data into a DataFrame
     df = pd.DataFrame(cleaned_list)

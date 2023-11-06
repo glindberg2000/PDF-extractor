@@ -7,17 +7,18 @@ The script scans through each page of each PDF file, extracts the relevant infor
 and then sorts the transactions by date.
 
 Usage:
-    python bofa_bank_parser.py
+    python3 -m dataextractai.parsers.bofa_bank_parser
 """
 import pdfplumber
 import pandas as pd
 import re
 import os
 import glob
+from ..utils.config import PARSER_INPUT_DIRS, PARSER_OUTPUT_PATHS
 
-SOURCE_DIR = "data/input/bofa_bank"
-OUTPUT_PATH_CSV = "data/output/bofa_bank_statements.csv"  # need to update the AI_category to applie different filter for BofA
-OUTPUT_PATH_XLSX = "data/output/bofa_bank_statements.xlsx"
+SOURCE_DIR = PARSER_INPUT_DIRS["bofa_bank"]
+OUTPUT_PATH_CSV = PARSER_OUTPUT_PATHS["bofa_bank"]["csv"]
+OUTPUT_PATH_XLSX = PARSER_OUTPUT_PATHS["bofa_bank"]["xlsx"]
 
 
 def add_statement_date_and_file_path(df, file_path):
@@ -187,12 +188,13 @@ def main():
     for file_path in glob.glob(os.path.join(SOURCE_DIR, "*.pdf")):
         text_list = extract_text_from_pdf(file_path)
         transactions_df = parse_transactions(text_list)
+        print(f"Processing File: {file_path}")
         transactions_df = add_statement_date_and_file_path(transactions_df, file_path)
         all_transactions.append(transactions_df)
 
     # Concatenate all transactions into a single DataFrame
     combined_transactions_df = pd.concat(all_transactions, ignore_index=True)
-
+    print(f"Total Transactions: {len(combined_transactions_df)}")
     # Save to CSV and Excel
     combined_transactions_df.to_csv(OUTPUT_PATH_CSV, index=False)
     combined_transactions_df.to_excel(OUTPUT_PATH_XLSX, index=False)

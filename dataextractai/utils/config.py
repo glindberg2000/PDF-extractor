@@ -17,7 +17,7 @@ PARSER_INPUT_DIRS = {
     "bofa_bank": os.path.join(COMMON_CONFIG["input_dir"], "bofa_bank"),
     "bofa_visa": os.path.join(COMMON_CONFIG["input_dir"], "bofa_visa"),
     "chase_visa": os.path.join(COMMON_CONFIG["input_dir"], "chase_visa"),
-    "wellfargo_bank": os.path.join(COMMON_CONFIG["input_dir"], "wellsfargo_bank"),
+    "wellsfargo_bank": os.path.join(COMMON_CONFIG["input_dir"], "wellsfargo_bank"),
     "wellsfargo_mastercard": os.path.join(
         COMMON_CONFIG["input_dir"], "wellsfargo_mastercard"
     ),
