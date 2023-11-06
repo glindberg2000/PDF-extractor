@@ -25,6 +25,11 @@ Navigate to the project directory and install the necessary packages:
 ```bash
 pip install -r requirements.txt
 ```
+Conda environment setup:
+```bash
+conda env create -f environment.yml
+```
+
 
 ### File Structure
 ```
