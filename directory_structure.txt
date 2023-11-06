@@ -1,0 +1,23 @@
+.
+├── backups
+│   └── ConsolidatedReports
+├── data
+│   ├── input
+│   │   ├── amazon
+│   │   ├── bofa_bank
+│   │   ├── bofa_visa
+│   │   ├── chase_visa
+│   │   ├── wellsfargo_bank
+│   │   └── wellsfargo_mastercard
+│   └── output
+├── dataextractai
+│   ├── __pycache__
+│   ├── classifiers
+│   ├── parsers
+│   │   └── __pycache__
+│   └── utils
+├── scripts
+│   └── __pycache__
+└── tests
+
+21 directories
