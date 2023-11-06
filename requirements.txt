@@ -4,33 +4,61 @@ Bottleneck @ file:///private/var/folders/nz/j6p8yfhx1mv_0grj5xl4650h0000gp/T/abs
 certifi==2023.7.22
 cffi==1.16.0
 charset-normalizer==3.3.2
+ci-info==0.3.0
 click @ file:///private/var/folders/nz/j6p8yfhx1mv_0grj5xl4650h0000gp/T/abs_61srkg7e2e/croot/click_1698129815327/work
+configobj==5.0.8
+configparser==6.0.0
 cryptography==41.0.5
 distro==1.8.0
 et-xmlfile==1.1.0
+etelemetry==0.3.1
 exceptiongroup==1.1.3
+filelock==3.13.1
+fitz==0.0.1.dev2
+future==0.18.3
 h11==0.14.0
 httpcore==1.0.1
+httplib2==0.22.0
 httpx==0.25.1
 idna==3.4
+isodate==0.6.1
+looseversion==1.3.0
+lxml==4.9.3
+networkx==3.2.1
+nibabel==5.1.0
+nipype==1.8.6
 numexpr @ file:///private/var/folders/k1/30mswbxs7r1g6zwn8y4fyt500000gp/T/abs_45yefq0kt6/croot/numexpr_1696515289183/work
 numpy @ file:///private/var/folders/nz/j6p8yfhx1mv_0grj5xl4650h0000gp/T/abs_362zs5g963/croot/numpy_and_numpy_base_1695830450707/work/dist/numpy-1.26.0-cp39-cp39-macosx_11_0_arm64.whl#sha256=e37b41d15b4b8b2adde02a2f2a3e74daaccdfa5962f4470c1c266acd01ffd2a0
 openai==1.0.1
 openpyxl==3.0.10
+packaging==23.2
 pandas @ file:///private/var/folders/nz/j6p8yfhx1mv_0grj5xl4650h0000gp/T/abs_63jsm9vzq9/croot/pandas_1697477169306/work/dist/pandas-2.1.1-cp39-cp39-macosx_11_0_arm64.whl#sha256=c95d0a00b5fda907c569b927f6e37de0394350acfdc26d677aa69455e0722e30
+pathlib==1.0.1
 pdfminer.six==20221105
 pdfplumber==0.10.3
 Pillow==10.1.0
+prov==2.0.0
 pycparser==2.21
 pydantic==2.4.2
 pydantic_core==2.10.1
+pydot==1.4.2
+PyMuPDF==1.23.6
+PyMuPDFb==1.23.6
+pyparsing==3.1.1
 PyPDF2 @ file:///private/var/folders/nz/j6p8yfhx1mv_0grj5xl4650h0000gp/T/abs_015o_uq2mh/croots/recipe/pypdf2_1662469690829/work
 pypdfium2==4.23.1
 python-dateutil @ file:///tmp/build/80754af9/python-dateutil_1626374649649/work
 python-dotenv @ file:///private/var/folders/nz/j6p8yfhx1mv_0grj5xl4650h0000gp/T/abs_3ahu1_p9lb/croot/python-dotenv_1669132571851/work
 pytz @ file:///private/var/folders/k1/30mswbxs7r1g6zwn8y4fyt500000gp/T/abs_6btwyyj8a1/croot/pytz_1695131592184/work
+pyxnat==1.6
+rdflib==7.0.0
+requests==2.31.0
+scipy==1.11.3
+simplejson==3.19.2
 six @ file:///tmp/build/80754af9/six_1644875935023/work
 sniffio==1.3.0
 tqdm==4.66.1
+traits==6.3.2
 typing_extensions @ file:///private/var/folders/nz/j6p8yfhx1mv_0grj5xl4650h0000gp/T/abs_1fdywrbp_3/croot/typing_extensions_1690297474455/work
 tzdata @ file:///croot/python-tzdata_1690578112552/work
+urllib3==2.0.7
