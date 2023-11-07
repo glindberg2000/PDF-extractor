@@ -426,7 +426,7 @@ def handle_credits_charges(df):
     # Since both are positive, decide on a rule how to differentiate them
     # This example assumes 'credits' will be made negative for the 'Amount'
     # Adjust the logic here if the assumption is incorrect
-    df["Amount"] = df["charges"] - df["credits"]
+    df["amount"] = df["charges"] - df["credits"]
 
     return df
 

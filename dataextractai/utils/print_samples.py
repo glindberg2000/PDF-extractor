@@ -19,6 +19,6 @@ csv_files = [f for f in os.listdir(output_directory_path) if f.endswith(".csv")]
 for csv_file in csv_files:
     file_path = os.path.join(output_directory_path, csv_file)
     print(f"Contents of {csv_file}:")
-    df = pd.read_csv(file_path, nrows=5)  # Change nrows to read more lines if needed
+    df = pd.read_csv(file_path, nrows=0)  # Change nrows to read more lines if needed
     print(df)
     print("\n\n")  # Add extra newline for better separation between files
