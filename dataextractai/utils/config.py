@@ -144,13 +144,13 @@ TRANSFORMATION_MAPS = {
     "wellsfargo_mastercard": {
         "transaction_date": "transaction_date",
         "description": "description",
-        "amount": "amount",  # Use 'Amount' as it's already calculated with the correct sign
+        "amount": "amount",  # Assuming 'Amount' is the source column with the correct sign
         "file_path": "file_path",
         "source": lambda x: "wellsfargo_mastercard",
         "transaction_type": lambda x: "Credit Card",
     },
     "amazon": {
-        "order_placed": "transaction_date",
+        "transaction_date": "order_placed",
         "description": "description",
         "amount": "amount",  # This is the calculated amount per item
         "file_path": "file_path",
@@ -158,9 +158,9 @@ TRANSFORMATION_MAPS = {
         "transaction_type": lambda x: "Credit Card",
     },
     "bofa_bank": {
-        "date": "transaction_date",
+        "transaction_date": "date",
         "description": "description",
-        "amount": "amount",  # Sign might need to be normalized
+        "amount": "amount",  # Assuming 'amount' is the source column, and the sign may need normalization
         "file_path": "file_path",
         "source": lambda x: "bofa_bank",
         "transaction_type": lambda x: "Debit/Check",
@@ -174,22 +174,23 @@ TRANSFORMATION_MAPS = {
         "transaction_type": lambda x: "Credit Card",
     },
     "chase_visa": {
-        "date_of_transaction": "transaction_date",
-        "merchant_name_or_transaction_description": "description",
+        "transaction_date": "date",
+        "description": "merchant_name_or_transaction_description",
         "amount": "amount",
         "file_path": "file_path",
         "source": lambda x: "chase_visa",
         "transaction_type": lambda x: "Credit Card",
     },
     "wellsfargo_bank": {
-        "date": "transaction_date",
+        "transaction_date": "date",
         "description": "description",
-        "amount": "amount",  # Calculated 'amount' column with normalized sign
+        "amount": "amount",  # Assuming 'amount' is the calculated source column with normalized sign
         "file_path": "file_path",
         "source": lambda x: "wellsfargo_bank",
         "transaction_type": lambda x: "Debit/Check",
     },
 }
+
 
 # Ensure that all directories exist or create them
 for path in PARSER_INPUT_DIRS.values():

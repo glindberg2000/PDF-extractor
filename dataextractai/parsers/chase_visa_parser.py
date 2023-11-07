@@ -14,7 +14,7 @@ import pandas as pd
 from PyPDF2 import PdfReader
 from datetime import datetime
 from ..utils.config import PARSER_INPUT_DIRS, PARSER_OUTPUT_PATHS
-from ..utils.utils import standardize_column_names
+from ..utils.utils import standardize_column_names, get_parent_dir_and_file
 
 SOURCE_DIR = PARSER_INPUT_DIRS["chase_visa"]
 OUTPUT_PATH_CSV = PARSER_OUTPUT_PATHS["chase_visa"]["csv"]
@@ -137,7 +137,7 @@ def main(write_to_file=True):
 
     # Standardize the Column Names
     df = standardize_column_names(all_data)
-
+    df["file_path"] = df["file_path"].apply(get_parent_dir_and_file)
     # Save to CSV and Excel
     if write_to_file:
         df.to_csv(OUTPUT_PATH_CSV, index=False)

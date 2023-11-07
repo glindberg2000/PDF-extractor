@@ -26,7 +26,7 @@ import pprint
 import json
 import csv
 from ..utils.config import PARSER_INPUT_DIRS, PARSER_OUTPUT_PATHS
-from ..utils.utils import standardize_column_names
+from ..utils.utils import standardize_column_names, get_parent_dir_and_file
 
 SOURCE_DIR = PARSER_INPUT_DIRS["wellsfargo_mastercard"]
 OUTPUT_PATH_CSV = PARSER_OUTPUT_PATHS["wellsfargo_mastercard"]["csv"]
@@ -452,6 +452,8 @@ def main(write_to_file=True):
 
     # Add Amount column for post processing
     df = handle_credits_charges(df)
+
+    df["file_path"] = df["file_path"].apply(get_parent_dir_and_file)
 
     # Save to CSV and Excel
     if write_to_file:

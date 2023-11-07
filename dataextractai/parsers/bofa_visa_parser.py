@@ -16,7 +16,7 @@ import re
 import PyPDF2
 from PyPDF2 import PdfReader
 from ..utils.config import PARSER_INPUT_DIRS, PARSER_OUTPUT_PATHS
-from ..utils.utils import standardize_column_names
+from ..utils.utils import standardize_column_names, get_parent_dir_and_file
 
 
 SOURCE_DIR = PARSER_INPUT_DIRS["bofa_visa"]
@@ -142,9 +142,15 @@ def main(write_to_file=True):
             all_data = pd.concat([all_data, df], ignore_index=True)
 
     # Convert the "Transaction Date" and "Posting Date" columns to datetime format
-    all_data["Transaction Date"] = pd.to_datetime(all_data["Transaction Date"])
-    all_data["Posting Date"] = pd.to_datetime(all_data["Posting Date"])
-    all_data["Statement Date"] = pd.to_datetime(all_data["Statement Date"])
+    all_data["Transaction Date"] = pd.to_datetime(
+        all_data["Transaction Date"]
+    ).dt.strftime("%m/%d/%Y")
+    all_data["Posting Date"] = pd.to_datetime(all_data["Posting Date"]).dt.strftime(
+        "%m/%d/%Y"
+    )
+    all_data["Statement Date"] = pd.to_datetime(all_data["Statement Date"]).dt.strftime(
+        "%m/%d/%Y"
+    )
 
     # Sort by "Transaction Date"
     all_data_sorted = all_data.sort_values(by="Transaction Date")
@@ -152,6 +158,7 @@ def main(write_to_file=True):
 
     # Standardize the Column Names
     df = standardize_column_names(all_data_sorted)
+    df["file_path"] = df["file_path"].apply(get_parent_dir_and_file)
 
     # Save to CSV and Excel
     if write_to_file:

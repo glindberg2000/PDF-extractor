@@ -26,7 +26,7 @@ from ast import literal_eval
 
 import csv
 from ..utils.config import PARSER_INPUT_DIRS, PARSER_OUTPUT_PATHS
-from ..utils.utils import standardize_column_names
+from ..utils.utils import standardize_column_names, get_parent_dir_and_file
 
 SOURCE_DIR = PARSER_INPUT_DIRS["amazon"]
 OUTPUT_PATH_CSV = PARSER_OUTPUT_PATHS["amazon"]["csv"]
@@ -290,42 +290,6 @@ def clean_keys(input_dict):
     return {key.replace(":", "").title(): value for key, value in input_dict.items()}
 
 
-# def safe_literal_eval(s):
-#     try:
-#         return literal_eval(s)
-#     except (ValueError, SyntaxError):
-#         # Handle the case where s is already a literal (like a list or dict)
-#         return s
-
-
-# def flattened(df):
-#     # Assuming `df` is your DataFrame loaded with Amazon data
-
-#     # The items column should be a list of dictionaries. If it's a string representation, convert it
-#     df["items"] = df["items"].apply(safe_literal_eval)
-
-#     # Explode the items into separate rows
-#     exploded_items = df.explode("items")
-
-#     # Now, we normalize the items column which contains dictionaries
-#     items_normalized = pd.json_normalize(exploded_items["items"])
-
-#     # We drop the 'items' column as we're going to replace it with our normalized data
-#     exploded_items = exploded_items.drop("items", axis=1)
-
-#     # We now concatenate the normalized items with the exploded_items DataFrame
-#     # Reset index to ensure a proper join
-#     df_flattened = pd.concat(
-#         [
-#             exploded_items.reset_index(drop=True),
-#             items_normalized.reset_index(drop=True),
-#         ],
-#         axis=1,
-#     )
-
-#     return df_flattened
-
-
 def safe_literal_eval(s):
     # Check if `s` is already a list, which means no need to parse it as a string
     if isinstance(s, list):
@@ -403,9 +367,11 @@ def main(write_to_file=True):
     df = standardize_column_names(df)
     df = flattened(df)
     df = standardize_column_names(df)
-    # df = standardize_column_names(df)
+    df["file_path"] = df["file_path"].apply(get_parent_dir_and_file)
+    df["order_placed"] = pd.to_datetime(df["order_placed"]).dt.strftime("%m/%d/%Y")
 
     if write_to_file:
+        print("writing files...")
         df.to_csv(OUTPUT_PATH_CSV, index=False)
         df.to_excel(OUTPUT_PATH_XLSX, index=False)
 

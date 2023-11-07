@@ -8,8 +8,8 @@ Author: Gregory Lindberg
 Date: November 5, 2023
 """
 import pandas as pd
-from config import DATA_MANIFESTS
-from config import TRANSFORMATION_MAPS
+from dataextractai.utils.config import DATA_MANIFESTS
+from dataextractai.utils.config import TRANSFORMATION_MAPS
 
 
 # Define a function to normalize the amount based on the source
@@ -24,23 +24,17 @@ def normalize_amount(amount, source):
     else:
         return amount  # Spending on credit cards is already positive
 
+
 def apply_transformation_map(df, source):
     transformation_map = TRANSFORMATION_MAPS[source]
+    transformed_df = pd.DataFrame()
 
-    # Initialize a dictionary to hold our transformed data
-    transformed_data = {core_field: [] for core_field in transformation_map.values()}
-
-    # Iterate over each row in the DataFrame
-    for _, row in df.iterrows():
-        # Apply the transformation map to each row
-        for source_field, core_field in transformation_map.items():
-            # If the value is callable, it's a function we need to apply to the row
-            if callable(core_field):
-                transformed_data[core_field].append(core_field(row))
-            else:
-                transformed_data[core_field].append(row[source_field])
-
-    # Convert the transformed data dictionary to a DataFrame
-    transformed_df = pd.DataFrame(transformed_data)
+    for target_col, source_col in transformation_map.items():
+        if callable(source_col):
+            # Apply the lambda function to the DataFrame
+            transformed_df[target_col] = df.apply(lambda row: source_col(row), axis=1)
+        else:
+            # Directly map the source column to the target column
+            transformed_df[target_col] = df[source_col]
 
     return transformed_df

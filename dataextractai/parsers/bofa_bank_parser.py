@@ -15,7 +15,7 @@ import re
 import os
 import glob
 from ..utils.config import PARSER_INPUT_DIRS, PARSER_OUTPUT_PATHS
-from ..utils.utils import standardize_column_names
+from ..utils.utils import standardize_column_names, get_parent_dir_and_file
 
 SOURCE_DIR = PARSER_INPUT_DIRS["bofa_bank"]
 OUTPUT_PATH_CSV = PARSER_OUTPUT_PATHS["bofa_bank"]["csv"]
@@ -77,8 +77,6 @@ def parse_transactions(text_list):
                 amount_match = re.search(amount_pattern, line)
                 if date_match and amount_match:
                     date = date_match.group()
-                    # amount = amount_match.group()
-                    # For deposits and withdrawals sections:
                     amount = clean_amount(amount_match.group())
                     description = line[date_match.end() : amount_match.start()].strip()
                     if in_deposits_section:
@@ -86,16 +84,37 @@ def parse_transactions(text_list):
                     elif in_withdrawals_section:
                         withdrawals_subtractions.append((date, description, amount))
             elif in_checks_section:
+                # Define patterns
+                date_pattern = r"\b(\d{2}/\d{2}/\d{2})\b"  # Match dates with boundaries to ensure separation
+                check_num_pattern = (
+                    r"\b(\d{2}/\d{2}/\d{2})\s+(\d+)\b"  # Match check number after date
+                )
+                amount_pattern = r"(-?\d{1,3}(?:,\d{3})*(?:\.\d{2}))"  # Match amounts in the correct format
+
+                # Search for patterns in the line
                 date_match = re.search(date_pattern, line)
-                check_num_pattern = r"\d+"
                 check_num_match = re.search(check_num_pattern, line)
                 amount_match = re.search(amount_pattern, line)
+
                 if date_match and check_num_match and amount_match:
-                    date = date_match.group()
-                    check_num = check_num_match.group().replace("Check #", "").strip()
-                    amount = clean_amount(amount_match.group())
-                    # amount = amount_match.group()
-                    checks.append((date, check_num, amount))
+                    # Extract the date and check number
+                    date = date_match.group(1)
+                    check_num = check_num_match.group(
+                        2
+                    )  # Group 2 is the check number following the date
+                    # Format the check number output
+                    check_output = f"Check No {check_num}: Rent Payment"
+                    # print(f"Date: {date}, {check_output}, Line: {line}")
+
+                    # Extract and clean the amount
+                    amount = clean_amount(
+                        amount_match.group(1)
+                    )  # Group 1 is the entire matched amount
+                    # print(f"Amount: {amount}")
+
+                    # Append the extracted data to the checks list
+                    checks.append((date, check_output, amount))
+
     deposits_df = pd.DataFrame(
         deposits_additions, columns=["Date", "Description", "Amount"]
     )
@@ -106,7 +125,7 @@ def parse_transactions(text_list):
     # Add a 'Transaction Type' column to each DataFrame
     deposits_df["Transaction Type"] = "Deposit"
     withdrawals_df["Transaction Type"] = "Withdrawal"
-    checks_df["Transaction Type"] = "Check"
+    checks_df["Transaction Type"] = "Withdrawal"
 
     # Rename 'Check Number' column in checks_df to match the 'Description' column in the other DataFrames
     checks_df.rename(columns={"Check Number": "Description"}, inplace=True)
@@ -118,25 +137,10 @@ def parse_transactions(text_list):
 
     # Concatenate the DataFrames into a single DataFrame
     combined_df = pd.concat([deposits_df, withdrawals_df, checks_df], ignore_index=True)
+    # If 'date' is the column with the Bank of America VISA dates
+    # combined_df["date"] = pd.to_datetime(combined_df["date"]).dt.strftime("%m/%d/%Y")
 
     return combined_df
-
-
-def save_to_files(deposits_df, withdrawals_df, checks_df, base_filename):
-    csv_deposit_path = f"{base_filename}_deposits.csv"
-    csv_withdrawals_path = f"{base_filename}_withdrawals.csv"
-    csv_checks_path = f"{base_filename}_checks.csv"
-    excel_path = f"{base_filename}.xlsx"
-    deposits_df.to_csv(csv_deposit_path, index=False)
-    withdrawals_df.to_csv(csv_withdrawals_path, index=False)
-    checks_df.to_csv(csv_checks_path, index=False)
-    with pd.ExcelWriter(excel_path) as writer:
-        deposits_df.to_excel(writer, sheet_name="Deposits and Additions", index=False)
-        withdrawals_df.to_excel(
-            writer, sheet_name="Withdrawals and Subtractions", index=False
-        )
-        checks_df.to_excel(writer, sheet_name="Checks", index=False)
-    return csv_deposit_path, csv_withdrawals_path, csv_checks_path, excel_path
 
 
 def extract_text_from_pdf(pdf_path):
@@ -170,47 +174,25 @@ def check_encryption(pdf_path):
             return {"encrypted": True, "metadata": None}
 
 
-# Let's extract the text from the pages starting from the fourth page line by line to understand the layout.
-def extract_checks_section(pdf_path):
-    checks_section_lines = []  # To hold lines from the checks section
-    try:
-        with pdfplumber.open(pdf_path) as pdf:
-            # We'll start from the fourth page, where the checks section is expected
-            for page in pdf.pages[3:]:
-                text = page.extract_text()
-                if (
-                    text and "Checks" in text
-                ):  # If 'Checks' is in the text, we process that page
-                    for line in text.split("\n"):
-                        checks_section_lines.append(line)
-    except Exception as e:
-        checks_section_lines.append(f"An exception occurred: {e}")
+# # Let's extract the text from the pages starting from the fourth page line by line to understand the layout.
+# def extract_checks_section(pdf_path):
+#     checks_section_lines = []  # To hold lines from the checks section
+#     try:
+#         with pdfplumber.open(pdf_path) as pdf:
+#             # We'll start from the fourth page, where the checks section is expected
+#             for page in pdf.pages[3:]:
+#                 print("CHEKCING 3")
+#                 text = page.extract_text()
+#                 if (
+#                     text and "Checks" in text
+#                 ):  # If 'Checks' is in the text, we process that page
+#                     for line in text.split("\n"):
+#                         checks_section_lines.append(line)
+#                         print(f"CHECK DETECTED: {line}")
+#     except Exception as e:
+#         checks_section_lines.append(f"An exception occurred: {e}")
 
-    return checks_section_lines
-
-
-# def main(write_to_file=True):
-#     all_transactions = []
-#     for file_path in glob.glob(os.path.join(SOURCE_DIR, "*.pdf")):
-#         text_list = extract_text_from_pdf(file_path)
-#         transactions_df = parse_transactions(text_list)
-#         print(f"Processing File: {file_path}")
-#         transactions_df = add_statement_date_and_file_path(transactions_df, file_path)
-#         all_transactions.append(transactions_df)
-
-#     # Concatenate all transactions into a single DataFrame
-#     combined_transactions_df = pd.concat(all_transactions, ignore_index=True)
-#     print(f"Total Transactions: {len(combined_transactions_df)}")
-
-#     # Standardize the Column Names
-#     df = standardize_column_names(combined_transactions_df)
-
-#     # Save to CSV and Excel
-#     if write_to_file:
-#         df.to_csv(OUTPUT_PATH_CSV, index=False)
-#         df.to_excel(OUTPUT_PATH_XLSX, index=False)
-
-#     return df
+#     return checks_section_lines
 
 
 def main(write_to_file=True):
@@ -232,6 +214,13 @@ def main(write_to_file=True):
 
     # Standardize the Column Names
     df = standardize_column_names(combined_transactions_df)
+    df["file_path"] = df["file_path"].apply(get_parent_dir_and_file)
+
+    # Convert to datetime with two-digit year
+    df["date"] = pd.to_datetime(df["date"], format="%m/%d/%y")
+
+    # Format datetime as string with four-digit year
+    df["date"] = df["date"].dt.strftime("%m/%d/%Y")
 
     # Save to CSV and Excel
     if write_to_file:
