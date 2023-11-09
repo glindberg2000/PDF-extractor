@@ -59,6 +59,7 @@ from dataextractai.utils.config import PARSER_INPUT_DIRS, PARSER_OUTPUT_PATHS
 
 # SOURCE_DIR = PARSER_INPUT_DIRS["amazon"]
 OUTPUT_PATH_CSV = PARSER_OUTPUT_PATHS["consolidated_core"]["csv"]
+OUTPUT_PATH_XLSX = PARSER_OUTPUT_PATHS["consolidated_core"]["xlsx"]
 
 
 def run_all_parsers():
@@ -107,11 +108,14 @@ def run_all_parsers():
         transformed_data = pd.concat(transformed_data, ignore_index=True)
     else:
         transformed_data = pd.DataFrame()
-    
+
+    transformed_data["ID"] = range(1, len(transformed_data) + 1)
     print(f"Total Transactions: {transformed_data}")
     return transformed_data
+
 
 if __name__ == "__main__":
     transformed_data = run_all_parsers()
     # You can now do something with transformed_data
     transformed_data.to_csv(OUTPUT_PATH_CSV, index=False)
+    transformed_data.to_excel(OUTPUT_PATH_XLSX, index=False)

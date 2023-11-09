@@ -130,11 +130,17 @@ logs/
 
 # Directories to ignore
 # Ignore everything in these directories
+
+# Data directories to ignore
+/input/*
+/output/*
 ConsolidatedReports/*
 SourceStatements/*
 backups/*
 
 # Except for .gitkeep
+!/input/.gitkeep
+!/output/.gitkeep
 !ConsolidatedReports/.gitkeep
 !SourceStatements/.gitkeep
 !SourceStatements/BOA_Bank/.gitkeep
@@ -154,6 +160,7 @@ dataextractai/*.py[cod]
 dataextractai/.pytest_cache/
 dataextractai/.mypy_cache/
 dataextractai/.env
+
 
 # Data files
 *.csv
