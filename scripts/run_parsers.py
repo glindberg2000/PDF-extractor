@@ -37,6 +37,8 @@ Date: November 5, 2023
 
 import os
 import pandas as pd
+from datetime import datetime  # Import the datetime class from the datetime module
+
 
 # Import the parser functions
 from dataextractai.parsers.wellsfargo_bank_parser import (
@@ -60,6 +62,18 @@ from dataextractai.utils.config import PARSER_INPUT_DIRS, PARSER_OUTPUT_PATHS
 # SOURCE_DIR = PARSER_INPUT_DIRS["amazon"]
 OUTPUT_PATH_CSV = PARSER_OUTPUT_PATHS["consolidated_core"]["csv"]
 OUTPUT_PATH_XLSX = PARSER_OUTPUT_PATHS["consolidated_core"]["xlsx"]
+
+
+def parse_date(date_str):
+    """
+    Parse a date string into a datetime object, handling different date formats.
+    """
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y"):  # Add more formats here if needed
+        try:
+            return datetime.strptime(date_str, fmt)
+        except ValueError:
+            pass
+    raise ValueError(f"Unknown date format: {date_str}")
 
 
 def run_all_parsers():
@@ -109,8 +123,21 @@ def run_all_parsers():
     else:
         transformed_data = pd.DataFrame()
 
+    # Sort the DataFrame by 'transaction_date'
+    # First standardize the dates
+    # Convert and standardize 'transaction_date' to datetime objects
+    transformed_data["transaction_date"] = transformed_data["transaction_date"].apply(
+        parse_date
+    )
+    transformed_data = transformed_data.sort_values(by="transaction_date")
+
     transformed_data["ID"] = range(1, len(transformed_data) + 1)
     print(f"Total Transactions: {transformed_data}")
+
+    # If you want to rearrange columns and put 'ID' first
+    columns = ["ID"] + [col for col in transformed_data.columns if col != "ID"]
+    transformed_data = transformed_data[columns]
+
     return transformed_data
 
 

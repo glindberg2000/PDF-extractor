@@ -24,3 +24,16 @@ def get_parent_dir_and_file(path):
     return os.path.join(
         parent_directory_name, filename
     )  # Combine the parent directory name with the file name
+
+
+def create_directory_if_not_exists(directory_path):
+    """
+    Create a directory if it does not exist.
+
+    :param directory_path: Path of the directory to be created.
+    """
+    try:
+        os.makedirs(directory_path, exist_ok=True)
+        print(f"New batch file created at {directory_path}")
+    except Exception as e:
+        print(f"An error occurred while creating the directory: {e}")

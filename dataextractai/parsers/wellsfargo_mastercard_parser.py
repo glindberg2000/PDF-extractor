@@ -31,6 +31,7 @@ from ..utils.utils import standardize_column_names, get_parent_dir_and_file
 SOURCE_DIR = PARSER_INPUT_DIRS["wellsfargo_mastercard"]
 OUTPUT_PATH_CSV = PARSER_OUTPUT_PATHS["wellsfargo_mastercard"]["csv"]
 OUTPUT_PATH_XLSX = PARSER_OUTPUT_PATHS["wellsfargo_mastercard"]["xlsx"]
+FILTERED_PATH_CSV = PARSER_OUTPUT_PATHS["wellsfargo_mastercard"]["filtered"]
 
 
 def analyze_line_for_transaction_type_all(line):
@@ -454,6 +455,13 @@ def main(write_to_file=True):
     df = handle_credits_charges(df)
 
     df["file_path"] = df["file_path"].apply(get_parent_dir_and_file)
+
+    # Customer Filter Step 1: Read the filtered CSV
+    filtered_df = pd.read_csv(FILTERED_PATH_CSV)
+    # Step 2: Filter the output DataFrame
+    # Keep only rows where 'reference_number' is in the filtered_df
+    filtered_reference_numbers = filtered_df["reference_number"].unique()
+    df = df[df["reference_number"].isin(filtered_reference_numbers)]
 
     # Save to CSV and Excel
     if write_to_file:

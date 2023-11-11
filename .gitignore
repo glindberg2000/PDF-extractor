@@ -203,3 +203,10 @@ dataextractai/venv.bak/
 .vscode/
 .idea/
 *.code-workspace
+
+
+# Ignore everything in the client_info directory
+data/input/client_info/*
+
+test_exclude_*
+
