@@ -241,14 +241,7 @@ ASSISTANTS_CONFIG = {
 }
 
 
-# Template for conversation logs for transactions requiring clarification
-CONVERSATION_TEMPLATE = {
-    "date": "",
-    "from": "",
-    "message": "",
-    "clarification_needed": False,
-    "additional_info": "",
-}
+CLASSIFICATIONS = ["Business Expense", "Personal Expense", "Needs Review"]
 
 CATEGORIES = [
     "Office Supplies",
@@ -286,7 +279,16 @@ Please categorize the provide transaction description into one of the business c
 Please categorize the provide transaction description into one of the business categories: {categories}, Return the best category match for the description in the variable 'category'. Secondly, return another variable 'classifiction' and determine if this is can be considered a business or is personal expense. If you're unsure return 'needs review' for the 'classification' variable. The description to categorize and classify is: 
 """,
     "categorize_classify_comment": """
-Please categorize the provide transaction description into one of the business categories: {categories}, Return the best category match for the description in the variable 'category'. Secondly, return another variable 'classifiction' and determine if this is can be considered a business or is personal expense. If you're unsure return 'needs review' for the 'classification' variable. The final variable to return is 'comments' which should include your reasoning, justification, and/or question you might have before you can be sure of your previous answers. The description to categorize and classify is:  
+Please categorize the transaction description into one of the business categories: {categories}, Return the best category match for the description in the variable 'category'. Secondly, return another variable 'classifiction' and determine if this is can be considered a business or is personal expense. If you're unsure return 'needs review' for the 'classification' variable. The final variable to return is 'comments' which should include your reasoning, justification, and/or question you might have before you can be sure of your previous answers. The description to categorize and classify is:  
+""",
+    "get_payee": """
+Determine by any means necessary, or extract or infer, the payee of the transaction and return a clean succint vendor name whether is a company, person or city goverment agency, utility or other entity. Use your best judgement come come up with the most logcial and recognizable vendor name which can be used for general ledgers and tax forms purposes and return it in the object key 'payee'. The transaction description is:   
+""",
+    "get_category": """
+Categorize the transaction description into one of the business categories: {categories}, Return the best category match for the description in the list provided and assign it to the object json key 'category'. The description to categorize is:  
+""",
+    "get_classification": """
+Return best classification of the transaction given the options {classifications}. Use the information in the client file for clues about wether this transaction is personal or business related. Return your choice in the json key 'classiciation' by choosing from the list provided. Also include a one sentence justification, reasoning, or question about your choice in the 'comments' json key.  The transaction to classify is:  
 """,
     "classify_json": """
 Respond with a downloadable file with JSON data: Classify the first 10 transactions in your locally accessible CSV file: rows 1 to 10, based on the provided categories: {categories}. Examine the 'description' field to determine the classification and consider other fields like 'amount' and 'quantity' as necessary.
@@ -407,3 +409,139 @@ FUNCTIONS = [
         },
     }
 ]
+
+
+PERSONAL_EXPENSES = [
+    "MUSEUMS",
+    "WALMART.COM",
+    "aliexpress",
+    "cosmetics",
+    "tok tok",
+    "sephora",
+    "brandy melville",
+    "choicelunch",
+    "forisus",
+    "klarna",
+    "locanda",
+    "dollskill",
+    "blue bottle",
+    "doordash",
+    "mobile purchase",
+    "monaco",
+    "cubik media",
+    "uniqlo",
+    "roblox",
+    "safeway",
+    "dollar tree",
+    "banking payment",
+    "transamerica",
+    "pharmacy",
+    "expert pay",
+    "amazon prime",
+    "apple cash",
+    "Target",
+    "SAKS",
+    "Zelle",
+    "wyre",
+    "paypal",
+    "Nintendo",
+    "Subway",
+    "fast food restaurnats",
+    "Hongmall",
+    "pretzels",
+    "coffee",
+    "clothing",
+    "Venmo",
+    "mexican",
+    "cashreward",
+    "deposit",
+    "T4",
+    "Zara",
+    "coach",
+    "quickly",
+    "marina foods",
+    "hollister",
+    "FANTUAN",
+    "TJ Max",
+    "Ross",
+    "BOBA",
+    "HALE",
+    "bristle",
+    "bakery",
+    "AUTO PAY",
+    "ATM",
+    "CVS",
+    "Lovisa",
+    "Marshalls",
+    "shein",
+    "macy",
+    "starbucks",
+    "AMZN Mktp",
+    "Pay as you go",
+    "woodlands",
+    "Chegg",
+    "Forever 21",
+    "Gift",
+    "uber eats",
+    "health",
+    "Checkcard",
+    "laundry",
+    "Maxx",
+    "peet",
+    "yamibuy",
+    "Expertpay",
+    "EATS",
+    "BATH & BODY",
+    "save As You Go",
+    "Transfer",
+    "STORIES",
+    "FOREIGN TRANSACTION FEE",
+    "HM.COM",
+    "BAKEUSA_1",
+    "GROCERY",
+    "WALGREENS",
+    "DOLLAR TR",
+    "H&M0144",
+    "POPEYES",
+    "NIJIYA MARKET",
+    "Autopay",
+    "WESTFIELD",
+    "HELLOJUNIPER.COM",
+    "INFINITEA.",
+    "ADRIATIC",
+    "7-ELEVEN",
+    "CALIFORNIA ACADEMY",
+    "WWW.BOXLUNCHGIVES.COM",
+    "MATCHA",
+    "YESSTYLE",
+    "URBANOUTFITTERS.COM",
+    "PURCHASE INTEREST CHARGE",
+    "CITY OF SAUSALITO SAUSALITO",
+    "RUSHBOWLS_22",
+    "KALOUST",
+    "APPLEBEES",
+    "Kate Spade",
+    "Snack",
+    "Hello Stranger",
+]
+
+
+BUSINESS_EXPENSES = [
+    "Lincoln University",
+    "LegalZoom",
+    "printwithme",
+    "fedex",
+    "corporate kit",
+    "LLC kit",
+    "TIERRANET",
+    "google",
+    "apple.com",
+    "shack15",
+    "Anker",
+    "samsung",
+    "mint",
+    "coinbase",
+    "office rent",
+]
+
+EXPENSE_THRESHOLD = 2

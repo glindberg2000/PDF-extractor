@@ -174,27 +174,6 @@ def check_encryption(pdf_path):
             return {"encrypted": True, "metadata": None}
 
 
-# # Let's extract the text from the pages starting from the fourth page line by line to understand the layout.
-# def extract_checks_section(pdf_path):
-#     checks_section_lines = []  # To hold lines from the checks section
-#     try:
-#         with pdfplumber.open(pdf_path) as pdf:
-#             # We'll start from the fourth page, where the checks section is expected
-#             for page in pdf.pages[3:]:
-#                 print("CHEKCING 3")
-#                 text = page.extract_text()
-#                 if (
-#                     text and "Checks" in text
-#                 ):  # If 'Checks' is in the text, we process that page
-#                     for line in text.split("\n"):
-#                         checks_section_lines.append(line)
-#                         print(f"CHECK DETECTED: {line}")
-#     except Exception as e:
-#         checks_section_lines.append(f"An exception occurred: {e}")
-
-#     return checks_section_lines
-
-
 def main(write_to_file=True):
     all_transactions = []
     for file_path in glob.glob(os.path.join(SOURCE_DIR, "*.pdf")):
@@ -221,6 +200,10 @@ def main(write_to_file=True):
 
     # Format datetime as string with four-digit year
     df["date"] = df["date"].dt.strftime("%m/%d/%Y")
+
+    # Normalie the amount so it matches our other statement export: payments + and deposits -
+
+    df["amount"] = df["amount"] * -1
 
     # Save to CSV and Excel
     if write_to_file:

@@ -6,12 +6,31 @@ from typing import Optional
 from io import StringIO
 import json
 import gspread
+
 from oauth2client.service_account import ServiceAccountCredentials
-from dataextractai.utils.utils import create_directory_if_not_exists
+from googleapiclient.discovery import build
+from google.oauth2.service_account import Credentials
+from oauth2client.service_account import ServiceAccountCredentials
+from google.oauth2 import service_account
+
+# Retrieve the spreadsheet ID from the environment variable
+spreadsheet_id = os.getenv("GOOGLE_SHEETS_ID")
+
+
+from dataextractai.utils.utils import (
+    create_directory_if_not_exists,
+    filter_by_amount,
+    filter_by_keywords,
+    standardize_classifications,
+)
 from dataextractai.utils.config import (
     PARSER_OUTPUT_PATHS,
     ASSISTANTS_CONFIG,
     COMMON_CONFIG,
+    PERSONAL_EXPENSES,
+    EXPENSE_THRESHOLD,
+    CATEGORIES,
+    CLASSIFICATIONS,
 )
 from dataextractai.classifiers.ai_categorizer import categorize_transaction
 from rich.console import Console
@@ -42,13 +61,105 @@ app = typer.Typer(
 )
 
 
-def main(name: str):
-    print(f"Hello {name}")
+def upload_and_set_dropdown(csv_file_path, sheet_name, credentials_json, categories):
+    """
+    Uploads data to a Google Sheet and sets a dropdown in column H using provided categories.
+
+    :param csv_file_path: Path to the CSV file.
+    :param sheet_name: Name of the Google Sheet to upload data to.
+    :param credentials_json: Path to the Google Service Account Credentials JSON file.
+    :param categories: List of category names for the dropdown.
+    """
+    classification_categories = CLASSIFICATIONS
+
+    # Read the CSV file with pandas
+    data = pd.read_csv(csv_file_path)
+
+    # Standardize the 'Amelia_AI_classification' column
+    standardize_classifications(data)
+
+    # Save the updated DataFrame back to CSV
+    data.to_csv(csv_file_path, index=False)
+
+    # Upload the CSV to Google Sheets first
+    upload_to_google_sheets(csv_file_path, sheet_name, credentials_json)
+
+    # Initialize Google Sheets API client
+    creds = service_account.Credentials.from_service_account_file(credentials_json)
+    service = build("sheets", "v4", credentials=creds)
+
+    # Column index for 'Amelia_AI_category' (Column H is index 7)
+    category_column_index = 7
+
+    # Set the column index for 'Amelia_AI_classification' (assuming it's Column I)
+    classification_column_index = 8
+
+    # Prepare the request body for batchUpdate to create the dropdown
+    # Prepare the request body for batchUpdate to create the dropdowns
+    requests_body = {
+        "requests": [
+            {
+                "setDataValidation": {
+                    "range": {
+                        "sheetId": 0,  # Update with the actual sheet ID if necessary
+                        "startRowIndex": 1,  # Assuming you want to skip the header row
+                        "endRowIndex": 1000,  # Adjust the range as needed
+                        "startColumnIndex": category_column_index,
+                        "endColumnIndex": category_column_index + 1,
+                    },
+                    "rule": {
+                        "condition": {
+                            "type": "ONE_OF_LIST",
+                            "values": [{"userEnteredValue": cat} for cat in categories],
+                        },
+                        "showCustomUi": True,
+                        "strict": True,
+                    },
+                }
+            },
+            # Now, create the dropdown for 'Amelia_AI_classification'
+            {
+                "setDataValidation": {
+                    "range": {
+                        "sheetId": 0,  # Assuming the first sheet
+                        "startRowIndex": 1,  # Assuming you want to skip the header row
+                        "endRowIndex": 1000,  # Adjust the range as needed
+                        "startColumnIndex": classification_column_index,
+                        "endColumnIndex": classification_column_index + 1,
+                    },
+                    "rule": {
+                        "condition": {
+                            "type": "ONE_OF_LIST",
+                            "values": [
+                                {"userEnteredValue": cat}
+                                for cat in classification_categories
+                            ],
+                        },
+                        "showCustomUi": True,
+                        "strict": True,
+                    },
+                }
+            },
+        ]
+    }
+
+    # Execute the batchUpdate to create both dropdowns
+    service.spreadsheets().batchUpdate(
+        spreadsheetId=spreadsheet_id, body=requests_body
+    ).execute()
+
+    print(
+        f"Data from {csv_file_path} uploaded to Google Sheet: {sheet_name} and dropdowns set."
+    )
 
 
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
-import pandas as pd
+# Constants
+# CATEGORIES = ['Category1', 'Category2', 'Category3']  # Your actual categories
+
+# # Example usage
+# csv_file_path = '/path/to/your/csv_file.csv'
+# sheet_name = 'your_google_sheet_name'
+# credentials_json = '/path/to/your/credentials.json'
 
 
 def upload_to_google_sheets(csv_file_path, sheet_name, credentials_json):
@@ -98,7 +209,9 @@ def upload_to_sheet():
         typer.echo("Google Sheets credentials path not set.")
         raise typer.Exit()
 
-    upload_to_google_sheets(csv_file_path, sheet_name, credentials_json)
+    # upload_to_google_sheets(csv_file_path, sheet_name, credentials_json)
+    # Call the function
+    upload_and_set_dropdown(csv_file_path, sheet_name, credentials_json, CATEGORIES)
     typer.echo(f"Data from {csv_file_path} uploaded to Google Sheet: {sheet_name}")
 
 
@@ -156,63 +269,26 @@ def set_last_processed_row(state_file_path: str, last_row: int):
         json.dump(state, f)
 
 
-# def process_data(df: pd.DataFrame, ai_config: dict) -> pd.DataFrame:
-#     """
-#     Process the given dataframe using the AI categorizer.
-
-#     :param df: DataFrame to be processed.
-#     :param ai_config: Configuration object for the selected AI assistant.
-#     :return: Processed DataFrame with new columns added.
-#     """
-#     # Initialize new columns for the entire dataframe if they don't exist
-#     new_columns = {
-#         column: ""
-#         for column in ["category", "classification", "comments"]
-#         if column not in df.columns
-#     }
-#     df = df.assign(**new_columns)
-
-#     for index, row in df.iterrows():
-#         # Get the description from the row
-#         description = row["description"]
-
-#         # Process the description using the AI categorizer
-#         processed_json = categorize_transaction(ai_config, description)
-
-#         # If the returned data is a stringified JSON, parse it
-#         if isinstance(processed_json, str):
-#             processed_data = json.loads(processed_json)
-#         else:
-#             processed_data = processed_json
-
-#         # Update the row in the dataframe with new data
-#         df.at[index, "category"] = processed_data.get("category", "")
-#         df.at[index, "classification"] = processed_data.get("classification", "")
-#         df.at[index, "comments"] = processed_data.get("comments", "")
-#         typer.echo(
-#             f"Row {index} processed: Category - {df.at[index, 'category']}, Classification - {df.at[index, 'classification']}"
-#         )
-
-#     return df
-
-
 def process_data(df: pd.DataFrame, ai_config: dict) -> pd.DataFrame:
     # Make a copy of the DataFrame to avoid SettingWithCopyWarning
     df = df.copy()
 
     # Extract AI name from config and create dynamic column names
     ai_name = ai_config.get("name", "UnknownAI")
+    payee_col = f"{ai_name}_payee"
     category_col = f"{ai_name}_category"
     classification_col = f"{ai_name}_classification"
     comments_col = f"{ai_name}_comments"
 
     # Initialize new columns for the entire dataframe if they don't exist
-    for column in [category_col, classification_col, comments_col]:
+    for column in [payee_col, category_col, classification_col, comments_col]:
         if column not in df.columns:
             df.loc[:, column] = ""  # Use .loc for safe column addition
 
     for index, row in df.iterrows():
-        description = row["description"]
+        description = (
+            row["description"] + " $" + str(row["amount"]) + " " + row["source"]
+        )
 
         # Process the description using the AI categorizer
         processed_json = categorize_transaction(ai_config, description)
@@ -222,13 +298,15 @@ def process_data(df: pd.DataFrame, ai_config: dict) -> pd.DataFrame:
             processed_data = json.loads(processed_json)
         else:
             processed_data = processed_json
-
+        # print("FULL JSON:", processed_data)
         # Update the row in the dataframe with new data
+        df.at[index, payee_col] = processed_data.get("payee", "")
         df.at[index, category_col] = processed_data.get("category", "")
         df.at[index, classification_col] = processed_data.get("classification", "")
         df.at[index, comments_col] = processed_data.get("comments", "")
         console.print(
             f"[fieldname]Row[/fieldname] [value]{index}[/value] [fieldname]processed[/fieldname]: "
+            f"[fieldname]Payee[/fieldname] - [value]{df.at[index, payee_col]}[/value], "
             f"[fieldname]Category[/fieldname] - [value]{df.at[index, category_col]}[/value], "
             f"[fieldname]Classification[/fieldname] - [value]{df.at[index, classification_col]}[/value]",
             style="normal",
@@ -346,9 +424,18 @@ def process(
     batch_file_path: Optional[str] = typer.Option(
         BATCH_PATH_CSV, help="Path for the batch CSV file to save for review."
     ),
+    year: int = typer.Option(2022, help="The year of the transactions to process."),
 ):
     # Load the CSV data
     df = pd.read_csv(OUTPUT_PATH_CSV)
+
+    # Filter the DataFrame by the specified year
+    df["transaction_date"] = pd.to_datetime(df["transaction_date"])
+    df = df[df["transaction_date"].dt.year == year]
+
+    # Apply the function to filter the DataFrame for included keywords and above the expense threshold
+    df = filter_by_keywords(df, PERSONAL_EXPENSES)
+    df = filter_by_amount(df, EXPENSE_THRESHOLD)
 
     # Select the AI configuration based on user input
     if ai_name in ASSISTANTS_CONFIG:
