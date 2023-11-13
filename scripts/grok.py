@@ -89,12 +89,31 @@ def upload_and_set_dropdown(csv_file_path, sheet_name, credentials_json, categor
     service = build("sheets", "v4", credentials=creds)
 
     # Column index for 'Amelia_AI_category' (Column H is index 7)
-    category_column_index = 7
+    category_column_index = 8
 
     # Set the column index for 'Amelia_AI_classification' (assuming it's Column I)
-    classification_column_index = 8
+    classification_column_index = 9
 
-    # Prepare the request body for batchUpdate to create the dropdown
+    # Add requests to clear existing validations (if needed)
+    remove_validation_request = {
+        "setDataValidation": {
+            "range": {
+                "sheetId": 0,
+                "startRowIndex": 1,
+                "endRowIndex": 1000,
+                "startColumnIndex": 7,  # The column index to clear
+                "endColumnIndex": 10,  # Adjust this as needed
+            },
+            "rule": {
+                "condition": {
+                    "type": "TEXT_CONTAINS",
+                    "values": [{"userEnteredValue": ""}],
+                },
+                "showCustomUi": False,
+            },
+        }
+    }
+
     # Prepare the request body for batchUpdate to create the dropdowns
     requests_body = {
         "requests": [
@@ -142,6 +161,9 @@ def upload_and_set_dropdown(csv_file_path, sheet_name, credentials_json, categor
             },
         ]
     }
+
+    # Add these requests to the existing requests_body['requests']
+    requests_body["requests"].insert(0, remove_validation_request)
 
     # Execute the batchUpdate to create both dropdowns
     service.spreadsheets().batchUpdate(
