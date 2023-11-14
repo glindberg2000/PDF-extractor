@@ -109,19 +109,20 @@ To use `DataExtractAI`, place your PDF documents in the appropriate `data/input`
 python scripts/grok.py run-parsers
 ```
 
-The transactions will be saved individually in their original column formats and also transformed, merged and saved in the `data/output` directory as CSV file (consolidated_core_output.csv).
+The transactions will be saved individually in their original column formats and also transformed, merged and saved in the `data/output` directory as CSV file (consolidated_core_output.csv):
 
 ![Parser Output](assets/parser_output.png)
 
 Use the AI classifier command to  categorize, classify, and justify each transaction for bookkeeping purposes. It's currently set up to use a bookeeper AI Assistant (AmeliaAI) using Open AI model 3.5 Turbo - 1106 which works well for simple transactions and is cost effective. For more complex transactions you can pass in the assistant '-- ai_name DaveAI' which is set up to gpt4-turbo and has a more extensive CPA system prompt. For best results create a client text file in the inputs/client_info folder which describes your personal business or job situation, marital status, any tools or expenses which are typically used in your business or craft. This will help AI consider whether they are personal or business expenses for tax purposes classificaiton.
 
+You can adjust the AI batch size processing by adding --batch-size 
+This ensures that AI processed files are saved in batches in case there is a break in connectivity with Open AI and don't want to re-process them and incur added expenses.
+
 ```bash
 python scripts/grok.py process
 ```
-![Process Help](assets/process_help.png)
 
-You can adjust the AI batch size processing by adding --batch-size
-This ensures that AI processed files are saved in batches in case there is a break in connectivity with Open AI and don't want to re-process them and incur added expenses.
+ Sample output from AI batch rocessing:
 
 ![Process Output](assets/process_output.png)
 
@@ -130,7 +131,6 @@ After reviewing the batch files you can merge them into one consolidated file (c
 ```bash
 python scripts/grok.py merge-batch-files
 ```
-![Merge](assets/merge_help.png)
 
 To use the google sheets uploader be sure to export your google sheets auth key"
 
