@@ -1,21 +1,44 @@
+"""
+grok.py
+
+This script serves as the main entry point for the AI CSV Processor CLI, a versatile tool designed to streamline the processing of financial documents. Utilizing advanced AI assistants, it offers a range of functionalities:
+
+1. Parser Execution: Run a series of parsers to extract data from various financial documents and convert them into a structured format.
+
+2. AI-Assisted Processing: Leverage OpenAI assistants to categorize, classify, and provide justifications for each transaction, enhancing data with insightful AI-generated content.
+
+3. Google Sheets Integration: Seamlessly upload the final processed output to Google Sheets for easy access and review.
+
+The script is highly configurable, with a `config.py` file that contains various settings including categories, classifications, AI assistant configurations, system prompts, models, etc. It also allows the use of keywords as hints to guide the AI in processing data more effectively.
+
+Also, you can add personal info for OpenAI to use by creating a Client text file in the client_info folder. Include all your relevant personal and business information for OpenAI to use during classification.
+
+Usage:
+    python grok.py [COMMAND] [OPTIONS]
+
+Example:
+    python grok.py run-parsers
+    python grok.py process --batch-size 25
+    python grok.py upload-to-sheet
+
+For detailed command usage, run:
+    python grok.py --help
+"""
+
 import typer
 from typer import Typer, echo
 import os
+import shutil
 import pandas as pd
 from typing import Optional
 from io import StringIO
 import json
-import gspread
 
-from oauth2client.service_account import ServiceAccountCredentials
+import gspread
 from googleapiclient.discovery import build
 from google.oauth2.service_account import Credentials
 from oauth2client.service_account import ServiceAccountCredentials
 from google.oauth2 import service_account
-
-# Retrieve the spreadsheet ID from the environment variable
-spreadsheet_id = os.getenv("GOOGLE_SHEETS_ID")
-
 
 from dataextractai.utils.utils import (
     create_directory_if_not_exists,
@@ -31,10 +54,18 @@ from dataextractai.utils.config import (
     EXPENSE_THRESHOLD,
     CATEGORIES,
     CLASSIFICATIONS,
+    REPORTS,
 )
 from dataextractai.classifiers.ai_categorizer import categorize_transaction
+from dataextractai.parsers.run_parsers import run_all_parsers
 from rich.console import Console
 from rich.theme import Theme
+
+
+# Retrieve the auth key and spreadsheet ID from the environment variable
+spreadsheet_id = os.getenv("GOOGLE_SHEETS_ID")
+credentials_json = os.environ.get("GOOGLE_SHEETS_CREDENTIALS_PATH")
+
 
 # Define a theme with a specific color for comments
 custom_theme = Theme(
@@ -55,10 +86,26 @@ BATCH_PATH_CSV = PARSER_OUTPUT_PATHS["batch"]["csv"]
 STATE_FILE = PARSER_OUTPUT_PATHS["state"]
 AMELIA_AI = ASSISTANTS_CONFIG["AmeliaAI"]
 DAVE_AI = ASSISTANTS_CONFIG["DaveAI"]
+BATCH_DIR = COMMON_CONFIG["batch_output_dir"]
 
 app = typer.Typer(
     help="AI CSV Processor CLI. Use this tool to process CSV files with AI and manage the output data."
 )
+
+
+@app.command()
+def run_parsers():
+    """
+    Run all pdf parsers and normalize and export data for further processing and reporting
+
+    This command executes all configured parsers to process financial documents.
+    It outputs the total number of lines processed across all files.
+    """
+    total_lines = run_all_parsers()
+    console.print(
+        f"[fieldname]Total Lines Processed[/fieldname]: [value]{total_lines}[/value]",
+        style="normal",
+    )
 
 
 def upload_and_set_dropdown(csv_file_path, sheet_name, credentials_json, categories):
@@ -73,9 +120,12 @@ def upload_and_set_dropdown(csv_file_path, sheet_name, credentials_json, categor
     classification_categories = CLASSIFICATIONS
 
     # Read the CSV file with pandas
-    data = pd.read_csv(csv_file_path)
+    try:
+        data = pd.read_csv(csv_file_path)
+    except FileNotFoundError:
+        print("Output File not found. Please verify the data files is ready for upload")
 
-    # Standardize the 'Amelia_AI_classification' column
+    # Standardize the 'Amelia_AI_classification' column to match fixed list in the config
     standardize_classifications(data)
 
     # Save the updated DataFrame back to CSV
@@ -88,7 +138,7 @@ def upload_and_set_dropdown(csv_file_path, sheet_name, credentials_json, categor
     creds = service_account.Credentials.from_service_account_file(credentials_json)
     service = build("sheets", "v4", credentials=creds)
 
-    # Column index for 'Amelia_AI_category' (Column H is index 7)
+    # Column index for 'Amelia_AI_category' (Column H is index 8)
     category_column_index = 8
 
     # Set the column index for 'Amelia_AI_classification' (assuming it's Column I)
@@ -175,15 +225,6 @@ def upload_and_set_dropdown(csv_file_path, sheet_name, credentials_json, categor
     )
 
 
-# Constants
-# CATEGORIES = ['Category1', 'Category2', 'Category3']  # Your actual categories
-
-# # Example usage
-# csv_file_path = '/path/to/your/csv_file.csv'
-# sheet_name = 'your_google_sheet_name'
-# credentials_json = '/path/to/your/credentials.json'
-
-
 def upload_to_google_sheets(csv_file_path, sheet_name, credentials_json):
     """
     Upload data from a CSV file to a Google Sheet.
@@ -225,14 +266,11 @@ def upload_to_sheet():
     Upload data to a specified Google Sheet.
     """
     csv_file_path = CONSOLIDATED_BATCH_PATH
-    sheet_name = "ExpenseReport"
-    credentials_json = os.environ.get("GOOGLE_SHEETS_CREDENTIALS_PATH")
+    sheet_name = REPORTS["sheetname"]
     if not credentials_json:
         typer.echo("Google Sheets credentials path not set.")
         raise typer.Exit()
 
-    # upload_to_google_sheets(csv_file_path, sheet_name, credentials_json)
-    # Call the function
     upload_and_set_dropdown(csv_file_path, sheet_name, credentials_json, CATEGORIES)
     typer.echo(f"Data from {csv_file_path} uploaded to Google Sheet: {sheet_name}")
 
@@ -265,10 +303,6 @@ def process_batches_continuously():
         typer.echo("Batch processing interrupted. Exiting...")
 
 
-# Replace process_next_batch with your actual batch processing function
-# Add additional logic as needed
-
-
 def get_last_processed_row(state_file_path: str) -> int:
     """
     Get the index of the last processed row from the state file.
@@ -280,6 +314,26 @@ def get_last_processed_row(state_file_path: str) -> int:
         return state.get("last_processed_row", 0)
     except (FileNotFoundError, json.JSONDecodeError):
         return 0  # If file does not exist or is empty, start from the beginning
+
+
+def reset_state(state_file_path: str):
+    initial_state = {
+        "last_processed_row": 0
+    }  # Adjust according to your state structure
+    with open(state_file_path, "w") as f:
+        json.dump(initial_state, f)
+
+
+def wipe_batches_directory(directory_path: str):
+    for filename in os.listdir(directory_path):
+        file_path = os.path.join(directory_path, filename)
+        try:
+            if os.path.isfile(file_path) or os.path.islink(file_path):
+                os.unlink(file_path)
+            elif os.path.isdir(file_path):
+                shutil.rmtree(file_path)
+        except Exception as e:
+            print(f"Failed to delete {file_path}. Reason: {e}")
 
 
 def set_last_processed_row(state_file_path: str, last_row: int):
@@ -341,42 +395,6 @@ def process_data(df: pd.DataFrame, ai_config: dict) -> pd.DataFrame:
     return df
 
 
-@app.command()
-def merge_reviewed(
-    input_file_path: str = typer.Option(
-        OUTPUT_PATH_CSV, help="Path for the input CSV file to be updated."
-    ),
-    batch_file_path: str = typer.Option(
-        BATCH_PATH_CSV,
-        help="Path for the reviewed batch CSV file that is to be merged.",
-    ),
-):
-    """
-    Merge a reviewed batch CSV file with the main input CSV file.
-    """
-    merge_batch_output_with_main_file(input_file_path, batch_file_path)
-    typer.echo(
-        f"Reviewed batch file at {batch_file_path} merged into {input_file_path}."
-    )
-
-
-def merge_batch_output_with_main_file(input_file_path: str, output_file_path: str):
-    input_df = pd.read_csv(input_file_path)
-    output_df = pd.read_csv(output_file_path)
-    merged_df = pd.merge(
-        input_df, output_df, on="id", how="left", suffixes=("", "_output")
-    )
-    for col in output_df.columns:
-        if col + "_output" in merged_df.columns:
-            merged_df[col] = merged_df[col + "_output"]
-            merged_df.drop(columns=[col + "_output"], inplace=True)
-    merged_df.to_csv(input_file_path, index=False)
-
-
-import os
-import pandas as pd
-
-
 def merge_batches(batch_folder_path, final_output_path, sort_column):
     """
     Merge all batch files in the given folder into a final output file and sort it.
@@ -418,24 +436,19 @@ def merge_batch_files():
     typer.echo(f"Merged batches saved to {final_output}")
 
 
-@app.command(help="Process data in batches and save for review.")
+@app.command(help="Process data wiht AI Assistant in batches and save for review.")
 def process(
-    batch_size: int = typer.Option(3, help="Number of rows to process in a batch."),
+    batch_size: int = typer.Option(25, help="Number of rows to process in a batch."),
     ai_name: str = typer.Option(
         "AmeliaAI",
         help="Select the AI assistant to use for processing. Options: AmeliaAI, DaveAI.",
-    ),
-    continue_from_last: bool = typer.Option(
-        False, help="Continue processing from the last processed row."
     ),
     start_row: Optional[int] = typer.Option(None, help="The starting row to process."),
     end_row: Optional[int] = typer.Option(
         None,
         help="The ending row to process. If not provided, process until the batch size is reached.",
     ),
-    reset: bool = typer.Option(
-        False, help="Reset the processed file and start from scratch."
-    ),
+    reset: bool = typer.Option(False, help="Wipe batches and start from scratch."),
     merge_directly: bool = typer.Option(
         False,
         help="Merge the processed output directly into the input file, skipping review.",
@@ -448,6 +461,11 @@ def process(
     ),
     year: int = typer.Option(2022, help="The year of the transactions to process."),
 ):
+    if reset:
+        reset_state(STATE_FILE)
+        wipe_batches_directory(BATCH_DIR)
+        typer.echo("State reset and batches directory wiped.")
+
     # Load the CSV data
     df = pd.read_csv(OUTPUT_PATH_CSV)
 
@@ -491,10 +509,11 @@ def process(
 
             # Save the processed batch
             if merge_directly:
-                processed_df.to_csv(
-                    output_file_path, mode="a", header=False, index=False
+                batch_file = (
+                    f"{batch_file_path}_batch_{start_index}_to_{end_index - 1}.csv"
                 )
-                typer.echo(f"Processed batch merged directly into {output_file_path}.")
+                processed_df.to_csv(batch_file, index=False)
+                merge_batch_files()
             else:
                 batch_file = (
                     f"{batch_file_path}_batch_{start_index}_to_{end_index - 1}.csv"
@@ -512,9 +531,6 @@ def process(
         typer.echo("Batch processing interrupted by user. Exiting...")
 
     typer.echo("All batches processed or operation stopped by user.")
-
-
-# Rest of the script remains the same...
 
 
 if __name__ == "__main__":

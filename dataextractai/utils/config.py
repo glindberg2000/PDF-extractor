@@ -4,6 +4,9 @@ import os
 # Define the base directory (root of the project)
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+
+REPORTS = {"sheetname": "ExpenseReport"}
+
 # Common configuration paths
 COMMON_CONFIG = {
     "data_dir": os.path.join(BASE_DIR, "data"),

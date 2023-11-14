@@ -1,14 +1,17 @@
 annotated-types==0.6.0
 anyio==3.7.1
 Bottleneck @ file:///private/var/folders/nz/j6p8yfhx1mv_0grj5xl4650h0000gp/T/abs_07078715-3ab7-4562-8d3d-d56b0eaa0f7dp504n_ny/croots/recipe/bottleneck_1657175566567/work
+cachetools==5.3.2
 certifi==2023.7.22
 cffi==1.16.0
 charset-normalizer==3.3.2
 ci-info==0.3.0
 click @ file:///private/var/folders/nz/j6p8yfhx1mv_0grj5xl4650h0000gp/T/abs_61srkg7e2e/croot/click_1698129815327/work
+colorama @ file:///private/var/folders/nz/j6p8yfhx1mv_0grj5xl4650h0000gp/T/abs_100_k35lkb/croot/colorama_1672386539781/work
 configobj==5.0.8
 configparser==6.0.0
 cryptography==41.0.5
+-e git+https://github.com/glindberg2000/PDF-extractor.git@9e3fe01a8451bde3e03d9a111cf3262e97dcd5bd#egg=dataextractai
 distro==1.8.0
 et-xmlfile==1.1.0
 etelemetry==0.3.1
@@ -16,6 +19,13 @@ exceptiongroup==1.1.3
 filelock==3.13.1
 fitz==0.0.1.dev2
 future==0.18.3
+google-api-core==2.14.0
+google-api-python-client==2.107.0
+google-auth==2.23.4
+google-auth-httplib2==0.1.1
+google-auth-oauthlib==1.1.0
+googleapis-common-protos==1.61.0
+gspread==5.12.0
 h11==0.14.0
 httpcore==1.0.1
 httplib2==0.22.0
@@ -24,12 +34,16 @@ idna==3.4
 isodate==0.6.1
 looseversion==1.3.0
 lxml==4.9.3
+markdown-it-py @ file:///private/var/folders/nz/j6p8yfhx1mv_0grj5xl4650h0000gp/T/abs_43l_4ajkho/croot/markdown-it-py_1684279912406/work
+mdurl @ file:///private/var/folders/nz/j6p8yfhx1mv_0grj5xl4650h0000gp/T/abs_0a8xm6w4wv/croots/recipe/mdurl_1659716035810/work
 networkx==3.2.1
 nibabel==5.1.0
 nipype==1.8.6
 numexpr @ file:///private/var/folders/k1/30mswbxs7r1g6zwn8y4fyt500000gp/T/abs_45yefq0kt6/croot/numexpr_1696515289183/work
 numpy @ file:///private/var/folders/nz/j6p8yfhx1mv_0grj5xl4650h0000gp/T/abs_362zs5g963/croot/numpy_and_numpy_base_1695830450707/work/dist/numpy-1.26.0-cp39-cp39-macosx_11_0_arm64.whl#sha256=e37b41d15b4b8b2adde02a2f2a3e74daaccdfa5962f4470c1c266acd01ffd2a0
-openai==1.0.1
+oauth2client==4.1.3
+oauthlib==3.2.2
+openai==1.1.1
 openpyxl==3.0.10
 packaging==23.2
 pandas @ file:///private/var/folders/nz/j6p8yfhx1mv_0grj5xl4650h0000gp/T/abs_63jsm9vzq9/croot/pandas_1697477169306/work/dist/pandas-2.1.1-cp39-cp39-macosx_11_0_arm64.whl#sha256=c95d0a00b5fda907c569b927f6e37de0394350acfdc26d677aa69455e0722e30
@@ -37,11 +51,15 @@ pathlib==1.0.1
 pdfminer.six==20221105
 pdfplumber==0.10.3
 Pillow==10.1.0
+protobuf==4.25.0
 prov==2.0.0
+pyasn1==0.5.0
+pyasn1-modules==0.3.0
 pycparser==2.21
 pydantic==2.4.2
 pydantic_core==2.10.1
 pydot==1.4.2
+Pygments @ file:///private/var/folders/nz/j6p8yfhx1mv_0grj5xl4650h0000gp/T/abs_29bs9f_dh9/croot/pygments_1684279974747/work
 PyMuPDF==1.23.6
 PyMuPDFb==1.23.6
 pyparsing==3.1.1
@@ -53,12 +71,18 @@ pytz @ file:///private/var/folders/k1/30mswbxs7r1g6zwn8y4fyt500000gp/T/abs_6btwy
 pyxnat==1.6
 rdflib==7.0.0
 requests==2.31.0
+requests-oauthlib==1.3.1
+rich @ file:///private/var/folders/nz/j6p8yfhx1mv_0grj5xl4650h0000gp/T/abs_f2payco56o/croot/rich_1684282180753/work
+rsa==4.9
 scipy==1.11.3
+shellingham @ file:///private/var/folders/nz/j6p8yfhx1mv_0grj5xl4650h0000gp/T/abs_9bf5wowles/croot/shellingham_1669142181600/work
 simplejson==3.19.2
 six @ file:///tmp/build/80754af9/six_1644875935023/work
 sniffio==1.3.0
 tqdm==4.66.1
 traits==6.3.2
+typer @ file:///private/var/folders/nz/j6p8yfhx1mv_0grj5xl4650h0000gp/T/abs_e62p5mo8z5/croot/typer_1684251930377/work
 typing_extensions @ file:///private/var/folders/nz/j6p8yfhx1mv_0grj5xl4650h0000gp/T/abs_1fdywrbp_3/croot/typing_extensions_1690297474455/work
 tzdata @ file:///croot/python-tzdata_1690578112552/work
+uritemplate==4.1.1
 urllib3==2.0.7

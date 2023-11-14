@@ -54,39 +54,6 @@ def client_files(directory):
     return concatenated_contents
 
 
-# def categorize_transaction(ASSISTANT_CONFIG, desc):
-#     """
-#     Classify the specified description using the AI assistant.
-#     """
-
-#     # Format the categories for inclusion in the prompt
-#     formatted_categories = ", ".join([f'"{category}"' for category in CATEGORIES])
-
-#     classify_prompt = PROMPTS["categorize_classify_comment"].format(
-#         categories=formatted_categories
-#     )
-
-#     classify_prompt = classify_prompt + desc + client_files(CLIENT_DIR)
-
-#     # print(classify_prompt)
-#     #
-
-#     response = client.chat.completions.create(
-#         model=ASSISTANT_CONFIG["model"],
-#         response_format={"type": "json_object"},
-#         messages=[
-#             {
-#                 "role": "system",
-#                 "content": ASSISTANT_CONFIG["instructions"] + " return json only",
-#             },
-#             {"role": "user", "content": classify_prompt},
-#         ],
-#     )
-
-#     category = response.choices[0].message.content
-#     return category
-
-
 def categorize_transaction(ASSISTANT_CONFIG, desc):
     """
     Classify the specified description using the AI assistant.
@@ -138,8 +105,6 @@ def categorize_transaction(ASSISTANT_CONFIG, desc):
 
     # Serialize the final JSON object to a JSON string
     final_json_str = json.dumps(final_json)
-
-    print(final_json_str)
 
     return final_json_str
 

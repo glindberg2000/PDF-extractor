@@ -20,7 +20,7 @@ following the same categorization as the input files.
 
 Usage:
     To run all parsers and output to CSV and XLSX files:
-    $ python -m scripts.run_parsers
+    $ python  dataextractai/parsers/run_parsers.py
 
     To import and run parsers within another module:
     from scripts.run_parsers import run_all_parsers
@@ -134,15 +134,16 @@ def run_all_parsers():
     transformed_data["ID"] = range(1, len(transformed_data) + 1)
     print(f"Total Transactions: {transformed_data}")
 
-    # If you want to rearrange columns and put 'ID' first
+    # rearrange columns and put 'ID' first
     columns = ["ID"] + [col for col in transformed_data.columns if col != "ID"]
     transformed_data = transformed_data[columns]
 
-    return transformed_data
+    # export data
+    transformed_data.to_csv(OUTPUT_PATH_CSV, index=False)
+    transformed_data.to_excel(OUTPUT_PATH_XLSX, index=False)
+
+    return len(transformed_data)
 
 
 if __name__ == "__main__":
-    transformed_data = run_all_parsers()
-    # You can now do something with transformed_data
-    transformed_data.to_csv(OUTPUT_PATH_CSV, index=False)
-    transformed_data.to_excel(OUTPUT_PATH_XLSX, index=False)
+    run_all_parsers()
