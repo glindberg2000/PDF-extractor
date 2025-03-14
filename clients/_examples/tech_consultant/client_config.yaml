@@ -1,0 +1,41 @@
+# Example Tech Consultant Configuration
+client_name: "Jane Smith Consulting"
+business_type: "Sole Proprietorship"
+
+# Contact Information
+contact:
+  name: "Jane Smith"
+  email: "jane@example.com"
+  phone: "555-0123"
+
+# Business Details
+business_details:
+  industry: "Technology Consulting"
+  tax_id: "XX-XXXXXXX"
+  fiscal_year_end: "12-31"
+
+# Transaction Categories
+custom_categories:
+  - name: "Business Expenses"
+    subcategories:
+      - "Development Tools"
+      - "Cloud Services"
+      - "Client Entertainment"
+      - "Professional Development"
+      - "Home Office"
+  - name: "Business Income"
+    subcategories:
+      - "Consulting Fees"
+      - "Workshop Revenue"
+      - "Product Sales"
+  - name: "Personal Expenses"
+    subcategories:
+      - "Personal Travel"
+      - "Healthcare"
+      - "Entertainment"
+
+# Processing Preferences
+preferences:
+  default_output_format: "csv"
+  categorization_model: "gpt-4-vision"
+  batch_size: 50 
