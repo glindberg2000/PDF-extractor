@@ -1,4 +1,3 @@
-
 # DataExtractAI
 
 ## Introduction
@@ -169,4 +168,146 @@ If you have any questions or suggestions, please feel free to contact us at [gre
 
 ## Acknowledgements
 - OPENAI for breakthrough AI technology without which this coding could not have been completed, and all open source AI tools paving the way to massive productivity increases. 
+
+# DataExtractAI Vision
+
+## Introduction
+`DataExtractAI Vision` is a modernized tool for extracting transaction data from financial documents using GPT-4 Vision. It eliminates the need for document-specific parsers by leveraging AI vision capabilities to understand and extract data from any financial statement format.
+
+## Features
+- Universal PDF Support: Works with any financial document format
+- AI-Powered Extraction: Uses GPT-4 Vision for accurate data extraction
+- Automatic Transaction Categorization: Includes best-guess transaction categories
+- Multi-Client Support: Organized structure for handling multiple clients
+- Simple Interface: Easy-to-use command-line tools
+- Batch Processing: Handle multiple documents efficiently
+- Structured Output: Clean CSV format for easy integration
+
+## Getting Started
+
+### Prerequisites
+- Python 3.8 or higher
+- OpenAI API key with GPT-4 Vision access
+- `poppler-utils` for PDF processing:
+  - macOS: `brew install poppler`
+  - Ubuntu: `apt-get install poppler-utils`
+  - Windows: Download from [poppler releases](http://blog.alivate.com.au/poppler-windows/)
+
+### Installation
+1. Clone the repository:
+```bash
+git clone https://github.com/glindberg2000/PDF-extractor.git
+cd PDF-extractor
+```
+
+2. Create and activate virtual environment:
+```bash
+# Create virtual environment
+python -m venv venv
+
+# Activate virtual environment
+# On Windows:
+venv\Scripts\activate
+# On macOS/Linux:
+source venv/bin/activate
+```
+
+3. Install the package:
+```bash
+pip install -e .
+```
+
+### Configuration
+1. Set your OpenAI API key:
+```bash
+export OPENAI_API_KEY='your-api-key-here'
+```
+Or create a `.env` file:
+```
+OPENAI_API_KEY=your-api-key-here
+```
+
+## Setting Up a New Client
+
+### 1. Create Client Directory
+```bash
+# Create new client directory from template
+cp -r clients/_template clients/new_client_name
+```
+
+### 2. Configure Client Settings
+1. Edit `clients/new_client_name/client_config.yaml`:
+   - Update client information
+   - Customize transaction categories
+   - Set processing preferences
+
+### 3. Prepare Document Directories
+The client directory structure:
+```
+clients/
+├── new_client_name/
+│   ├── client_config.yaml
+│   ├── input/           # Place PDF statements here
+│   └── output/          # Processed results appear here
+├── _template/           # Template for new clients
+└── _examples/           # Example configurations
+```
+
+### 4. Process Documents
+1. Place PDF statements in the client's input directory
+2. Run the processor:
+```bash
+# Process a single file
+dataextractai-vision process-file clients/new_client_name/input/statement.pdf --output clients/new_client_name/output
+
+# Process all files in input directory
+dataextractai-vision process-dir clients/new_client_name/input --output clients/new_client_name/output
+```
+
+## Example Client Setup
+Check out the example client configuration in `clients/_examples/tech_consultant/` for a sample setup of a technology consulting business.
+
+## Output Format
+The tool generates CSV files with the following columns:
+- `date`: Transaction date (YYYY-MM-DD format)
+- `description`: Full transaction description
+- `amount`: Transaction amount (negative for debits)
+- `category`: Best-guess transaction category
+
+Example:
+```csv
+date,description,amount,category
+2024-03-14,AMAZON.COM PURCHASE,-29.99,Shopping
+2024-03-15,DIRECT DEPOSIT SALARY,5000.00,Income
+```
+
+## Best Practices
+1. Client Organization
+   - Keep each client's data separate in their own directory
+   - Use meaningful client directory names
+   - Maintain client-specific configuration files
+
+2. Document Management
+   - Organize input documents by date or type
+   - Regular backup of processed data
+   - Review output files promptly
+
+3. Configuration
+   - Customize categories based on client's business
+   - Adjust batch sizes based on document volume
+   - Document any special processing requirements
+
+## Contributing
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## License
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+
+## Contact
+For questions or suggestions, please contact [greglindbereg@gmail.com](mailto:greglindbereg@gmail.com).
+
+## Acknowledgements
+- OpenAI for the powerful GPT-4 Vision API
+- The open-source community for various Python libraries
+- All contributors and users of the project
 
