@@ -1,3 +1,19 @@
+"""
+PDF Extractor API
+"""
+
+import os
+import logging
+from datetime import datetime
+import json
+import aiofiles
+from typing import List, Optional
+import asyncio
+from sqlalchemy.sql import func
+from dotenv import load_dotenv
+import fitz
+import sqlite3
+import pandas as pd
 from sqlalchemy.orm import Session
 from fastapi import (
     FastAPI,
@@ -10,19 +26,26 @@ from fastapi import (
 )
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import pandas as pd
-import os
-from datetime import datetime
-import json
-import aiofiles
-from typing import List, Optional
-import asyncio
-from sqlalchemy.sql import func
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler(), logging.FileHandler("pdf_extractor.log")],
+)
+logger = logging.getLogger(__name__)
+
+# Load environment variables
+load_dotenv()
+
+# Check for required environment variables
+if not os.getenv("OPENAI_API_KEY"):
+    print("Warning: OPENAI_API_KEY not set. Some features will be disabled.")
 
 from database import SessionLocal, engine, get_db
 from models import Base, Client, Category, ClientFile, Transaction
 from ai_utils import generate_categories
-from dataextractai_vision import VisionExtractor
+from dataextractai_vision.extractor import process_pdf_file
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -94,6 +117,9 @@ class FileResponse(BaseModel):
     processed_at: Optional[datetime] = None
     error_message: Optional[str] = None
     total_transactions: Optional[int] = None
+    pages_processed: Optional[int] = None
+    total_pages: Optional[int] = None
+    file_hash: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -200,7 +226,12 @@ async def create_category(
 
 @app.get("/clients/{client_id}/files/", response_model=List[FileResponse])
 async def list_client_files(client_id: int, db: Session = Depends(get_db)):
-    return db.query(ClientFile).filter(ClientFile.client_id == client_id).all()
+    try:
+        files = db.query(ClientFile).filter(ClientFile.client_id == client_id).all()
+        return files
+    except Exception as e:
+        print(f"Error fetching files: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error fetching files: {str(e)}")
 
 
 @app.websocket("/ws")
@@ -217,10 +248,23 @@ async def websocket_endpoint(websocket: WebSocket):
 
 async def broadcast_status(message: dict):
     """Broadcast status update to all connected clients"""
+    # Ensure we have all required fields
+    if "file_id" in message:
+        message.update(
+            {
+                "type": "status_update",
+                "timestamp": datetime.now().isoformat(),
+                "pages_processed": message.get("pages_processed", 0),
+                "total_pages": message.get("total_pages", 0),
+                "total_transactions": message.get("total_transactions", 0),
+            }
+        )
+
     for connection in active_connections:
         try:
             await connection.send_json(message)
-        except:
+        except Exception as e:
+            print(f"Error broadcasting status: {e}")
             active_connections.remove(connection)
 
 
@@ -228,93 +272,103 @@ async def process_pdf_background(
     file_path: str, client_id: int, file_id: int, db: Session
 ):
     """Process a PDF file in the background"""
-    print(f"Starting background processing for file: {file_path}")
+    logger.info(f"Starting background processing for file: {file_path}")
     try:
         # Update file status to processing
         db_file = db.query(ClientFile).filter(ClientFile.id == file_id).first()
         if not db_file:
-            print(f"Error: File record {file_id} not found in database")
+            logger.error(f"Error: File record {file_id} not found in database")
             return
 
-        print(f"Updating status to processing for file ID: {file_id}")
         db_file.status = "processing"
         db.commit()
-
         await broadcast_status(
             {
                 "type": "status_update",
-                "file": os.path.basename(file_path),
+                "file_id": file_id,
                 "status": "processing",
-                "message": "Processing started",
+                "message": "Starting PDF processing...",
             }
         )
 
-        print("Processing PDF file...")
-        # Process the PDF using the extractor
-        extractor = VisionExtractor()
-        # Run the synchronous process_pdf in a thread pool
-        csv_path = await asyncio.to_thread(extractor.process_pdf, file_path)
-        if not csv_path:
-            raise Exception("Failed to process PDF file")
+        # Process the PDF using our new parser system
+        logger.info("Calling process_pdf_file...")
+        result = process_pdf_file(file_path)
+        logger.info(f"Process result: {result}")
 
-        print(f"Reading transactions from CSV: {csv_path}")
-        # Read transactions from CSV
-        df = pd.read_csv(csv_path)
+        if result.transactions:
+            logger.info(f"Found {len(result.transactions)} transactions")
+            # Update file record
+            db_file.status = "completed"
+            db_file.processed_at = datetime.now()
+            db_file.total_transactions = len(result.transactions)
+            db_file.pages_processed = result.pages_processed
+            db_file.total_pages = result.total_pages
+            db.commit()
 
-        print(f"Found {len(df)} transactions")
-        # Store transactions in database
-        transactions = []
-        for _, row in df.iterrows():
-            transaction = Transaction(
-                client_id=client_id,
-                file_id=file_id,
-                date=datetime.strptime(row["date"], "%Y-%m-%d").date(),
-                description=row["description"],
-                amount=float(row["amount"]),
-                raw_text=row["raw_text"],
-                is_categorized=False,
-                notes=None,
-                confidence_score=None,
-                categorized_at=None,
+            # Add transactions to database
+            for transaction in result.transactions:
+                logger.debug(f"Adding transaction: {transaction}")
+                db_transaction = Transaction(
+                    client_file_id=file_id,
+                    date=pd.to_datetime(transaction.date),
+                    description=transaction.description,
+                    amount=transaction.amount,
+                    raw_text=transaction.category,  # Store the parser-suggested category
+                    is_categorized=False,
+                )
+                db.add(db_transaction)
+
+            db.commit()
+            logger.info("Successfully committed transactions to database")
+
+            await broadcast_status(
+                {
+                    "type": "status_update",
+                    "file_id": file_id,
+                    "status": "completed",
+                    "total_transactions": len(result.transactions),
+                    "pages_processed": result.pages_processed,
+                    "total_pages": result.total_pages,
+                    "processing_details": result.processing_details,
+                }
             )
-            transactions.append(transaction)
+        else:
+            error_message = result.error_message or "No transactions found"
+            logger.error(f"Processing failed: {error_message}")
+            db_file.status = "error"
+            db_file.error_message = error_message
+            db_file.processed_at = datetime.now()
+            db_file.pages_processed = result.pages_processed
+            db_file.total_pages = result.total_pages
+            db.commit()
 
-        print(f"Saving {len(transactions)} transactions to database...")
-        db.bulk_save_objects(transactions)
-
-        # Update file status and transaction counts
-        print("Updating file status to completed...")
-        db_file.status = "completed"
-        db_file.transaction_count = len(transactions)
-        db_file.processed_at = datetime.utcnow()
-        db.commit()
-
-        await broadcast_status(
-            {
-                "type": "status_update",
-                "file": os.path.basename(file_path),
-                "status": "completed",
-                "message": f"Successfully extracted {len(transactions)} transactions",
-            }
-        )
-
-        # Clean up temporary files
-        if csv_path and os.path.exists(csv_path):
-            os.remove(csv_path)
+            await broadcast_status(
+                {
+                    "type": "status_update",
+                    "file_id": file_id,
+                    "status": "error",
+                    "error_message": error_message,
+                    "pages_processed": result.pages_processed,
+                    "total_pages": result.total_pages,
+                    "processing_details": result.processing_details,
+                }
+            )
 
     except Exception as e:
-        print(f"Error processing file: {str(e)}")
+        logger.exception(f"Error processing file: {str(e)}")
         if db_file:
             db_file.status = "error"
             db_file.error_message = str(e)
+            db_file.processed_at = datetime.now()
             db.commit()
 
         await broadcast_status(
             {
                 "type": "status_update",
-                "file": os.path.basename(file_path),
+                "file_id": file_id,
                 "status": "error",
-                "message": f"Error processing file: {str(e)}",
+                "error_message": str(e),
             }
         )
 
@@ -355,6 +409,17 @@ async def upload_file(
         db.commit()
         db.refresh(db_file)
 
+        # Send initial status update
+        await broadcast_status(
+            {
+                "type": "status_update",
+                "file_id": db_file.id,
+                "status": "pending",
+                "filename": file.filename,
+                "message": "File uploaded, starting processing...",
+            }
+        )
+
         # Start background processing
         background_tasks.add_task(
             process_pdf_background,
@@ -383,18 +448,30 @@ async def list_client_transactions(
     is_categorized: Optional[bool] = None,
 ):
     """List transactions for a client with optional filters"""
-    query = db.query(Transaction).filter(Transaction.client_id == client_id)
+    try:
+        # Start with a query that joins ClientFile to get transactions for this client
+        query = (
+            db.query(Transaction)
+            .join(ClientFile)
+            .filter(ClientFile.client_id == client_id)
+        )
 
-    if start_date:
-        query = query.filter(Transaction.date >= start_date)
-    if end_date:
-        query = query.filter(Transaction.date <= end_date)
-    if category_id is not None:
-        query = query.filter(Transaction.category_id == category_id)
-    if is_categorized is not None:
-        query = query.filter(Transaction.is_categorized == is_categorized)
+        if start_date:
+            query = query.filter(Transaction.date >= start_date)
+        if end_date:
+            query = query.filter(Transaction.date <= end_date)
+        if category_id is not None:
+            query = query.filter(Transaction.category_id == category_id)
+        if is_categorized is not None:
+            query = query.filter(Transaction.is_categorized == is_categorized)
 
-    return query.all()
+        transactions = query.all()
+        return transactions
+    except Exception as e:
+        print(f"Error fetching transactions: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Error fetching transactions: {str(e)}"
+        )
 
 
 @app.post("/transactions/{transaction_id}/categorize")

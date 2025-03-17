@@ -29,7 +29,6 @@ class Client(Base):
     # Relationships
     categories = relationship("Category", back_populates="client")
     files = relationship("ClientFile", back_populates="client")
-    transactions = relationship("Transaction", back_populates="client")
 
 
 class Category(Base):
@@ -53,40 +52,40 @@ class ClientFile(Base):
     id = Column(Integer, primary_key=True, index=True)
     client_id = Column(Integer, ForeignKey("clients.id"))
     filename = Column(String)
-    original_filename = Column(String(255), nullable=True)
-    file_path = Column(String(512), nullable=False)
-    status = Column(String, default="pending")  # pending, processing, completed, failed
+    file_path = Column(String)  # Path to the uploaded file
+    status = Column(String)  # pending, processing, completed, error
     uploaded_at = Column(DateTime, default=datetime.utcnow)
     processed_at = Column(DateTime, nullable=True)
-    error_message = Column(Text, nullable=True)
-    total_transactions = Column(Integer, default=0)
-    categorized_transactions = Column(Integer, default=0)
+    error_message = Column(String, nullable=True)
+    total_transactions = Column(Integer, nullable=True)
+    pages_processed = Column(Integer, nullable=True)
+    total_pages = Column(Integer, nullable=True)
+    file_hash = Column(String, nullable=True)  # To link with processing history
 
     # Relationships
     client = relationship("Client", back_populates="files")
-    transactions = relationship("Transaction", back_populates="source_file")
+    transactions = relationship(
+        "Transaction", back_populates="client_file", cascade="all, delete-orphan"
+    )
 
 
 class Transaction(Base):
     __tablename__ = "transactions"
 
     id = Column(Integer, primary_key=True, index=True)
-    client_id = Column(Integer, ForeignKey("clients.id"))
-    file_id = Column(Integer, ForeignKey("client_files.id"))
+    client_file_id = Column(Integer, ForeignKey("client_files.id"))
+    date = Column(DateTime, nullable=False)
+    description = Column(String, nullable=False)
+    amount = Column(Float, nullable=False)
     category_id = Column(Integer, ForeignKey("categories.id"), nullable=True)
-    date = Column(DateTime)
-    description = Column(String)
-    amount = Column(Float)
-    raw_text = Column(Text, nullable=True)
-    notes = Column(Text, nullable=True)
     is_categorized = Column(Boolean, default=False)
+    raw_text = Column(String, nullable=True)  # For storing AI-suggested category
     confidence_score = Column(Float, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
     categorized_at = Column(DateTime, nullable=True)
+    page_number = Column(Integer, nullable=True)
 
     # Relationships
-    client = relationship("Client", back_populates="transactions")
-    source_file = relationship("ClientFile", back_populates="transactions")
+    client_file = relationship("ClientFile", back_populates="transactions")
     category = relationship("Category", back_populates="transactions")
 
     @property

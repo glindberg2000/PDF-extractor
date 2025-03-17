@@ -1,17 +1,20 @@
 import { useState, useEffect } from 'react'
 import {
-    Stack,
-    Title,
+    Card,
     Text,
-    Select,
-    Paper,
-    Table,
-    Badge,
     Group,
-    LoadingOverlay,
+    Stack,
+    Select,
+    Title,
+    Badge,
+    Table,
+    ActionIcon,
+    Loader,
+    Alert,
+    Button,
+    FileButton,
 } from '@mantine/core'
-import { Dropzone } from '@mantine/dropzone'
-import { IconUpload, IconX } from '@tabler/icons-react'
+import { IconDownload, IconEye, IconAlertCircle, IconUpload } from '@tabler/icons-react'
 import { notifications } from '@mantine/notifications'
 
 interface Client {
@@ -27,6 +30,9 @@ interface ClientFile {
     processed_at: string | null
     error_message: string | null
     total_transactions?: number
+    pages_processed?: number
+    total_pages?: number
+    processing_details?: string[]
 }
 
 interface StatusUpdate {
@@ -40,8 +46,10 @@ export function Files() {
     const [clients, setClients] = useState<Client[]>([])
     const [selectedClientId, setSelectedClientId] = useState<string | null>(null)
     const [clientFiles, setClientFiles] = useState<ClientFile[]>([])
-    const [isUploading, setIsUploading] = useState(false)
+    const [loading, setLoading] = useState(true)
+    const [error, setError] = useState<string | null>(null)
     const [ws, setWs] = useState<WebSocket | null>(null)
+    const [uploading, setUploading] = useState(false)
 
     // WebSocket connection
     useEffect(() => {
@@ -55,7 +63,7 @@ export function Files() {
             const data: StatusUpdate = JSON.parse(event.data)
             if (data.type === 'status_update' && selectedClientId) {
                 // Refresh file list when we get a status update
-                fetchClientFiles(parseInt(selectedClientId))
+                fetchClientFiles(selectedClientId)
             }
         }
 
@@ -78,33 +86,40 @@ export function Files() {
     // Fetch client files when client selection changes
     useEffect(() => {
         if (selectedClientId) {
-            fetchClientFiles(parseInt(selectedClientId))
+            fetchClientFiles(selectedClientId)
         }
     }, [selectedClientId])
 
     const fetchClients = async () => {
+        setLoading(true)
+        setError(null)
         try {
             const response = await fetch('http://localhost:8000/clients/')
+            if (!response.ok) {
+                throw new Error('Failed to fetch clients')
+            }
             const data = await response.json()
             setClients(data)
-
-            // If we have clients but no selection, select the first one
-            if (data.length > 0 && !selectedClientId) {
-                setSelectedClientId(data[0].id.toString())
-            }
         } catch (error) {
             console.error('Error fetching clients:', error)
+            setError(error instanceof Error ? error.message : 'Failed to load clients')
             notifications.show({
                 title: 'Error',
-                message: 'Failed to fetch clients',
+                message: 'Failed to load clients. Please try again.',
                 color: 'red',
             })
+        } finally {
+            setLoading(false)
         }
     }
 
-    const fetchClientFiles = async (clientId: number) => {
+    const fetchClientFiles = async (clientId: string) => {
+        setLoading(true)
         try {
             const response = await fetch(`http://localhost:8000/clients/${clientId}/files/`)
+            if (!response.ok) {
+                throw new Error('Failed to fetch client files')
+            }
             const data = await response.json()
             setClientFiles(data)
         } catch (error) {
@@ -114,54 +129,8 @@ export function Files() {
                 message: 'Failed to fetch client files',
                 color: 'red',
             })
-        }
-    }
-
-    const handleFileUpload = async (files: File[]) => {
-        if (!selectedClientId || !files.length) {
-            notifications.show({
-                title: 'Error',
-                message: 'Please select a client and provide a file',
-                color: 'red',
-            })
-            return
-        }
-
-        setIsUploading(true)
-        const file = files[0]
-        const formData = new FormData()
-        formData.append('file', file)
-
-        try {
-            console.log(`Uploading file for client ${selectedClientId}:`, file.name)
-            const response = await fetch(`http://localhost:8000/clients/${selectedClientId}/upload/`, {
-                method: 'POST',
-                body: formData,
-            })
-
-            if (!response.ok) {
-                const errorData = await response.json()
-                throw new Error(errorData.detail || `Upload failed with status ${response.status}`)
-            }
-
-            const data = await response.json()
-            console.log('Upload response:', data)
-            await fetchClientFiles(parseInt(selectedClientId))
-
-            notifications.show({
-                title: 'Success',
-                message: 'File uploaded successfully and processing started',
-                color: 'green',
-            })
-        } catch (error) {
-            console.error('Error uploading file:', error)
-            notifications.show({
-                title: 'Error',
-                message: error instanceof Error ? error.message : 'Failed to upload file. Please try again.',
-                color: 'red',
-            })
         } finally {
-            setIsUploading(false)
+            setLoading(false)
         }
     }
 
@@ -183,9 +152,9 @@ export function Files() {
     const getStatusMessage = (file: ClientFile) => {
         switch (file.status.toLowerCase()) {
             case 'completed':
-                return `Processed ${file.total_transactions || 0} transactions`
+                return `Processed ${file.total_transactions || 0} transactions from ${file.pages_processed || 0} pages`
             case 'processing':
-                return 'Processing in progress...'
+                return `Processing page ${file.pages_processed || 0} of ${file.total_pages || '?'}`
             case 'pending':
                 return 'Queued for processing'
             case 'failed':
@@ -195,88 +164,178 @@ export function Files() {
         }
     }
 
+    const handleFileUpload = async (file: File | null) => {
+        if (!file || !selectedClientId) return
+
+        setUploading(true)
+        const formData = new FormData()
+        formData.append('file', file)
+
+        try {
+            const response = await fetch(`http://localhost:8000/clients/${selectedClientId}/files/`, {
+                method: 'POST',
+                body: formData,
+            })
+
+            if (!response.ok) {
+                throw new Error('Failed to upload file')
+            }
+
+            notifications.show({
+                title: 'Success',
+                message: 'File uploaded successfully',
+                color: 'green',
+            })
+
+            // Refresh file list
+            fetchClientFiles(selectedClientId)
+        } catch (error) {
+            console.error('Error uploading file:', error)
+            notifications.show({
+                title: 'Error',
+                message: 'Failed to upload file',
+                color: 'red',
+            })
+        } finally {
+            setUploading(false)
+        }
+    }
+
+    if (loading && !selectedClientId) {
+        return (
+            <Stack align="center" justify="center" style={{ height: '100%', minHeight: 400 }}>
+                <Loader size="xl" />
+                <Text>Loading clients...</Text>
+            </Stack>
+        )
+    }
+
+    if (error) {
+        return (
+            <Alert icon={<IconAlertCircle size="1rem" />} title="Error" color="red">
+                {error}
+            </Alert>
+        )
+    }
+
+    if (!clients.length) {
+        return (
+            <Alert icon={<IconAlertCircle size="1rem" />} title="No Clients" color="blue">
+                Please create a client first before uploading files.
+            </Alert>
+        )
+    }
+
     return (
-        <Stack spacing="xl">
-            <Title order={2}>File Management</Title>
+        <Stack gap="md">
+            <Group position="apart" align="flex-end">
+                <Title order={2}>Files</Title>
+                <Group>
+                    <Select
+                        label="Select Client"
+                        placeholder="Choose client"
+                        data={clients.map(client => ({ value: client.id.toString(), label: client.name }))}
+                        value={selectedClientId}
+                        onChange={setSelectedClientId}
+                        style={{ width: 200 }}
+                    />
+                    {selectedClientId && (
+                        <FileButton onChange={handleFileUpload} accept="application/pdf">
+                            {(props) => (
+                                <Button
+                                    {...props}
+                                    leftIcon={<IconUpload size={16} />}
+                                    loading={uploading}
+                                >
+                                    Upload PDF
+                                </Button>
+                            )}
+                        </FileButton>
+                    )}
+                </Group>
+            </Group>
 
-            <Select
-                label="Select Client"
-                placeholder="Choose client"
-                data={clients.map(client => ({
-                    value: client.id.toString(),
-                    label: client.name
-                }))}
-                value={selectedClientId}
-                onChange={setSelectedClientId}
-                searchable
-            />
-
-            <Paper p="xl" radius="md" withBorder pos="relative">
-                <LoadingOverlay visible={isUploading} overlayProps={{ blur: 2 }} />
-                <Dropzone
-                    onDrop={handleFileUpload}
-                    accept={['application/pdf']}
-                    maxFiles={1}
-                    disabled={!selectedClientId || isUploading}
-                >
-                    <Group justify="center" style={{ minHeight: 100, pointerEvents: 'none' }}>
-                        <Dropzone.Accept>
-                            <IconUpload size={32} stroke={1.5} />
-                        </Dropzone.Accept>
-                        <Dropzone.Reject>
-                            <IconX size={32} stroke={1.5} />
-                        </Dropzone.Reject>
-                        <Dropzone.Idle>
-                            <IconUpload size={32} stroke={1.5} />
-                        </Dropzone.Idle>
-                        <Stack align="center" gap="xs">
-                            <Text size="xl">
-                                {selectedClientId
-                                    ? isUploading
-                                        ? 'Uploading...'
-                                        : 'Drop PDF here or click to select'
-                                    : 'Please select a client first'}
-                            </Text>
-                            <Text size="sm" c="dimmed">Only PDF files are accepted</Text>
-                        </Stack>
-                    </Group>
-                </Dropzone>
-            </Paper>
-
-            {clientFiles.length > 0 && (
-                <Paper p="md" radius="md" withBorder>
-                    <Stack>
-                        <Title order={3}>Uploaded Files</Title>
-                        <Table>
-                            <Table.Thead>
-                                <Table.Tr>
-                                    <Table.Th>Name</Table.Th>
-                                    <Table.Th>Status</Table.Th>
-                                    <Table.Th>Details</Table.Th>
-                                    <Table.Th>Uploaded</Table.Th>
-                                </Table.Tr>
-                            </Table.Thead>
-                            <Table.Tbody>
-                                {clientFiles.map((file) => (
-                                    <Table.Tr key={file.id}>
-                                        <Table.Td>{file.filename}</Table.Td>
-                                        <Table.Td>
-                                            <Badge color={getStatusColor(file.status)}>
-                                                {file.status}
-                                            </Badge>
-                                        </Table.Td>
-                                        <Table.Td>
-                                            {getStatusMessage(file)}
-                                        </Table.Td>
-                                        <Table.Td>
-                                            {new Date(file.uploaded_at).toLocaleString()}
-                                        </Table.Td>
-                                    </Table.Tr>
-                                ))}
-                            </Table.Tbody>
-                        </Table>
+            {selectedClientId ? (
+                loading ? (
+                    <Stack align="center" justify="center" style={{ height: '100%', minHeight: 400 }}>
+                        <Loader size="xl" />
+                        <Text>Loading files...</Text>
                     </Stack>
-                </Paper>
+                ) : clientFiles.length === 0 ? (
+                    <Card withBorder p="xl">
+                        <Stack align="center" spacing="md">
+                            <IconUpload size={48} color="var(--mantine-color-blue-6)" />
+                            <Text size="lg" weight={500}>No Files Yet</Text>
+                            <Text color="dimmed" size="sm" align="center">
+                                Upload your first PDF file using the button above.
+                            </Text>
+                        </Stack>
+                    </Card>
+                ) : (
+                    <Table>
+                        <Table.Thead>
+                            <Table.Tr>
+                                <Table.Th>File Name</Table.Th>
+                                <Table.Th>Status</Table.Th>
+                                <Table.Th>Progress</Table.Th>
+                                <Table.Th>Transactions</Table.Th>
+                                <Table.Th>Uploaded</Table.Th>
+                                <Table.Th>Actions</Table.Th>
+                            </Table.Tr>
+                        </Table.Thead>
+                        <Table.Tbody>
+                            {clientFiles.map((file) => (
+                                <Table.Tr key={file.id}>
+                                    <Table.Td>{file.filename}</Table.Td>
+                                    <Table.Td>
+                                        <Badge
+                                            color={getStatusColor(file.status)}
+                                            title={file.error_message}
+                                        >
+                                            {file.status}
+                                        </Badge>
+                                    </Table.Td>
+                                    <Table.Td>
+                                        <Text size="sm" color="dimmed">
+                                            {getStatusMessage(file)}
+                                        </Text>
+                                        {file.processing_details && file.processing_details.length > 0 && (
+                                            <Text size="xs" color="dimmed" mt={4}>
+                                                {file.processing_details.join(', ')}
+                                            </Text>
+                                        )}
+                                    </Table.Td>
+                                    <Table.Td>{file.total_transactions || 0}</Table.Td>
+                                    <Table.Td>{new Date(file.uploaded_at).toLocaleString()}</Table.Td>
+                                    <Table.Td>
+                                        <Group spacing={4}>
+                                            <ActionIcon
+                                                variant="light"
+                                                color="blue"
+                                                onClick={() => window.open(`http://localhost:8000/clients/${selectedClientId}/files/${file.id}/view`, '_blank')}
+                                                title="View PDF"
+                                            >
+                                                <IconEye size={16} />
+                                            </ActionIcon>
+                                            <ActionIcon
+                                                variant="light"
+                                                color="green"
+                                                onClick={() => window.open(`http://localhost:8000/clients/${selectedClientId}/files/${file.id}/download`, '_blank')}
+                                                title="Download PDF"
+                                            >
+                                                <IconDownload size={16} />
+                                            </ActionIcon>
+                                        </Group>
+                                    </Table.Td>
+                                </Table.Tr>
+                            ))}
+                        </Table.Tbody>
+                    </Table>
+                )
+            ) : (
+                <Alert icon={<IconAlertCircle size="1rem" />} title="Select a Client" color="blue">
+                    Please select a client to view their files.
+                </Alert>
             )}
         </Stack>
     )

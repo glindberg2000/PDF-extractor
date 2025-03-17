@@ -1,20 +1,16 @@
 import { useState } from 'react'
-import {
-    AppShell,
-    UnstyledButton,
-    Group,
-    Text,
-    rem,
-} from '@mantine/core'
+import { AppShell, UnstyledButton, Group, Text, Burger, Title, Box } from '@mantine/core'
 import {
     IconDashboard,
     IconUsers,
     IconFiles,
-    IconChartBar,
-    IconSettings,
     IconReceipt2,
 } from '@tabler/icons-react'
-import { useNavigate, useLocation } from 'react-router-dom'
+import { useNavigate, useLocation, Routes, Route, Navigate } from 'react-router-dom'
+import { Dashboard } from './Dashboard'
+import { Files } from './Files'
+import { Clients } from './Clients'
+import { Transactions } from './Transactions'
 
 interface MainLinkProps {
     icon: typeof IconDashboard
@@ -28,47 +24,43 @@ function MainLink({ icon: Icon, color, label, active, onClick }: MainLinkProps) 
     return (
         <UnstyledButton
             onClick={onClick}
-            w="100%"
-            style={{
-                padding: `${rem(8)} ${rem(12)}`,
-                borderRadius: rem(8),
-                backgroundColor: active ? 'var(--mantine-color-blue-light)' : 'transparent',
-            }}
+            sx={(theme) => ({
+                display: 'block',
+                width: '100%',
+                padding: theme.spacing.md,
+                borderRadius: theme.radius.sm,
+                color: active ? theme.colors[color][7] : theme.colors.gray[7],
+                backgroundColor: active ? theme.colors[color][0] : 'transparent',
+                '&:hover': {
+                    backgroundColor: theme.colors[color][0],
+                },
+                '& + &': {
+                    marginTop: theme.spacing.sm,
+                },
+            })}
         >
             <Group>
-                <Icon size={20} color={color} stroke={1.5} />
-                <Text size="sm" c={active ? 'blue' : 'dimmed'}>
-                    {label}
-                </Text>
+                <Box style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <Icon size={24} stroke={1.5} color={active ? `var(--mantine-color-${color}-7)` : undefined} />
+                </Box>
+                <Text size="sm" fw={active ? 500 : 400}>{label}</Text>
             </Group>
         </UnstyledButton>
     )
 }
 
 const mainLinks = [
-    { icon: IconDashboard, color: 'blue', label: 'Dashboard', view: 'dashboard' },
-    { icon: IconUsers, color: 'grape', label: 'Clients', view: 'clients' },
-    { icon: IconFiles, color: 'teal', label: 'Files', view: 'files' },
-    { icon: IconReceipt2, color: 'violet', label: 'Transactions', view: 'transactions' },
-    { icon: IconChartBar, color: 'pink', label: 'Analytics', view: 'analytics' },
-    { icon: IconSettings, color: 'gray', label: 'Settings', view: 'settings' },
+    { icon: IconDashboard, color: 'blue', label: 'Dashboard', path: '/dashboard' },
+    { icon: IconUsers, color: 'grape', label: 'Clients', path: '/clients' },
+    { icon: IconFiles, color: 'teal', label: 'Files', path: '/files' },
+    { icon: IconReceipt2, color: 'violet', label: 'Transactions', path: '/transactions' },
 ]
 
-interface LayoutProps {
-    children: React.ReactNode
-    activeView: string
-    onViewChange: (view: string) => void
-}
-
-export function Layout({ children, activeView, onViewChange }: LayoutProps) {
+export default function Layout() {
     const [opened, setOpened] = useState(false)
     const navigate = useNavigate()
     const location = useLocation()
-
-    const handleNavigation = (view: string) => {
-        onViewChange(view)
-        navigate(view)
-    }
+    const currentPath = location.pathname.split('/')[1] || 'dashboard'
 
     return (
         <AppShell
@@ -76,31 +68,48 @@ export function Layout({ children, activeView, onViewChange }: LayoutProps) {
             navbar={{
                 width: 300,
                 breakpoint: 'sm',
-                collapsed: { mobile: !opened }
+                collapsed: { desktop: false, mobile: !opened }
             }}
             padding="md"
         >
             <AppShell.Header>
-                <Group h="100%" px="md">
-                    <Text size="lg" fw={700}>PDF Extractor</Text>
+                <Group h="100%" px="md" justify="space-between">
+                    <Group>
+                        <Burger
+                            opened={opened}
+                            onClick={() => setOpened((o) => !o)}
+                            hiddenFrom="sm"
+                            size="sm"
+                        />
+                        <Title order={3}>PDF Extractor</Title>
+                    </Group>
                 </Group>
             </AppShell.Header>
 
             <AppShell.Navbar p="md">
-                <AppShell.Section grow>
+                <AppShell.Section>
                     {mainLinks.map((link) => (
                         <MainLink
-                            key={link.label}
+                            key={link.path}
                             {...link}
-                            active={activeView === link.view}
-                            onClick={() => handleNavigation(link.view)}
+                            active={currentPath === link.path.substring(1)}
+                            onClick={() => {
+                                navigate(link.path)
+                                setOpened(false)
+                            }}
                         />
                     ))}
                 </AppShell.Section>
             </AppShell.Navbar>
 
             <AppShell.Main>
-                {children}
+                <Routes>
+                    <Route path="/" element={<Navigate to="/dashboard" replace />} />
+                    <Route path="/dashboard" element={<Dashboard />} />
+                    <Route path="/clients" element={<Clients />} />
+                    <Route path="/files" element={<Files />} />
+                    <Route path="/transactions" element={<Transactions />} />
+                </Routes>
             </AppShell.Main>
         </AppShell>
     )

@@ -1,8 +1,15 @@
 """
-DataExtractAI Vision - PDF transaction extractor using GPT-4 Vision
+PDF Transaction Extractor Package
 """
 
-from .extractor import VisionExtractor
+from .extractor import process_pdf_file, ProcessingResult
+from .parser_system import Transaction, BaseParser, WellsFargoBankParser, registry
 
-__version__ = "1.0.0"
-__all__ = ["VisionExtractor"]
+__all__ = [
+    "process_pdf_file",
+    "ProcessingResult",
+    "Transaction",
+    "BaseParser",
+    "WellsFargoBankParser",
+    "registry",
+]
