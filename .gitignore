@@ -235,6 +235,7 @@ __pycache__/
 *$py.class
 *.so
 .Python
+env/
 build/
 develop-eggs/
 dist/
@@ -260,4 +261,8 @@ wheels/
 # OS
 .DS_Store
 Thumbs.db
+
+# Database
+*.db
+*.sqlite3
 
