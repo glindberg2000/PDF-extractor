@@ -13,8 +13,12 @@ import {
     Alert,
     Button,
     FileButton,
+    Paper,
+    Grid,
+    useMantineTheme,
+    ScrollArea,
 } from '@mantine/core'
-import { IconDownload, IconEye, IconAlertCircle, IconUpload } from '@tabler/icons-react'
+import { IconDownload, IconEye, IconAlertCircle, IconUpload, IconFolder, IconFile } from '@tabler/icons-react'
 import { notifications } from '@mantine/notifications'
 
 interface Client {
@@ -33,6 +37,7 @@ interface ClientFile {
     pages_processed?: number
     total_pages?: number
     processing_details?: string[]
+    path?: string
 }
 
 interface StatusUpdate {
@@ -42,18 +47,27 @@ interface StatusUpdate {
     message: string
 }
 
+interface FolderStructure {
+    name: string
+    type: 'folder' | 'file'
+    children?: FolderStructure[]
+    file?: ClientFile
+}
+
 export function Files() {
     const [clients, setClients] = useState<Client[]>([])
     const [selectedClientId, setSelectedClientId] = useState<string | null>(null)
     const [clientFiles, setClientFiles] = useState<ClientFile[]>([])
+    const [folderStructure, setFolderStructure] = useState<FolderStructure[]>([])
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
     const [ws, setWs] = useState<WebSocket | null>(null)
     const [uploading, setUploading] = useState(false)
+    const theme = useMantineTheme()
 
     // WebSocket connection
     useEffect(() => {
-        const websocket = new WebSocket('ws://localhost:8000/ws')
+        const websocket = new WebSocket('ws://localhost:5173/ws')
 
         websocket.onopen = () => {
             console.log('WebSocket connected')
@@ -62,7 +76,6 @@ export function Files() {
         websocket.onmessage = (event) => {
             const data: StatusUpdate = JSON.parse(event.data)
             if (data.type === 'status_update' && selectedClientId) {
-                // Refresh file list when we get a status update
                 fetchClientFiles(selectedClientId)
             }
         }
@@ -87,6 +100,9 @@ export function Files() {
     useEffect(() => {
         if (selectedClientId) {
             fetchClientFiles(selectedClientId)
+        } else {
+            setClientFiles([])
+            setFolderStructure([])
         }
     }, [selectedClientId])
 
@@ -94,7 +110,7 @@ export function Files() {
         setLoading(true)
         setError(null)
         try {
-            const response = await fetch('http://localhost:8000/clients/')
+            const response = await fetch('/api/clients/')
             if (!response.ok) {
                 throw new Error('Failed to fetch clients')
             }
@@ -116,12 +132,16 @@ export function Files() {
     const fetchClientFiles = async (clientId: string) => {
         setLoading(true)
         try {
-            const response = await fetch(`http://localhost:8000/clients/${clientId}/files/`)
+            const response = await fetch(`/api/clients/${clientId}/files/`)
             if (!response.ok) {
                 throw new Error('Failed to fetch client files')
             }
-            const data = await response.json()
+            const data: ClientFile[] = await response.json()
             setClientFiles(data)
+
+            // Build folder structure
+            const structure = buildFolderStructure(data)
+            setFolderStructure(structure)
         } catch (error) {
             console.error('Error fetching client files:', error)
             notifications.show({
@@ -132,6 +152,39 @@ export function Files() {
         } finally {
             setLoading(false)
         }
+    }
+
+    const buildFolderStructure = (files: ClientFile[]): FolderStructure[] => {
+        const structure: { [key: string]: FolderStructure } = {}
+
+        files.forEach(file => {
+            const path = file.path || file.filename
+            const parts = path.split('/')
+            let current = structure
+
+            parts.forEach((part, index) => {
+                if (index === parts.length - 1) {
+                    // File
+                    current[part] = {
+                        name: part,
+                        type: 'file',
+                        file
+                    }
+                } else {
+                    // Folder
+                    if (!current[part]) {
+                        current[part] = {
+                            name: part,
+                            type: 'folder',
+                            children: []
+                        }
+                    }
+                    current = current[part].children as { [key: string]: FolderStructure }
+                }
+            })
+        })
+
+        return Object.values(structure)
     }
 
     const getStatusColor = (status: string) => {
@@ -172,7 +225,7 @@ export function Files() {
         formData.append('file', file)
 
         try {
-            const response = await fetch(`http://localhost:8000/clients/${selectedClientId}/files/`, {
+            const response = await fetch(`/api/clients/${selectedClientId}/files/`, {
                 method: 'POST',
                 body: formData,
             })
@@ -187,7 +240,6 @@ export function Files() {
                 color: 'green',
             })
 
-            // Refresh file list
             fetchClientFiles(selectedClientId)
         } catch (error) {
             console.error('Error uploading file:', error)
@@ -199,6 +251,66 @@ export function Files() {
         } finally {
             setUploading(false)
         }
+    }
+
+    const renderFolderStructure = (items: FolderStructure[], level = 0) => {
+        return items.map((item, index) => (
+            <div key={item.name + index} style={{ marginLeft: level * 20 }}>
+                {item.type === 'folder' ? (
+                    <Paper
+                        p="xs"
+                        mb="xs"
+                        style={{
+                            backgroundColor: theme.colors.blue[0],
+                            borderLeft: `3px solid ${theme.colors.blue[6]}`
+                        }}
+                    >
+                        <Group>
+                            <IconFolder size={20} color={theme.colors.blue[6]} />
+                            <Text fw={500}>{item.name}</Text>
+                        </Group>
+                        {item.children && renderFolderStructure(item.children, level + 1)}
+                    </Paper>
+                ) : (
+                    <Paper
+                        p="xs"
+                        mb="xs"
+                        style={{
+                            backgroundColor: theme.white,
+                            borderLeft: `3px solid ${theme.colors.gray[3]}`
+                        }}
+                    >
+                        <Group position="apart">
+                            <Group>
+                                <IconFile size={20} color={theme.colors.gray[6]} />
+                                <Stack spacing={0}>
+                                    <Text size="sm">{item.name}</Text>
+                                    {item.file && (
+                                        <Text size="xs" color="dimmed">
+                                            {new Date(item.file.uploaded_at).toLocaleDateString()}
+                                        </Text>
+                                    )}
+                                </Stack>
+                            </Group>
+                            {item.file && (
+                                <Group spacing="xs">
+                                    <Badge color={getStatusColor(item.file.status)}>
+                                        {item.file.status}
+                                    </Badge>
+                                    <ActionIcon
+                                        variant="light"
+                                        color="blue"
+                                        onClick={() => window.open(`http://localhost:8000/files/${item.file.id}/download`)}
+                                    >
+                                        <IconDownload size={16} />
+                                    </ActionIcon>
+                                </Group>
+                            )}
+                        </Group>
+                    </Paper>
+                )}
+            </div>
+        ))
     }
 
     if (loading && !selectedClientId) {
@@ -228,115 +340,56 @@ export function Files() {
 
     return (
         <Stack gap="md">
-            <Group position="apart" align="flex-end">
-                <Title order={2}>Files</Title>
-                <Group>
-                    <Select
-                        label="Select Client"
-                        placeholder="Choose client"
-                        data={clients.map(client => ({ value: client.id.toString(), label: client.name }))}
-                        value={selectedClientId}
-                        onChange={setSelectedClientId}
-                        style={{ width: 200 }}
-                    />
-                    {selectedClientId && (
-                        <FileButton onChange={handleFileUpload} accept="application/pdf">
-                            {(props) => (
-                                <Button
-                                    {...props}
-                                    leftIcon={<IconUpload size={16} />}
-                                    loading={uploading}
-                                >
-                                    Upload PDF
-                                </Button>
-                            )}
-                        </FileButton>
-                    )}
+            <Card>
+                <Group position="apart" mb="md">
+                    <Title order={2}>Files</Title>
+                    <Group>
+                        <Select
+                            label="Select Client"
+                            placeholder="Choose client"
+                            data={clients.map(client => ({ value: client.id.toString(), label: client.name }))}
+                            value={selectedClientId}
+                            onChange={setSelectedClientId}
+                            style={{ width: 200 }}
+                        />
+                        {selectedClientId && (
+                            <FileButton onChange={handleFileUpload} accept="application/pdf">
+                                {(props) => (
+                                    <Button
+                                        {...props}
+                                        leftIcon={<IconUpload size={16} />}
+                                        loading={uploading}
+                                        variant="light"
+                                    >
+                                        Upload PDF
+                                    </Button>
+                                )}
+                            </FileButton>
+                        )}
+                    </Group>
                 </Group>
-            </Group>
 
-            {selectedClientId ? (
-                loading ? (
-                    <Stack align="center" justify="center" style={{ height: '100%', minHeight: 400 }}>
-                        <Loader size="xl" />
-                        <Text>Loading files...</Text>
-                    </Stack>
-                ) : clientFiles.length === 0 ? (
-                    <Card withBorder p="xl">
-                        <Stack align="center" spacing="md">
-                            <IconUpload size={48} color="var(--mantine-color-blue-6)" />
-                            <Text size="lg" weight={500}>No Files Yet</Text>
-                            <Text color="dimmed" size="sm" align="center">
-                                Upload your first PDF file using the button above.
-                            </Text>
+                {selectedClientId ? (
+                    loading ? (
+                        <Stack align="center" py="xl">
+                            <Loader />
+                            <Text>Loading files...</Text>
                         </Stack>
-                    </Card>
+                    ) : clientFiles.length === 0 ? (
+                        <Alert icon={<IconAlertCircle size="1rem" />} color="blue">
+                            No files uploaded yet. Upload a PDF to get started.
+                        </Alert>
+                    ) : (
+                        <ScrollArea h={500}>
+                            {renderFolderStructure(folderStructure)}
+                        </ScrollArea>
+                    )
                 ) : (
-                    <Table>
-                        <Table.Thead>
-                            <Table.Tr>
-                                <Table.Th>File Name</Table.Th>
-                                <Table.Th>Status</Table.Th>
-                                <Table.Th>Progress</Table.Th>
-                                <Table.Th>Transactions</Table.Th>
-                                <Table.Th>Uploaded</Table.Th>
-                                <Table.Th>Actions</Table.Th>
-                            </Table.Tr>
-                        </Table.Thead>
-                        <Table.Tbody>
-                            {clientFiles.map((file) => (
-                                <Table.Tr key={file.id}>
-                                    <Table.Td>{file.filename}</Table.Td>
-                                    <Table.Td>
-                                        <Badge
-                                            color={getStatusColor(file.status)}
-                                            title={file.error_message}
-                                        >
-                                            {file.status}
-                                        </Badge>
-                                    </Table.Td>
-                                    <Table.Td>
-                                        <Text size="sm" color="dimmed">
-                                            {getStatusMessage(file)}
-                                        </Text>
-                                        {file.processing_details && file.processing_details.length > 0 && (
-                                            <Text size="xs" color="dimmed" mt={4}>
-                                                {file.processing_details.join(', ')}
-                                            </Text>
-                                        )}
-                                    </Table.Td>
-                                    <Table.Td>{file.total_transactions || 0}</Table.Td>
-                                    <Table.Td>{new Date(file.uploaded_at).toLocaleString()}</Table.Td>
-                                    <Table.Td>
-                                        <Group spacing={4}>
-                                            <ActionIcon
-                                                variant="light"
-                                                color="blue"
-                                                onClick={() => window.open(`http://localhost:8000/clients/${selectedClientId}/files/${file.id}/view`, '_blank')}
-                                                title="View PDF"
-                                            >
-                                                <IconEye size={16} />
-                                            </ActionIcon>
-                                            <ActionIcon
-                                                variant="light"
-                                                color="green"
-                                                onClick={() => window.open(`http://localhost:8000/clients/${selectedClientId}/files/${file.id}/download`, '_blank')}
-                                                title="Download PDF"
-                                            >
-                                                <IconDownload size={16} />
-                                            </ActionIcon>
-                                        </Group>
-                                    </Table.Td>
-                                </Table.Tr>
-                            ))}
-                        </Table.Tbody>
-                    </Table>
-                )
-            ) : (
-                <Alert icon={<IconAlertCircle size="1rem" />} title="Select a Client" color="blue">
-                    Please select a client to view their files.
-                </Alert>
-            )}
+                    <Alert icon={<IconAlertCircle size="1rem" />} color="blue">
+                        Select a client to view and manage their files.
+                    </Alert>
+                )}
+            </Card>
         </Stack>
     )
 } 

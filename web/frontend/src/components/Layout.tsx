@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { AppShell, UnstyledButton, Group, Text, Burger, Title, Box } from '@mantine/core'
+import { useState, useEffect } from 'react'
+import { AppShell, UnstyledButton, Group, Text, Burger, Title, Box, MediaQuery, useMantineTheme } from '@mantine/core'
 import {
     IconDashboard,
     IconUsers,
@@ -21,6 +21,8 @@ interface MainLinkProps {
 }
 
 function MainLink({ icon: Icon, color, label, active, onClick }: MainLinkProps) {
+    const theme = useMantineTheme()
+
     return (
         <UnstyledButton
             onClick={onClick}
@@ -31,8 +33,10 @@ function MainLink({ icon: Icon, color, label, active, onClick }: MainLinkProps) 
                 borderRadius: theme.radius.sm,
                 color: active ? theme.colors[color][7] : theme.colors.gray[7],
                 backgroundColor: active ? theme.colors[color][0] : 'transparent',
+                transition: 'all 0.2s ease',
                 '&:hover': {
                     backgroundColor: theme.colors[color][0],
+                    transform: 'translateX(4px)',
                 },
                 '& + &': {
                     marginTop: theme.spacing.sm,
@@ -40,8 +44,23 @@ function MainLink({ icon: Icon, color, label, active, onClick }: MainLinkProps) 
             })}
         >
             <Group>
-                <Box style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <Icon size={24} stroke={1.5} color={active ? `var(--mantine-color-${color}-7)` : undefined} />
+                <Box style={{
+                    width: 24,
+                    height: 24,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    transition: 'transform 0.2s ease'
+                }}>
+                    <Icon
+                        size={24}
+                        stroke={1.5}
+                        style={{
+                            transform: active ? 'scale(1.1)' : 'scale(1)',
+                            transition: 'transform 0.2s ease'
+                        }}
+                        color={active ? `var(--mantine-color-${color}-7)` : undefined}
+                    />
                 </Box>
                 <Text size="sm" fw={active ? 500 : 400}>{label}</Text>
             </Group>
@@ -60,13 +79,19 @@ export default function Layout() {
     const [opened, setOpened] = useState(false)
     const navigate = useNavigate()
     const location = useLocation()
+    const theme = useMantineTheme()
     const currentPath = location.pathname.split('/')[1] || 'dashboard'
+
+    // Close mobile nav when route changes
+    useEffect(() => {
+        setOpened(false)
+    }, [location.pathname])
 
     return (
         <AppShell
             header={{ height: 60 }}
             navbar={{
-                width: 300,
+                width: { base: 300 },
                 breakpoint: 'sm',
                 collapsed: { desktop: false, mobile: !opened }
             }}
@@ -75,19 +100,34 @@ export default function Layout() {
             <AppShell.Header>
                 <Group h="100%" px="md" justify="space-between">
                     <Group>
-                        <Burger
-                            opened={opened}
-                            onClick={() => setOpened((o) => !o)}
-                            hiddenFrom="sm"
-                            size="sm"
-                        />
-                        <Title order={3}>PDF Extractor</Title>
+                        <MediaQuery largerThan="sm" styles={{ display: 'none' }}>
+                            <Burger
+                                opened={opened}
+                                onClick={() => setOpened((o) => !o)}
+                                size="sm"
+                                color={theme.colors.gray[6]}
+                                mr="xl"
+                            />
+                        </MediaQuery>
+                        <Title order={3} style={{
+                            background: 'linear-gradient(45deg, #4FACFE 0%, #00F2FE 100%)',
+                            WebkitBackgroundClip: 'text',
+                            WebkitTextFillColor: 'transparent'
+                        }}>
+                            PDF Extractor
+                        </Title>
                     </Group>
                 </Group>
             </AppShell.Header>
 
-            <AppShell.Navbar p="md">
-                <AppShell.Section>
+            <AppShell.Navbar
+                p="md"
+                style={{
+                    borderRight: `1px solid ${theme.colors.gray[2]}`,
+                    backgroundColor: theme.white
+                }}
+            >
+                <AppShell.Section grow>
                     {mainLinks.map((link) => (
                         <MainLink
                             key={link.path}
@@ -102,7 +142,7 @@ export default function Layout() {
                 </AppShell.Section>
             </AppShell.Navbar>
 
-            <AppShell.Main>
+            <AppShell.Main style={{ backgroundColor: theme.colors.gray[0] }}>
                 <Routes>
                     <Route path="/" element={<Navigate to="/dashboard" replace />} />
                     <Route path="/dashboard" element={<Dashboard />} />

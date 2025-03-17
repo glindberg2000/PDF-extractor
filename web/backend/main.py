@@ -57,7 +57,11 @@ app = FastAPI(
 # Enable CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "http://localhost:3000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -555,6 +559,37 @@ async def get_processing_status(db: Session = Depends(get_db)):
     except Exception as e:
         print(f"Error getting processing status: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/clients/{client_id}", response_model=ClientResponse)
+async def update_client(
+    client_id: int, client: ClientCreate, db: Session = Depends(get_db)
+):
+    db_client = db.query(Client).filter(Client.id == client_id).first()
+    if not db_client:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    for key, value in client.dict().items():
+        setattr(db_client, key, value)
+
+    db.commit()
+    db.refresh(db_client)
+    return db_client
+
+
+@app.delete("/clients/{client_id}")
+async def delete_client(client_id: int, db: Session = Depends(get_db)):
+    db_client = db.query(Client).filter(Client.id == client_id).first()
+    if not db_client:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    # Delete associated categories first (due to foreign key constraint)
+    db.query(Category).filter(Category.client_id == client_id).delete()
+
+    # Delete the client
+    db.delete(db_client)
+    db.commit()
+    return {"message": "Client deleted successfully"}
 
 
 if __name__ == "__main__":
