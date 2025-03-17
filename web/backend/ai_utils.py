@@ -1,51 +1,58 @@
 from typing import List
 import os
 import json
-import openai
+import logging
+import traceback
+from openai import OpenAI
+
+logger = logging.getLogger(__name__)
 
 
-async def generate_categories(business_description: str) -> str:
-    """Generate categories based on business description using OpenAI."""
+async def generate_categories(business_description: str) -> list:
+    """
+    Generate expense categories using OpenAI API based on business description.
+    Returns a list of dictionaries with category names and descriptions.
+    """
     try:
-        # Get API key from environment variable
-        api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            raise ValueError("OpenAI API key not found in environment variables")
+        logger.info("Starting category generation")
+        openai_client = OpenAI()
 
-        openai.api_key = api_key
-
-        prompt = f"""
-        Given the following business description, generate a list of 5-10 relevant transaction categories.
-        These categories should be specific to the business type and common transactions they might have.
-        
-        Business Description: {business_description}
-        
-        Return ONLY a JSON array of category names. Example: ["Category1", "Category2", "Category3"]
-        """
-
-        response = await openai.ChatCompletion.acreate(
-            model="gpt-3.5-turbo",
+        response = openai_client.chat.completions.create(
+            model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
             messages=[
                 {
                     "role": "system",
-                    "content": "You are a financial categorization expert.",
+                    "content": """You are a financial categorization expert. 
+                    Generate relevant expense categories for the given business description. 
+                    Return a JSON array of objects with 'name' and 'description' fields.
+                    Example: [{"name": "Office Supplies", "description": "Expenses for office materials and supplies"}]""",
                 },
-                {"role": "user", "content": prompt},
+                {
+                    "role": "user",
+                    "content": f"Generate expense categories for a business with this description: {business_description}",
+                },
             ],
             temperature=0.7,
-            max_tokens=200,
+            max_tokens=150,
         )
 
-        # Extract the category list from the response
-        categories = response.choices[0].message.content.strip()
-
-        # Validate that it's proper JSON
-        json.loads(categories)
-
-        return categories
+        # Parse categories from response
+        try:
+            categories = json.loads(response.choices[0].message.content)
+            logger.info(f"Successfully generated {len(categories)} categories")
+            return categories
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse OpenAI response as JSON: {str(e)}")
+            logger.error(f"Raw response: {response.choices[0].message.content}")
+            raise ValueError("Invalid response format from OpenAI API")
 
     except Exception as e:
-        print(f"Error in generate_categories: {e}")
-        # Return default categories if OpenAI call fails
-        default_categories = ["Income", "Expenses", "Transfers", "Other"]
-        return json.dumps(default_categories)
+        logger.error(f"Error in generate_categories: {str(e)}")
+        logger.error(traceback.format_exc())
+        # Return default categories if AI generation fails
+        return [
+            {"name": "Income", "description": "All income sources"},
+            {"name": "Expenses", "description": "General business expenses"},
+            {"name": "Transfers", "description": "Money transfers between accounts"},
+            {"name": "Other", "description": "Miscellaneous transactions"},
+        ]

@@ -54,7 +54,7 @@ export function Transactions() {
         setLoading(true)
         setError(null)
         try {
-            const response = await fetch('http://localhost:8000/clients/')
+            const response = await fetch('/api/clients/')
             if (!response.ok) {
                 throw new Error('Failed to fetch clients')
             }
@@ -76,7 +76,7 @@ export function Transactions() {
     const fetchTransactions = async (clientId: string) => {
         setLoading(true)
         try {
-            const response = await fetch(`http://localhost:8000/clients/${clientId}/transactions/`)
+            const response = await fetch(`/api/clients/${clientId}/transactions/`)
             if (!response.ok) {
                 throw new Error('Failed to fetch transactions')
             }

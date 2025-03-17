@@ -18,6 +18,8 @@ import {
     Loader,
     Alert,
     Container,
+    MultiSelect,
+    Tooltip,
 } from '@mantine/core'
 import { IconPlus, IconFolder, IconUpload, IconCategory, IconDotsVertical, IconFileUpload, IconTags, IconX, IconChevronRight, IconEdit, IconTrash, IconAlertCircle } from '@tabler/icons-react'
 import { notifications } from '@mantine/notifications'
@@ -31,6 +33,14 @@ interface Category {
     is_auto_generated: boolean
 }
 
+interface StatementType {
+    id: number
+    name: string
+    description: string | null
+    created_at: string
+    updated_at: string
+}
+
 interface Client {
     id: number
     name: string
@@ -38,6 +48,8 @@ interface Client {
     business_description: string | null
     categories: Category[]
     created_at: string
+    updated_at: string
+    statement_types?: StatementType[]
 }
 
 interface ClientFile {
@@ -59,6 +71,7 @@ export function Clients() {
     const [error, setError] = useState<string | null>(null)
     const [modalOpen, setModalOpen] = useState(false)
     const [editingClient, setEditingClient] = useState<Client | null>(null)
+    const [statementTypesModalOpen, setStatementTypesModalOpen] = useState(false)
 
     const form = useForm({
         initialValues: {
@@ -73,6 +86,16 @@ export function Clients() {
         }
     })
 
+    const statementTypeForm = useForm({
+        initialValues: {
+            name: '',
+            description: '',
+        },
+        validate: {
+            name: (value) => !value ? 'Name is required' : null,
+        },
+    })
+
     useEffect(() => {
         fetchClients()
     }, [])
@@ -83,16 +106,17 @@ export function Clients() {
         try {
             const response = await fetch('/api/clients/')
             if (!response.ok) {
-                throw new Error('Failed to fetch clients')
+                const errorData = await response.json()
+                throw new Error(errorData.detail || 'Failed to fetch clients')
             }
             const data = await response.json()
             setClients(data)
-        } catch (error) {
-            console.error('Error fetching clients:', error)
-            setError(error instanceof Error ? error.message : 'Failed to load clients')
+        } catch (err) {
+            console.error('Error fetching clients:', err)
+            setError(err instanceof Error ? err.message : 'Failed to fetch clients')
             notifications.show({
                 title: 'Error',
-                message: 'Failed to load clients. Please try again.',
+                message: 'Failed to fetch clients. Please try again.',
                 color: 'red',
             })
         } finally {
@@ -105,14 +129,18 @@ export function Clients() {
             const url = editingClient
                 ? `/api/clients/${editingClient.id}`
                 : '/api/clients/'
+            const method = editingClient ? 'PUT' : 'POST'
 
             const response = await fetch(url, {
-                method: editingClient ? 'PUT' : 'POST',
+                method,
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(values)
             })
 
-            if (!response.ok) throw new Error('Failed to save client')
+            if (!response.ok) {
+                const errorData = await response.json()
+                throw new Error(errorData.detail || `Failed to ${editingClient ? 'update' : 'create'} client`)
+            }
 
             notifications.show({
                 title: 'Success',
@@ -125,10 +153,10 @@ export function Clients() {
             setEditingClient(null)
             fetchClients()
         } catch (err) {
-            console.error('Error saving client:', err)
+            console.error('Error submitting form:', err)
             notifications.show({
                 title: 'Error',
-                message: err instanceof Error ? err.message : 'Failed to save client',
+                message: err instanceof Error ? err.message : `Failed to ${editingClient ? 'update' : 'create'} client`,
                 color: 'red'
             })
         }
@@ -152,7 +180,10 @@ export function Clients() {
                 method: 'DELETE'
             })
 
-            if (!response.ok) throw new Error('Failed to delete client')
+            if (!response.ok) {
+                const errorData = await response.json()
+                throw new Error(errorData.detail || 'Failed to delete client')
+            }
 
             notifications.show({
                 title: 'Success',
@@ -166,6 +197,64 @@ export function Clients() {
             notifications.show({
                 title: 'Error',
                 message: err instanceof Error ? err.message : 'Failed to delete client',
+                color: 'red'
+            })
+        }
+    }
+
+    const handleCreateStatementType = async (values: typeof statementTypeForm.values) => {
+        if (!selectedClient) return
+
+        try {
+            const response = await fetch(`/api/clients/${selectedClient.id}/statement-types`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(values)
+            })
+
+            if (!response.ok) throw new Error('Failed to create statement type')
+
+            notifications.show({
+                title: 'Success',
+                message: 'Statement type created successfully',
+                color: 'green'
+            })
+
+            setStatementTypesModalOpen(false)
+            statementTypeForm.reset()
+            fetchClients()
+        } catch (err) {
+            console.error('Error creating statement type:', err)
+            notifications.show({
+                title: 'Error',
+                message: err instanceof Error ? err.message : 'Failed to create statement type',
+                color: 'red'
+            })
+        }
+    }
+
+    const handleDeleteStatementType = async (clientId: number, statementTypeId: number) => {
+        if (!confirm('Are you sure you want to delete this statement type?')) return
+
+        try {
+            const response = await fetch(`/api/clients/${clientId}/statement-types/${statementTypeId}`, {
+                method: 'DELETE'
+            })
+
+            if (!response.ok) throw new Error('Failed to delete statement type')
+
+            notifications.show({
+                title: 'Success',
+                message: 'Statement type deleted successfully',
+                color: 'green'
+            })
+
+            fetchClients()
+        } catch (err) {
+            console.error('Error deleting statement type:', err)
+            notifications.show({
+                title: 'Error',
+                message: err instanceof Error ? err.message : 'Failed to delete statement type',
                 color: 'red'
             })
         }
@@ -216,6 +305,7 @@ export function Clients() {
                             <Table.Th>Name</Table.Th>
                             <Table.Th>Address</Table.Th>
                             <Table.Th>Business Description</Table.Th>
+                            <Table.Th>Statement Types</Table.Th>
                             <Table.Th>Created At</Table.Th>
                             <Table.Th>Actions</Table.Th>
                         </Table.Tr>
@@ -226,23 +316,45 @@ export function Clients() {
                                 <Table.Td>{client.name}</Table.Td>
                                 <Table.Td>{client.address}</Table.Td>
                                 <Table.Td>{client.business_description}</Table.Td>
+                                <Table.Td>
+                                    <Group spacing="xs">
+                                        {client.statement_types?.map((type) => (
+                                            <Badge key={type.id} variant="light">
+                                                {type.name}
+                                            </Badge>
+                                        ))}
+                                        <ActionIcon
+                                            color="blue"
+                                            onClick={() => {
+                                                setSelectedClient(client)
+                                                setStatementTypesModalOpen(true)
+                                            }}
+                                        >
+                                            <IconPlus size={16} />
+                                        </ActionIcon>
+                                    </Group>
+                                </Table.Td>
                                 <Table.Td>{new Date(client.created_at).toLocaleDateString()}</Table.Td>
                                 <Table.Td>
                                     <Group gap="xs">
-                                        <ActionIcon
-                                            variant="light"
-                                            color="blue"
-                                            onClick={() => handleEdit(client)}
-                                        >
-                                            <IconEdit size={16} />
-                                        </ActionIcon>
-                                        <ActionIcon
-                                            variant="light"
-                                            color="red"
-                                            onClick={() => handleDelete(client.id)}
-                                        >
-                                            <IconTrash size={16} />
-                                        </ActionIcon>
+                                        <Tooltip label="Edit">
+                                            <ActionIcon
+                                                variant="light"
+                                                color="blue"
+                                                onClick={() => handleEdit(client)}
+                                            >
+                                                <IconEdit size={16} />
+                                            </ActionIcon>
+                                        </Tooltip>
+                                        <Tooltip label="Delete">
+                                            <ActionIcon
+                                                variant="light"
+                                                color="red"
+                                                onClick={() => handleDelete(client.id)}
+                                            >
+                                                <IconTrash size={16} />
+                                            </ActionIcon>
+                                        </Tooltip>
                                     </Group>
                                 </Table.Td>
                             </Table.Tr>
@@ -282,6 +394,57 @@ export function Clients() {
                         </Group>
                     </Stack>
                 </form>
+            </Modal>
+
+            <Modal
+                opened={statementTypesModalOpen}
+                onClose={() => {
+                    setStatementTypesModalOpen(false)
+                    setSelectedClient(null)
+                    statementTypeForm.reset()
+                }}
+                title="Manage Statement Types"
+            >
+                <Stack>
+                    <form onSubmit={statementTypeForm.onSubmit(handleCreateStatementType)}>
+                        <Stack>
+                            <TextInput
+                                label="Statement Type Name"
+                                placeholder="e.g., Wells Fargo Visa"
+                                required
+                                {...statementTypeForm.getInputProps('name')}
+                            />
+                            <Textarea
+                                label="Description"
+                                placeholder="Optional description"
+                                {...statementTypeForm.getInputProps('description')}
+                            />
+                            <Group position="right">
+                                <Button variant="subtle" onClick={() => setStatementTypesModalOpen(false)}>
+                                    Cancel
+                                </Button>
+                                <Button type="submit">Add Statement Type</Button>
+                            </Group>
+                        </Stack>
+                    </form>
+
+                    {selectedClient && (
+                        <Stack>
+                            <Text weight={500}>Current Statement Types:</Text>
+                            {selectedClient.statement_types?.map((type) => (
+                                <Group key={type.id} position="apart">
+                                    <Text>{type.name}</Text>
+                                    <ActionIcon
+                                        color="red"
+                                        onClick={() => handleDeleteStatementType(selectedClient.id, type.id)}
+                                    >
+                                        <IconTrash size={16} />
+                                    </ActionIcon>
+                                </Group>
+                            ))}
+                        </Stack>
+                    )}
+                </Stack>
             </Modal>
         </Container>
     )

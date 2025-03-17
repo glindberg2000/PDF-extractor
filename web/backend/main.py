@@ -23,9 +23,12 @@ from fastapi import (
     BackgroundTasks,
     WebSocket,
     Depends,
+    Request,
 )
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from openai import OpenAI
+import traceback
 
 # Configure logging
 logging.basicConfig(
@@ -43,7 +46,7 @@ if not os.getenv("OPENAI_API_KEY"):
     print("Warning: OPENAI_API_KEY not set. Some features will be disabled.")
 
 from database import SessionLocal, engine, get_db
-from models import Base, Client, Category, ClientFile, Transaction
+from models import Base, Client, Category, ClientFile, Transaction, StatementType
 from ai_utils import generate_categories
 from dataextractai_vision.extractor import process_pdf_file
 
@@ -58,8 +61,6 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:5173",
-        "http://localhost:5174",
         "http://localhost:3000",
     ],
     allow_credentials=True,
@@ -94,6 +95,21 @@ class CategoryResponse(CategoryBase):
         from_attributes = True
 
 
+class StatementTypeCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+
+
+class StatementTypeResponse(BaseModel):
+    id: int
+    name: str
+    description: Optional[str]
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class ClientBase(BaseModel):
     name: str
     address: Optional[str] = None
@@ -104,10 +120,15 @@ class ClientCreate(ClientBase):
     pass
 
 
+class ClientUpdate(ClientBase):
+    pass
+
+
 class ClientResponse(ClientBase):
     id: int
     created_at: datetime
     categories: List[CategoryResponse] = []
+    statement_types: List[StatementTypeResponse] = []
 
     class Config:
         from_attributes = True
@@ -155,62 +176,52 @@ active_connections: set = set()
 
 @app.get("/")
 async def root():
-    return {"message": "PDF Extractor API is running"}
+    return {"message": "Welcome to PDF Extractor API"}
 
 
 @app.post("/clients/", response_model=ClientResponse)
 async def create_client(client: ClientCreate, db: Session = Depends(get_db)):
-    db_client = Client(**client.dict())
-    db.add(db_client)
-    db.commit()
-    db.refresh(db_client)
+    """Create a new client."""
+    try:
+        logger.info(f"Creating new client: {client.name}")
 
-    # Auto-generate categories based on business description
-    if client.business_description:
-        try:
-            categories_json = await generate_categories(client.business_description)
-            categories = json.loads(categories_json)
+        # Create client
+        db_client = Client(**client.model_dump())
+        db.add(db_client)
+        db.commit()
+        db.refresh(db_client)
 
-            for category_name in categories:
-                db_category = Category(
-                    name=category_name,
-                    description=f"Auto-generated category for {client.name}",
-                    is_auto_generated=True,
-                    client_id=db_client.id,
-                )
-                db.add(db_category)
-
-            db.commit()
-            db.refresh(db_client)
-        except Exception as e:
-            print(f"Error generating categories: {e}")
-            # Add some default categories
-            default_categories = ["Income", "Expenses", "Transfers", "Other"]
-            for category_name in default_categories:
-                db_category = Category(
-                    name=category_name,
-                    description=f"Default category for {client.name}",
-                    is_auto_generated=True,
-                    client_id=db_client.id,
-                )
-                db.add(db_category)
-            db.commit()
-            db.refresh(db_client)
-
-    return db_client
+        return db_client
+    except Exception as e:
+        logger.error(f"Error creating client: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/clients/", response_model=List[ClientResponse])
 async def list_clients(db: Session = Depends(get_db)):
-    return db.query(Client).all()
+    try:
+        logger.info("Fetching all clients")
+        clients = db.query(Client).all()
+        return clients
+    except Exception as e:
+        logger.error(f"Error fetching clients: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/clients/{client_id}", response_model=ClientResponse)
 async def get_client(client_id: int, db: Session = Depends(get_db)):
-    client = db.query(Client).filter(Client.id == client_id).first()
-    if not client:
-        raise HTTPException(status_code=404, detail="Client not found")
-    return client
+    try:
+        logger.info(f"Fetching client with ID: {client_id}")
+        client = db.query(Client).filter(Client.id == client_id).first()
+        if not client:
+            raise HTTPException(status_code=404, detail="Client not found")
+        return client
+    except Exception as e:
+        logger.error(f"Error fetching client {client_id}: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/clients/{client_id}/categories/", response_model=CategoryResponse)
@@ -563,33 +574,86 @@ async def get_processing_status(db: Session = Depends(get_db)):
 
 @app.put("/clients/{client_id}", response_model=ClientResponse)
 async def update_client(
-    client_id: int, client: ClientCreate, db: Session = Depends(get_db)
+    client_id: int, client: ClientUpdate, db: Session = Depends(get_db)
 ):
-    db_client = db.query(Client).filter(Client.id == client_id).first()
-    if not db_client:
-        raise HTTPException(status_code=404, detail="Client not found")
+    try:
+        logger.info(f"Updating client with ID: {client_id}")
+        db_client = db.query(Client).filter(Client.id == client_id).first()
+        if not db_client:
+            raise HTTPException(status_code=404, detail="Client not found")
 
-    for key, value in client.dict().items():
-        setattr(db_client, key, value)
+        for key, value in client.dict().items():
+            setattr(db_client, key, value)
 
-    db.commit()
-    db.refresh(db_client)
-    return db_client
+        db.commit()
+        db.refresh(db_client)
+        return db_client
+    except Exception as e:
+        logger.error(f"Error updating client {client_id}: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.delete("/clients/{client_id}")
 async def delete_client(client_id: int, db: Session = Depends(get_db)):
-    db_client = db.query(Client).filter(Client.id == client_id).first()
-    if not db_client:
-        raise HTTPException(status_code=404, detail="Client not found")
+    try:
+        logger.info(f"Deleting client with ID: {client_id}")
+        db_client = db.query(Client).filter(Client.id == client_id).first()
+        if not db_client:
+            raise HTTPException(status_code=404, detail="Client not found")
 
-    # Delete associated categories first (due to foreign key constraint)
-    db.query(Category).filter(Category.client_id == client_id).delete()
+        # Delete associated categories first (due to foreign key constraint)
+        db.query(Category).filter(Category.client_id == client_id).delete()
 
-    # Delete the client
-    db.delete(db_client)
+        # Delete the client
+        db.delete(db_client)
+        db.commit()
+        return {"message": "Client deleted successfully"}
+    except Exception as e:
+        logger.error(f"Error deleting client {client_id}: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/clients/{client_id}/statement-types", response_model=StatementTypeResponse)
+async def create_statement_type(
+    client_id: int, statement_type: StatementTypeCreate, db: Session = Depends(get_db)
+):
+    db_statement_type = StatementType(
+        client_id=client_id,
+        name=statement_type.name,
+        description=statement_type.description,
+    )
+    db.add(db_statement_type)
     db.commit()
-    return {"message": "Client deleted successfully"}
+    db.refresh(db_statement_type)
+    return db_statement_type
+
+
+@app.get(
+    "/clients/{client_id}/statement-types", response_model=List[StatementTypeResponse]
+)
+async def list_statement_types(client_id: int, db: Session = Depends(get_db)):
+    return db.query(StatementType).filter(StatementType.client_id == client_id).all()
+
+
+@app.delete("/clients/{client_id}/statement-types/{statement_type_id}")
+async def delete_statement_type(
+    client_id: int, statement_type_id: int, db: Session = Depends(get_db)
+):
+    db_statement_type = (
+        db.query(StatementType)
+        .filter(
+            StatementType.id == statement_type_id, StatementType.client_id == client_id
+        )
+        .first()
+    )
+    if not db_statement_type:
+        raise HTTPException(status_code=404, detail="Statement type not found")
+
+    db.delete(db_statement_type)
+    db.commit()
+    return {"message": "Statement type deleted successfully"}
 
 
 if __name__ == "__main__":
