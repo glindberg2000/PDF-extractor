@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import {
     Stack,
     Title,
@@ -25,6 +25,7 @@ import { IconPlus, IconFolder, IconUpload, IconCategory, IconDotsVertical, IconF
 import { notifications } from '@mantine/notifications'
 import { useNavigate } from 'react-router-dom'
 import { useForm } from '@mantine/form'
+import { StatementTypeSelector } from './StatementTypeSelector'
 
 interface Category {
     id: number
@@ -37,6 +38,7 @@ interface StatementType {
     id: number
     name: string
     description: string | null
+    is_active: boolean
     created_at: string
     updated_at: string
 }
@@ -72,6 +74,13 @@ export function Clients() {
     const [modalOpen, setModalOpen] = useState(false)
     const [editingClient, setEditingClient] = useState<Client | null>(null)
     const [statementTypesModalOpen, setStatementTypesModalOpen] = useState(false)
+    const [statementTypes, setStatementTypes] = useState<StatementType[]>([])
+    const [formData, setFormData] = useState({
+        name: '',
+        address: '',
+        business_description: '',
+        statement_types: [] as number[]
+    })
 
     const form = useForm({
         initialValues: {
@@ -98,18 +107,21 @@ export function Clients() {
 
     useEffect(() => {
         fetchClients()
+        fetchStatementTypes()
     }, [])
 
     const fetchClients = async () => {
         setLoading(true)
         setError(null)
         try {
+            console.log('Fetching clients...')
             const response = await fetch('/api/clients/')
             if (!response.ok) {
                 const errorData = await response.json()
                 throw new Error(errorData.detail || 'Failed to fetch clients')
             }
             const data = await response.json()
+            console.log('Received clients:', data)
             setClients(data)
         } catch (err) {
             console.error('Error fetching clients:', err)
@@ -124,7 +136,30 @@ export function Clients() {
         }
     }
 
-    const handleSubmit = async (values: typeof form.values) => {
+    const fetchStatementTypes = async () => {
+        try {
+            console.log('Fetching statement types...')
+            const response = await fetch('/api/statement-types/')
+            if (!response.ok) {
+                const errorData = await response.json()
+                throw new Error(errorData.detail || 'Failed to fetch statement types')
+            }
+            const data = await response.json()
+            console.log('Received statement types:', data)
+            setStatementTypes(data)
+        } catch (err) {
+            console.error('Error fetching statement types:', err)
+            setError(err instanceof Error ? err.message : 'Failed to load statement types')
+            notifications.show({
+                title: 'Error',
+                message: 'Failed to load statement types. Please try again.',
+                color: 'red',
+            })
+        }
+    }
+
+    const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault()
         try {
             const url = editingClient
                 ? `/api/clients/${editingClient.id}`
@@ -134,29 +169,30 @@ export function Clients() {
             const response = await fetch(url, {
                 method,
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(values)
+                body: JSON.stringify(formData)
             })
 
-            if (!response.ok) {
-                const errorData = await response.json()
-                throw new Error(errorData.detail || `Failed to ${editingClient ? 'update' : 'create'} client`)
-            }
+            if (!response.ok) throw new Error('Failed to save client')
 
+            await fetchClients()
+            setModalOpen(false)
+            setEditingClient(null)
+            setFormData({
+                name: '',
+                address: '',
+                business_description: '',
+                statement_types: []
+            })
             notifications.show({
                 title: 'Success',
                 message: `Client ${editingClient ? 'updated' : 'created'} successfully`,
                 color: 'green'
             })
-
-            setModalOpen(false)
-            form.reset()
-            setEditingClient(null)
-            fetchClients()
         } catch (err) {
             console.error('Error submitting form:', err)
             notifications.show({
                 title: 'Error',
-                message: err instanceof Error ? err.message : `Failed to ${editingClient ? 'update' : 'create'} client`,
+                message: err instanceof Error ? err.message : 'Failed to save client',
                 color: 'red'
             })
         }
@@ -164,10 +200,11 @@ export function Clients() {
 
     const handleEdit = (client: Client) => {
         setEditingClient(client)
-        form.setValues({
+        setFormData({
             name: client.name,
             address: client.address || '',
-            business_description: client.business_description || ''
+            business_description: client.business_description || '',
+            statement_types: client.statement_types?.map(type => type.id) || []
         })
         setModalOpen(true)
     }
@@ -368,26 +405,40 @@ export function Clients() {
                 onClose={() => setModalOpen(false)}
                 title={editingClient ? 'Edit Client' : 'Add Client'}
             >
-                <form onSubmit={form.onSubmit(handleSubmit)}>
+                <form onSubmit={handleSubmit}>
                     <Stack>
                         <TextInput
                             label="Name"
                             placeholder="Enter client name"
                             required
-                            {...form.getInputProps('name')}
+                            value={formData.name}
+                            onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                            error={form.errors.name}
                         />
                         <TextInput
                             label="Address"
                             placeholder="Enter client address"
                             required
-                            {...form.getInputProps('address')}
+                            value={formData.address}
+                            onChange={(e) => setFormData({ ...formData, address: e.target.value })}
+                            error={form.errors.address}
                         />
                         <Textarea
                             label="Business Description"
                             placeholder="Enter business description"
                             required
-                            {...form.getInputProps('business_description')}
+                            value={formData.business_description}
+                            onChange={(e) => setFormData({ ...formData, business_description: e.target.value })}
+                            error={form.errors.business_description}
                         />
+                        <Stack spacing="xs">
+                            <Text weight={500}>Statement Types</Text>
+                            <StatementTypeSelector
+                                statementTypes={statementTypes}
+                                selectedTypes={formData.statement_types}
+                                onChange={(selectedTypes) => setFormData({ ...formData, statement_types: selectedTypes })}
+                            />
+                        </Stack>
                         <Group justify="flex-end">
                             <Button variant="light" onClick={() => setModalOpen(false)}>Cancel</Button>
                             <Button type="submit">{editingClient ? 'Save Changes' : 'Add Client'}</Button>

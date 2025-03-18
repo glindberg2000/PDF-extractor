@@ -46,7 +46,19 @@ if not os.getenv("OPENAI_API_KEY"):
     print("Warning: OPENAI_API_KEY not set. Some features will be disabled.")
 
 from database import SessionLocal, engine, get_db
-from models import Base, Client, Category, ClientFile, Transaction, StatementType
+from models import (
+    Base,
+    Client,
+    Category,
+    ClientFile,
+    Transaction,
+    StatementType,
+    Parser,
+)
+from schemas import (
+    StatementType as StatementTypeSchema,
+    Parser as ParserSchema,
+)
 from ai_utils import generate_categories
 from dataextractai_vision.extractor import process_pdf_file
 
@@ -654,6 +666,69 @@ async def delete_statement_type(
     db.delete(db_statement_type)
     db.commit()
     return {"message": "Statement type deleted successfully"}
+
+
+# Parser and Statement Type endpoints
+@app.get("/parsers/", response_model=List[ParserSchema])
+def get_parsers(db: Session = Depends(get_db)):
+    return db.query(Parser).filter(Parser.is_active == True).all()
+
+
+@app.get("/statement-types/", response_model=List[StatementTypeSchema])
+def get_statement_types(db: Session = Depends(get_db)):
+    return db.query(StatementType).filter(StatementType.is_active == True).all()
+
+
+@app.get(
+    "/parsers/{parser_id}/statement-types/", response_model=List[StatementTypeSchema]
+)
+def get_parser_statement_types(parser_id: int, db: Session = Depends(get_db)):
+    parser = db.query(Parser).filter(Parser.id == parser_id).first()
+    if not parser:
+        raise HTTPException(status_code=404, detail="Parser not found")
+    return parser.statement_types
+
+
+@app.post("/parsers/{parser_id}/statement-types/{statement_type_id}/")
+def add_statement_type_to_parser(
+    parser_id: int, statement_type_id: int, db: Session = Depends(get_db)
+):
+    parser = db.query(Parser).filter(Parser.id == parser_id).first()
+    if not parser:
+        raise HTTPException(status_code=404, detail="Parser not found")
+
+    statement_type = (
+        db.query(StatementType).filter(StatementType.id == statement_type_id).first()
+    )
+    if not statement_type:
+        raise HTTPException(status_code=404, detail="Statement type not found")
+
+    if statement_type not in parser.statement_types:
+        parser.statement_types.append(statement_type)
+        db.commit()
+
+    return {"message": "Statement type added to parser"}
+
+
+@app.delete("/parsers/{parser_id}/statement-types/{statement_type_id}/")
+def remove_statement_type_from_parser(
+    parser_id: int, statement_type_id: int, db: Session = Depends(get_db)
+):
+    parser = db.query(Parser).filter(Parser.id == parser_id).first()
+    if not parser:
+        raise HTTPException(status_code=404, detail="Parser not found")
+
+    statement_type = (
+        db.query(StatementType).filter(StatementType.id == statement_type_id).first()
+    )
+    if not statement_type:
+        raise HTTPException(status_code=404, detail="Statement type not found")
+
+    if statement_type in parser.statement_types:
+        parser.statement_types.remove(statement_type)
+        db.commit()
+
+    return {"message": "Statement type removed from parser"}
 
 
 if __name__ == "__main__":

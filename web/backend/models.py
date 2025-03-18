@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean, JSON
 from sqlalchemy.orm import relationship
 from database import Base
 
@@ -39,16 +39,45 @@ class Category(Base):
     transactions = relationship("Transaction", back_populates="category")
 
 
+class Parser(Base):
+    __tablename__ = "parsers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, index=True)
+    description = Column(String)
+    file_pattern = Column(String)  # Regex pattern to match file names
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Many-to-many relationship with statement types
+    statement_types = relationship("StatementType", secondary="parser_statement_types")
+
+
+class ParserStatementType(Base):
+    __tablename__ = "parser_statement_types"
+
+    parser_id = Column(Integer, ForeignKey("parsers.id"), primary_key=True)
+    statement_type_id = Column(
+        Integer, ForeignKey("statement_types.id"), primary_key=True
+    )
+
+
 class StatementType(Base):
     __tablename__ = "statement_types"
 
     id = Column(Integer, primary_key=True, index=True)
     client_id = Column(Integer, ForeignKey("clients.id"))
-    name = Column(String, index=True)  # e.g., "Wells Fargo Visa", "Chase Visa"
-    description = Column(String, nullable=True)
+    name = Column(String, unique=True, index=True)
+    description = Column(String)
+    is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    # Relationships
     client = relationship("Client", back_populates="statement_types")
+    # Many-to-many relationship with parsers
+    parsers = relationship("Parser", secondary="parser_statement_types")
     files = relationship("ClientFile", back_populates="statement_type")
 
 
