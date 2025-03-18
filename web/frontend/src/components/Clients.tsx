@@ -166,13 +166,22 @@ export function Clients() {
                 : '/api/clients/'
             const method = editingClient ? 'PUT' : 'POST'
 
+            console.log('Submitting form data:', formData)
             const response = await fetch(url, {
                 method,
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(formData)
+                body: JSON.stringify({
+                    name: formData.name,
+                    address: formData.address,
+                    business_description: formData.business_description,
+                    statement_type_ids: formData.statement_types
+                })
             })
 
-            if (!response.ok) throw new Error('Failed to save client')
+            if (!response.ok) {
+                const errorData = await response.json()
+                throw new Error(errorData.detail || 'Failed to save client')
+            }
 
             await fetchClients()
             setModalOpen(false)

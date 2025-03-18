@@ -1,5 +1,5 @@
 import React from 'react';
-import { Checkbox, FormControlLabel, FormGroup } from '@mui/material';
+import { Checkbox, Stack } from '@mantine/core';
 
 interface StatementType {
     id: number;
@@ -29,20 +29,15 @@ export const StatementTypeSelector: React.FC<StatementTypeSelectorProps> = ({
     };
 
     return (
-        <FormGroup>
+        <Stack gap="xs">
             {statementTypes.map((type) => (
-                <FormControlLabel
+                <Checkbox
                     key={type.id}
-                    control={
-                        <Checkbox
-                            checked={selectedTypes.includes(type.id)}
-                            onChange={() => handleChange(type.id)}
-                            name={type.name}
-                        />
-                    }
                     label={type.name}
+                    checked={selectedTypes.includes(type.id)}
+                    onChange={() => handleChange(type.id)}
                 />
             ))}
-        </FormGroup>
+        </Stack>
     );
 }; 
