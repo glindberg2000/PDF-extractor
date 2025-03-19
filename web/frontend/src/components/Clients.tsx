@@ -73,7 +73,6 @@ export function Clients() {
     const [error, setError] = useState<string | null>(null)
     const [modalOpen, setModalOpen] = useState(false)
     const [editingClient, setEditingClient] = useState<Client | null>(null)
-    const [statementTypesModalOpen, setStatementTypesModalOpen] = useState(false)
     const [statementTypes, setStatementTypes] = useState<StatementType[]>([])
     const [formData, setFormData] = useState({
         name: '',
@@ -248,62 +247,16 @@ export function Clients() {
         }
     }
 
-    const handleCreateStatementType = async (values: typeof statementTypeForm.values) => {
-        if (!selectedClient) return
-
-        try {
-            const response = await fetch(`/api/clients/${selectedClient.id}/statement-types`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(values)
-            })
-
-            if (!response.ok) throw new Error('Failed to create statement type')
-
-            notifications.show({
-                title: 'Success',
-                message: 'Statement type created successfully',
-                color: 'green'
-            })
-
-            setStatementTypesModalOpen(false)
-            statementTypeForm.reset()
-            fetchClients()
-        } catch (err) {
-            console.error('Error creating statement type:', err)
-            notifications.show({
-                title: 'Error',
-                message: err instanceof Error ? err.message : 'Failed to create statement type',
-                color: 'red'
-            })
-        }
+    const handleClientSelect = (client: Client) => {
+        setSelectedClient(client)
     }
 
-    const handleDeleteStatementType = async (clientId: number, statementTypeId: number) => {
-        if (!confirm('Are you sure you want to delete this statement type?')) return
+    const handleStatementTypeSelect = (typeId: number) => {
+        // Implementation of handleStatementTypeSelect
+    }
 
-        try {
-            const response = await fetch(`/api/clients/${clientId}/statement-types/${statementTypeId}`, {
-                method: 'DELETE'
-            })
-
-            if (!response.ok) throw new Error('Failed to delete statement type')
-
-            notifications.show({
-                title: 'Success',
-                message: 'Statement type deleted successfully',
-                color: 'green'
-            })
-
-            fetchClients()
-        } catch (err) {
-            console.error('Error deleting statement type:', err)
-            notifications.show({
-                title: 'Error',
-                message: err instanceof Error ? err.message : 'Failed to delete statement type',
-                color: 'red'
-            })
-        }
+    const handleUploadComplete = (file: File) => {
+        // Implementation of handleUploadComplete
     }
 
     if (loading && clients.length === 0) {
@@ -340,74 +293,98 @@ export function Clients() {
                 </Button>
             </Group>
 
-            {clients.length === 0 ? (
-                <Paper p="xl" ta="center">
-                    <Text c="dimmed">No clients yet. Add your first client to get started!</Text>
-                </Paper>
-            ) : (
-                <Table>
-                    <Table.Thead>
-                        <Table.Tr>
-                            <Table.Th>Name</Table.Th>
-                            <Table.Th>Address</Table.Th>
-                            <Table.Th>Business Description</Table.Th>
-                            <Table.Th>Statement Types</Table.Th>
-                            <Table.Th>Created At</Table.Th>
-                            <Table.Th>Actions</Table.Th>
-                        </Table.Tr>
-                    </Table.Thead>
-                    <Table.Tbody>
-                        {clients.map((client) => (
-                            <Table.Tr key={client.id}>
-                                <Table.Td>{client.name}</Table.Td>
-                                <Table.Td>{client.address}</Table.Td>
-                                <Table.Td>{client.business_description}</Table.Td>
-                                <Table.Td>
-                                    <Group spacing="xs">
-                                        {client.statement_types?.map((type) => (
-                                            <Badge key={type.id} variant="light">
-                                                {type.name}
-                                            </Badge>
-                                        ))}
-                                        <ActionIcon
-                                            color="blue"
-                                            onClick={() => {
-                                                setSelectedClient(client)
-                                                setStatementTypesModalOpen(true)
-                                            }}
-                                        >
-                                            <IconPlus size={16} />
-                                        </ActionIcon>
-                                    </Group>
-                                </Table.Td>
-                                <Table.Td>{new Date(client.created_at).toLocaleDateString()}</Table.Td>
-                                <Table.Td>
-                                    <Group gap="xs">
-                                        <Tooltip label="Edit">
-                                            <ActionIcon
-                                                variant="light"
-                                                color="blue"
-                                                onClick={() => handleEdit(client)}
-                                            >
-                                                <IconEdit size={16} />
-                                            </ActionIcon>
-                                        </Tooltip>
-                                        <Tooltip label="Delete">
-                                            <ActionIcon
-                                                variant="light"
-                                                color="red"
-                                                onClick={() => handleDelete(client.id)}
-                                            >
-                                                <IconTrash size={16} />
-                                            </ActionIcon>
-                                        </Tooltip>
-                                    </Group>
-                                </Table.Td>
-                            </Table.Tr>
-                        ))}
-                    </Table.Tbody>
-                </Table>
-            )}
+            <SimpleGrid cols={2} spacing="xl">
+                <Stack>
+                    {clients.length === 0 ? (
+                        <Paper p="xl" ta="center">
+                            <Text c="dimmed">No clients yet. Add your first client to get started!</Text>
+                        </Paper>
+                    ) : (
+                        <Table>
+                            <Table.Thead>
+                                <Table.Tr>
+                                    <Table.Th>Name</Table.Th>
+                                    <Table.Th>Address</Table.Th>
+                                    <Table.Th>Statement Types</Table.Th>
+                                    <Table.Th>Actions</Table.Th>
+                                </Table.Tr>
+                            </Table.Thead>
+                            <Table.Tbody>
+                                {clients.map((client) => (
+                                    <Table.Tr
+                                        key={client.id}
+                                        style={{
+                                            cursor: 'pointer',
+                                            backgroundColor: selectedClient?.id === client.id ? 'var(--mantine-color-gray-0)' : undefined
+                                        }}
+                                        onClick={() => handleClientSelect(client)}
+                                    >
+                                        <Table.Td>{client.name}</Table.Td>
+                                        <Table.Td>{client.address}</Table.Td>
+                                        <Table.Td>
+                                            <Group spacing="xs">
+                                                {client.statement_types?.map((type) => (
+                                                    <Badge
+                                                        key={type.id}
+                                                        variant="light"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            handleStatementTypeSelect(type.id);
+                                                        }}
+                                                    >
+                                                        {type.name}
+                                                    </Badge>
+                                                ))}
+                                            </Group>
+                                        </Table.Td>
+                                        <Table.Td>
+                                            <Group gap="xs">
+                                                <Tooltip label="Edit">
+                                                    <ActionIcon
+                                                        variant="light"
+                                                        color="blue"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            handleEdit(client);
+                                                        }}
+                                                    >
+                                                        <IconEdit size={16} />
+                                                    </ActionIcon>
+                                                </Tooltip>
+                                                <Tooltip label="Delete">
+                                                    <ActionIcon
+                                                        variant="light"
+                                                        color="red"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            handleDelete(client.id);
+                                                        }}
+                                                    >
+                                                        <IconTrash size={16} />
+                                                    </ActionIcon>
+                                                </Tooltip>
+                                            </Group>
+                                        </Table.Td>
+                                    </Table.Tr>
+                                ))}
+                            </Table.Tbody>
+                        </Table>
+                    )}
+                </Stack>
+
+                <Stack>
+                    {selectedClient ? (
+                        <>
+                            <Title order={3}>{selectedClient.name}</Title>
+                            {/* ... existing file upload and file listing UI ... */}
+                        </>
+                    ) : (
+                        <Paper p="xl" ta="center">
+                            <Text c="dimmed">Select a client to view details</Text>
+                        </Paper>
+                    )}
+                </Stack>
+            </SimpleGrid>
 
             <Modal
                 opened={modalOpen}
@@ -454,57 +431,6 @@ export function Clients() {
                         </Group>
                     </Stack>
                 </form>
-            </Modal>
-
-            <Modal
-                opened={statementTypesModalOpen}
-                onClose={() => {
-                    setStatementTypesModalOpen(false)
-                    setSelectedClient(null)
-                    statementTypeForm.reset()
-                }}
-                title="Manage Statement Types"
-            >
-                <Stack>
-                    <form onSubmit={statementTypeForm.onSubmit(handleCreateStatementType)}>
-                        <Stack>
-                            <TextInput
-                                label="Statement Type Name"
-                                placeholder="e.g., Wells Fargo Visa"
-                                required
-                                {...statementTypeForm.getInputProps('name')}
-                            />
-                            <Textarea
-                                label="Description"
-                                placeholder="Optional description"
-                                {...statementTypeForm.getInputProps('description')}
-                            />
-                            <Group position="right">
-                                <Button variant="subtle" onClick={() => setStatementTypesModalOpen(false)}>
-                                    Cancel
-                                </Button>
-                                <Button type="submit">Add Statement Type</Button>
-                            </Group>
-                        </Stack>
-                    </form>
-
-                    {selectedClient && (
-                        <Stack>
-                            <Text weight={500}>Current Statement Types:</Text>
-                            {selectedClient.statement_types?.map((type) => (
-                                <Group key={type.id} position="apart">
-                                    <Text>{type.name}</Text>
-                                    <ActionIcon
-                                        color="red"
-                                        onClick={() => handleDeleteStatementType(selectedClient.id, type.id)}
-                                    >
-                                        <IconTrash size={16} />
-                                    </ActionIcon>
-                                </Group>
-                            ))}
-                        </Stack>
-                    )}
-                </Stack>
             </Modal>
         </Container>
     )

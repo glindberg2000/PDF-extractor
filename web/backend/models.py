@@ -8,9 +8,25 @@ from sqlalchemy import (
     Boolean,
     JSON,
     func,
+    ARRAY,
+    Enum,
+    CheckConstraint,
 )
 from sqlalchemy.orm import relationship
 from database import Base
+import enum
+
+
+class FileStatus:
+    PENDING = "pending"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    ARCHIVED = "archived"
+
+    @classmethod
+    def values(cls):
+        return [cls.PENDING, cls.PROCESSING, cls.COMPLETED, cls.FAILED, cls.ARCHIVED]
 
 
 class ClientStatementType(Base):
@@ -30,6 +46,7 @@ class StatementType(Base):
     description = Column(String)
     file_pattern = Column(String, nullable=True)
     parser_module = Column(String, nullable=True)
+    parser_script = Column(String, nullable=True)
     is_active = Column(Boolean, nullable=False, server_default="1")
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(
@@ -120,7 +137,7 @@ class ClientFile(Base):
     statement_type_id = Column(Integer, ForeignKey("statement_types.id"))
     filename = Column(String)
     file_path = Column(String)
-    status = Column(String)  # pending, processing, completed, error
+    status = Column(String, nullable=False, server_default=FileStatus.PENDING)
     error_message = Column(String, nullable=True)
     total_transactions = Column(Integer, nullable=True)
     pages_processed = Column(Integer, nullable=True)
@@ -128,6 +145,12 @@ class ClientFile(Base):
     file_hash = Column(String, nullable=True)
     uploaded_at = Column(DateTime, nullable=False, server_default=func.now())
     processed_at = Column(DateTime, nullable=True)
+    tags = Column(JSON, nullable=True)
+
+    # Add CHECK constraint for status
+    __table_args__ = (
+        CheckConstraint(status.in_(FileStatus.values()), name="status_types"),
+    )
 
     # Relationships
     client = relationship("Client", back_populates="files")

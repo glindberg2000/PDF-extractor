@@ -1,64 +1,55 @@
 # Product Context
 
 ## Purpose
-The PDF-extractor is a specialized tool designed to automatically extract financial transaction data from bank statements and financial documents. It uses OpenAI's GPT-4.5-preview vision model to analyze PDF statements and extract structured transaction data.
+The PDF Extractor is a comprehensive financial document processing system designed to efficiently handle bank and Visa card statements. It provides an intuitive interface for uploading, processing, and managing financial documents while leveraging existing command-line processors.
 
-## Problems Solved
-1. Manual Data Entry Elimination
-   - Automates the tedious process of manually entering transaction data
-   - Reduces human error in data entry
-   - Saves significant time in financial record keeping
+## Core Problems Solved
+1. **Document Management**
+   - Efficient upload and organization of PDF and CSV statements
+   - Proper tagging and categorization of documents by client and statement type
+   - Secure storage and retrieval of financial documents
 
-2. Structured Data Extraction
-   - Converts unstructured PDF statements into structured CSV data
-   - Maintains transaction context and source information
-   - Enables easy import into financial software
+2. **Transaction Processing**
+   - Automated extraction of transaction data from various statement formats
+   - Integration with existing command-line processors
+   - Real-time processing status tracking and error handling
 
-3. Multi-format Support
-   - Handles various bank statement formats
-   - Processes multi-page PDF documents
-   - Maintains consistent output format
+3. **Transaction Categorization**
+   - Flexible categorization system for transactions
+   - Bulk categorization capabilities
+   - Support for custom categories per client
 
-## Core Features
-1. Transaction Extraction
-   - Date identification
-   - Description parsing
-   - Amount detection with proper sign (+/-)
-   - Automatic categorization
-   - Source tracking (file and page)
+4. **Auditing and Compliance**
+   - Easy access to original documents
+   - Transaction matching and verification
+   - Comprehensive audit trail
 
-2. Processing Management
-   - Batch processing of multiple PDFs
-   - Progress tracking and history
-   - Error handling and recovery
-   - Detailed logging
+## User Workflows
 
-3. Data Organization
-   - Structured CSV output
-   - Consistent data format
-   - Source file tracking
-   - Processing timestamp recording
+### Document Upload
+1. User navigates to Files section
+2. Selects file(s) for upload
+3. Tags with client and statement type
+4. System processes automatically
+5. Status updates in real-time
 
-## Target Users
-- Financial professionals
-- Bookkeepers and accountants
-- Small business owners
-- Individual users managing personal finances
+### Transaction Management
+1. View processed transactions
+2. Apply categories
+3. Audit against original documents
+4. Match transactions to statements
+5. Export or report as needed
+
+### Client Management
+1. Create/edit client profiles
+2. Assign statement types
+3. View client-specific documents
+4. Monitor processing status
+5. Access transaction history
 
 ## Success Criteria
-1. Accuracy
-   - Correct transaction details extraction
-   - Proper amount sign handling
-   - Accurate date parsing
-   - Meaningful categorization
-
-2. Efficiency
-   - Faster than manual entry
-   - Minimal human intervention
-   - Batch processing capability
-
-3. Reliability
-   - Consistent output format
-   - Error recovery
-   - Processing history tracking
-   - Data integrity maintenance 
+- Efficient document processing with minimal user intervention
+- Accurate transaction extraction and categorization
+- Reliable audit trail and document matching
+- Intuitive user interface for all operations
+- Scalable system for multiple clients and document types 

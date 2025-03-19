@@ -1,57 +1,158 @@
 # System Patterns
 
 ## Architecture Overview
-The system follows a modular architecture with clear separation of concerns:
 
-1. Core Components
-   - VisionExtractor: Main class for PDF processing and transaction extraction
-   - ProcessingHistory: Manages processing state and history
-   - Transaction: Data model for financial transactions
-   - ProcessingResult: Result type for extraction operations
+### Frontend Architecture
+1. **Component Structure**
+   - Dashboard: Overview and metrics
+   - Clients: Client management
+   - Files: Document handling
+   - Transactions: Transaction management
+   - Shared components (modals, tables, forms)
 
-2. Processing Pipeline
+2. **State Management**
+   - React hooks for local state
+   - Context for global state
+   - WebSocket for real-time updates
+
+3. **UI Patterns**
+   - Modal-based forms for actions
+   - Table-based data display
+   - Drag-and-drop file upload
+   - Status indicators and progress bars
+
+### Backend Architecture
+1. **API Structure**
+   - RESTful endpoints for CRUD operations
+   - WebSocket for real-time updates
+   - Background task processing
+
+2. **File System Organization**
    ```
-   PDF -> Image Conversion -> Vision API -> JSON Parsing -> Transaction Objects -> CSV Output
+   client_files/
+   ├── {client_id}_{client_name}/
+   │   ├── uploads/
+   │   ├── processed/
+   │   └── archived/
+   ```
+
+3. **Database Schema**
+   ```sql
+   -- Statement Types Table
+   CREATE TABLE statement_types (
+       id INTEGER PRIMARY KEY AUTOINCREMENT,
+       name TEXT NOT NULL UNIQUE,
+       parser_script TEXT NOT NULL,
+       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+   );
+
+   -- Statements Table
+   CREATE TABLE statements (
+       id INTEGER PRIMARY KEY AUTOINCREMENT,
+       client_id INTEGER NOT NULL,
+       statement_type_id INTEGER NOT NULL,
+       file_path TEXT NOT NULL,
+       status TEXT NOT NULL DEFAULT 'pending',
+       upload_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+       process_timestamp TIMESTAMP,
+       error_message TEXT,
+       FOREIGN KEY (client_id) REFERENCES clients(id),
+       FOREIGN KEY (statement_type_id) REFERENCES statement_types(id)
+   );
+
+   -- Transactions Table (existing)
+   CREATE TABLE transactions (
+       id INTEGER PRIMARY KEY AUTOINCREMENT,
+       statement_id INTEGER NOT NULL,
+       date DATE NOT NULL,
+       description TEXT NOT NULL,
+       amount DECIMAL(10,2) NOT NULL,
+       category TEXT,
+       FOREIGN KEY (statement_id) REFERENCES statements(id)
+   );
    ```
 
 ## Key Technical Decisions
 
-1. Vision Model Selection
-   - Using GPT-4.5-preview for vision capabilities
-   - Optimized for document understanding
-   - Handles various statement formats
+### 1. File Processing
+- Asynchronous processing using background tasks
+- Status tracking via WebSocket
+- File system organization by client
+- Support for multiple file formats
 
-2. Image Processing
-   - PyMuPDF for PDF to image conversion
-   - Automatic image resizing for API limits
-   - Base64 encoding for API transmission
+### 2. Data Management
+- SQLite for data storage
+- File system for document storage
+- JSON for configuration and metadata
+- CSV for transaction exports
 
-3. Data Storage
-   - SQLite for processing history
-   - CSV files for transaction data
-   - File-based organization for scalability
+### 3. Security
+- File type validation
+- Client isolation
+- Secure file storage
+- Access control
 
-4. Error Handling
-   - Comprehensive exception handling
-   - Detailed logging at all stages
-   - Graceful failure recovery
+### 4. Performance
+- Batch processing
+- Background tasks
+- Efficient file storage
+- Optimized database queries
 
 ## Design Patterns
 
-1. Builder Pattern
-   - Transaction object construction
-   - ProcessingResult creation
-   - Structured data assembly
+### 1. Repository Pattern
+- Abstract data access
+- Consistent CRUD operations
+- Transaction management
 
-2. Strategy Pattern
-   - Flexible image processing
-   - Configurable API parameters
-   - Adaptable parsing logic
+### 2. Factory Pattern
+- Parser creation
+- File handler creation
+- Document processor creation
 
-3. Repository Pattern
-   - Processing history management
-   - Transaction storage
-   - File organization
+### 3. Observer Pattern
+- Status updates
+- Processing notifications
+- Real-time updates
+
+### 4. Strategy Pattern
+- Parser selection
+- File handling
+- Processing methods
+
+## Error Handling
+
+### 1. File Processing
+- Validation errors
+- Processing failures
+- Format mismatches
+
+### 2. Data Management
+- Database constraints
+- File system errors
+- State inconsistencies
+
+### 3. User Interface
+- Form validation
+- Network errors
+- Processing status
+
+## Testing Strategy
+
+### 1. Unit Tests
+- Component testing
+- Service testing
+- Utility testing
+
+### 2. Integration Tests
+- API testing
+- File processing
+- Database operations
+
+### 3. End-to-End Tests
+- User workflows
+- File uploads
+- Processing pipeline
 
 ## Code Organization
 

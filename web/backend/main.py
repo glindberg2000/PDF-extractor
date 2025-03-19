@@ -29,6 +29,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from openai import OpenAI
 import traceback
+from sqlalchemy.exc import IntegrityError
+import crud
+import models
+import schemas
+from database import SessionLocal, engine
+from file_system import ClientFileSystem
 
 # Configure logging
 logging.basicConfig(
@@ -55,9 +61,21 @@ from models import (
     StatementType,
     Parser,
 )
+import crud
 from schemas import (
     StatementType as StatementTypeSchema,
-    Parser as ParserSchema,
+    Category as CategorySchema,
+    CategoryCreate,
+    CategoryBase,
+    StatementTypeCreate,
+    StatementTypeResponse,
+    ClientBase,
+    ClientCreate,
+    ClientUpdate,
+    ClientResponse,
+    FileResponse,
+    TransactionResponse,
+    UploadResponse,
 )
 from ai_utils import generate_categories
 from dataextractai_vision.extractor import process_pdf_file
@@ -86,104 +104,11 @@ Base.metadata.create_all(bind=engine)
 # Create uploads directory
 os.makedirs("uploads", exist_ok=True)
 
-
-# Pydantic models for request/response
-class CategoryBase(BaseModel):
-    name: str
-    description: Optional[str] = None
-
-
-class CategoryCreate(CategoryBase):
-    pass
-
-
-class CategoryResponse(CategoryBase):
-    id: int
-    is_auto_generated: bool
-    client_id: int
-    created_at: datetime
-
-    class Config:
-        from_attributes = True
-
-
-class StatementTypeCreate(BaseModel):
-    name: str
-    description: Optional[str] = None
-
-
-class StatementTypeResponse(BaseModel):
-    id: int
-    name: str
-    description: Optional[str]
-    created_at: datetime
-
-    class Config:
-        from_attributes = True
-
-
-class ClientBase(BaseModel):
-    name: str
-    address: Optional[str] = None
-    business_description: Optional[str] = None
-
-
-class ClientCreate(ClientBase):
-    pass
-
-
-class ClientUpdate(ClientBase):
-    pass
-
-
-class ClientResponse(ClientBase):
-    id: int
-    created_at: datetime
-    categories: List[CategoryResponse] = []
-    statement_types: List[StatementTypeResponse] = []
-
-    class Config:
-        from_attributes = True
-
-
-class FileResponse(BaseModel):
-    id: int
-    filename: str
-    status: str
-    uploaded_at: datetime
-    processed_at: Optional[datetime] = None
-    error_message: Optional[str] = None
-    total_transactions: Optional[int] = None
-    pages_processed: Optional[int] = None
-    total_pages: Optional[int] = None
-    file_hash: Optional[str] = None
-
-    class Config:
-        from_attributes = True
-
-
-# Add new Pydantic models for transactions
-class TransactionResponse(BaseModel):
-    id: int
-    date: datetime
-    description: str
-    amount: float
-    is_categorized: bool
-    category_id: Optional[int] = None
-    category_name: Optional[str] = None
-    raw_text: Optional[str] = None
-
-    class Config:
-        from_attributes = True
-
-
-class UploadResponse(BaseModel):
-    message: str
-    file_id: int
-
-
 # Store active WebSocket connections
 active_connections: set = set()
+
+# Initialize file system
+file_system = ClientFileSystem()
 
 
 @app.get("/")
@@ -193,20 +118,50 @@ async def root():
 
 @app.post("/clients/", response_model=ClientResponse)
 async def create_client(client: ClientCreate, db: Session = Depends(get_db)):
-    """Create a new client."""
+    logger.info(f"Creating new client: {client}")
     try:
-        logger.info(f"Creating new client: {client.name}")
+        # Create client without statement_type_ids
+        client_data = client.model_dump(exclude={"statement_type_ids"})
+        logger.info(f"Client data after excluding statement_type_ids: {client_data}")
 
-        # Create client
-        db_client = Client(**client.model_dump())
+        db_client = Client(**client_data)
         db.add(db_client)
         db.commit()
         db.refresh(db_client)
+        logger.info(f"Created client with ID: {db_client.id}")
 
+        # Create file system structure
+        try:
+            file_system.create_client_directory(db_client.id, db_client.name)
+            logger.info(f"Created file system structure for client {db_client.id}")
+        except Exception as e:
+            logger.error(f"Error creating file system structure: {str(e)}")
+            # Don't fail the whole operation if file system creation fails
+            # Just log the error and continue
+
+        # Add statement types
+        for statement_type_id in client.statement_type_ids:
+            logger.info(
+                f"Adding statement type {statement_type_id} to client {db_client.id}"
+            )
+            statement_type = (
+                db.query(StatementType)
+                .filter(StatementType.id == statement_type_id)
+                .first()
+            )
+            if statement_type:
+                db_client.statement_types.append(statement_type)
+            else:
+                logger.warning(f"Statement type {statement_type_id} not found")
+
+        db.commit()
+        db.refresh(db_client)
+        logger.info(f"Successfully created client: {db_client}")
         return db_client
     except Exception as e:
         logger.error(f"Error creating client: {str(e)}")
-        logger.error(traceback.format_exc())
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -236,7 +191,7 @@ async def get_client(client_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/clients/{client_id}/categories/", response_model=CategoryResponse)
+@app.post("/clients/{client_id}/categories/", response_model=CategorySchema)
 async def create_category(
     client_id: int, category: CategoryCreate, db: Session = Depends(get_db)
 ):
@@ -609,21 +564,16 @@ async def update_client(
 @app.delete("/clients/{client_id}")
 async def delete_client(client_id: int, db: Session = Depends(get_db)):
     try:
-        logger.info(f"Deleting client with ID: {client_id}")
-        db_client = db.query(Client).filter(Client.id == client_id).first()
+        # Delete file system structure first
+        file_system.delete_client_directory(client_id)
+
+        # Then delete from database
+        db_client = crud.delete_client(db, client_id=client_id)
         if not db_client:
             raise HTTPException(status_code=404, detail="Client not found")
-
-        # Delete associated categories first (due to foreign key constraint)
-        db.query(Category).filter(Category.client_id == client_id).delete()
-
-        # Delete the client
-        db.delete(db_client)
-        db.commit()
         return {"message": "Client deleted successfully"}
     except Exception as e:
-        logger.error(f"Error deleting client {client_id}: {str(e)}")
-        logger.error(traceback.format_exc())
+        logger.error(f"Error deleting client: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -669,7 +619,7 @@ async def delete_statement_type(
 
 
 # Parser and Statement Type endpoints
-@app.get("/parsers/", response_model=List[ParserSchema])
+@app.get("/parsers/")
 def get_parsers(db: Session = Depends(get_db)):
     return db.query(Parser).filter(Parser.is_active == True).all()
 
@@ -729,6 +679,227 @@ def remove_statement_type_from_parser(
         db.commit()
 
     return {"message": "Statement type removed from parser"}
+
+
+# Categories endpoints
+@app.get("/categories/", response_model=List[CategorySchema])
+def get_categories(
+    client_id: int = None,
+    type: str = None,
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+):
+    """Get all categories, optionally filtered by client_id and type."""
+    return crud.get_categories(
+        db, client_id=client_id, type=type, skip=skip, limit=limit
+    )
+
+
+@app.get("/categories/{category_id}", response_model=CategorySchema)
+def get_category(category_id: int, db: Session = Depends(get_db)):
+    """Get a specific category by ID."""
+    db_category = crud.get_category(db, category_id=category_id)
+    if db_category is None:
+        raise HTTPException(status_code=404, detail="Category not found")
+    return db_category
+
+
+@app.post("/categories/", response_model=CategorySchema)
+def create_category(category: CategoryCreate, db: Session = Depends(get_db)):
+    """Create a new category."""
+    try:
+        return crud.create_category(db=db, category=category)
+    except IntegrityError:
+        raise HTTPException(status_code=400, detail="Category already exists")
+
+
+@app.put("/categories/{category_id}", response_model=CategorySchema)
+def update_category(
+    category_id: int, category: CategoryCreate, db: Session = Depends(get_db)
+):
+    """Update a category."""
+    db_category = crud.get_category(db, category_id=category_id)
+    if db_category is None:
+        raise HTTPException(status_code=404, detail="Category not found")
+
+    if db_category.is_system_default:
+        raise HTTPException(
+            status_code=400, detail="Cannot modify system default categories"
+        )
+
+    return crud.update_category(db=db, category_id=category_id, category=category)
+
+
+@app.delete("/categories/{category_id}")
+def delete_category(category_id: int, db: Session = Depends(get_db)):
+    """Delete a category."""
+    db_category = crud.get_category(db, category_id=category_id)
+    if db_category is None:
+        raise HTTPException(status_code=404, detail="Category not found")
+
+    if db_category.is_system_default:
+        raise HTTPException(
+            status_code=400, detail="Cannot delete system default categories"
+        )
+
+    crud.delete_category(db=db, category_id=category_id)
+    return {"ok": True}
+
+
+@app.post("/clients/{client_id}/files/upload")
+async def upload_file(
+    client_id: int,
+    statement_type_id: int,
+    file: UploadFile = File(...),
+    tags: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    try:
+        # Verify client exists
+        client = db.query(Client).filter(Client.id == client_id).first()
+        if not client:
+            raise HTTPException(status_code=404, detail="Client not found")
+
+        # Verify statement type exists and is associated with client
+        statement_type = (
+            db.query(StatementType)
+            .filter(
+                StatementType.id == statement_type_id,
+                StatementType.clients.any(Client.id == client_id),
+            )
+            .first()
+        )
+        if not statement_type:
+            raise HTTPException(
+                status_code=404,
+                detail="Statement type not found or not associated with client",
+            )
+
+        # Get upload path
+        upload_dir = file_system.get_upload_path(client_id, statement_type_id)
+        file_path = upload_dir / file.filename
+
+        # Save file
+        with open(file_path, "wb") as buffer:
+            content = await file.read()
+            buffer.write(content)
+
+        # Create database entry
+        db_file = ClientFile(
+            client_id=client_id,
+            statement_type_id=statement_type_id,
+            filename=file.filename,
+            file_path=str(file_path),
+            status="PENDING",
+            tags=tags.split(",") if tags else [],
+        )
+        db.add(db_file)
+        db.commit()
+        db.refresh(db_file)
+
+        return {"message": "File uploaded successfully", "file_id": db_file.id}
+    except Exception as e:
+        logger.error(f"Error uploading file: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/clients/{client_id}/files/batch-upload")
+async def batch_upload_files(
+    client_id: int,
+    statement_type_id: int,
+    files: List[UploadFile] = File(...),
+    tags: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    try:
+        # Verify client exists
+        client = db.query(Client).filter(Client.id == client_id).first()
+        if not client:
+            raise HTTPException(status_code=404, detail="Client not found")
+
+        # Verify statement type exists and is associated with client
+        statement_type = (
+            db.query(StatementType)
+            .filter(
+                StatementType.id == statement_type_id,
+                StatementType.clients.any(Client.id == client_id),
+            )
+            .first()
+        )
+        if not statement_type:
+            raise HTTPException(
+                status_code=404,
+                detail="Statement type not found or not associated with client",
+            )
+
+        # Get upload path
+        upload_dir = file_system.get_upload_path(client_id, statement_type_id)
+        uploaded_files = []
+
+        # Process each file
+        for file in files:
+            file_path = upload_dir / file.filename
+
+            # Save file
+            with open(file_path, "wb") as buffer:
+                content = await file.read()
+                buffer.write(content)
+
+            # Create database entry
+            db_file = ClientFile(
+                client_id=client_id,
+                statement_type_id=statement_type_id,
+                filename=file.filename,
+                file_path=str(file_path),
+                status="PENDING",
+                tags=tags.split(",") if tags else [],
+            )
+            db.add(db_file)
+            uploaded_files.append(db_file)
+
+        db.commit()
+        for file in uploaded_files:
+            db.refresh(file)
+
+        return {
+            "message": f"Successfully uploaded {len(uploaded_files)} files",
+            "file_ids": [file.id for file in uploaded_files],
+        }
+    except Exception as e:
+        logger.error(f"Error in batch upload: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/clients/{client_id}/files")
+async def list_client_files(
+    client_id: int,
+    statement_type_id: Optional[int] = None,
+    tags: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    try:
+        # Verify client exists
+        client = db.query(Client).filter(Client.id == client_id).first()
+        if not client:
+            raise HTTPException(status_code=404, detail="Client not found")
+
+        # Build query
+        query = db.query(ClientFile).filter(ClientFile.client_id == client_id)
+
+        if statement_type_id:
+            query = query.filter(ClientFile.statement_type_id == statement_type_id)
+
+        if tags:
+            tag_list = tags.split(",")
+            for tag in tag_list:
+                query = query.filter(ClientFile.tags.contains([tag]))
+
+        files = query.all()
+        return files
+    except Exception as e:
+        logger.error(f"Error listing files: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":
