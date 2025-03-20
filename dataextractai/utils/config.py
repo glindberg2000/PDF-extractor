@@ -26,6 +26,9 @@ PARSER_INPUT_DIRS = {
         COMMON_CONFIG["input_dir"], "wellsfargo_mastercard"
     ),
     "wellsfargo_visa": os.path.join(COMMON_CONFIG["input_dir"], "wellsfargo_visa"),
+    "wellsfargo_bank_csv": os.path.join(
+        COMMON_CONFIG["input_dir"], "wellsfargo_bank_csv"
+    ),
     "client_info": os.path.join(COMMON_CONFIG["input_dir"], "client_info"),
     "firstrepublic_bank": os.path.join(
         COMMON_CONFIG["input_dir"], "firstrepublic_bank"
@@ -67,18 +70,12 @@ PARSER_OUTPUT_PATHS = {
             COMMON_CONFIG["output_dir"], "wellsfargo_mastercard_filtered.csv"
         ),
     },
-    "wellsfargo_visa": {
-        "csv": os.path.join(COMMON_CONFIG["output_dir"], "wellsfargo_visa_output.csv"),
-        "xlsx": os.path.join(
-            COMMON_CONFIG["output_dir"], "wellsfargo_visa_output.xlsx"
-        ),
-    },
-    "firstrepublic_bank": {
+    "wellsfargo_bank_csv": {
         "csv": os.path.join(
-            COMMON_CONFIG["output_dir"], "firstrepublic_bank_output.csv"
+            COMMON_CONFIG["output_dir"], "wellsfargo_bank_csv_output.csv"
         ),
         "xlsx": os.path.join(
-            COMMON_CONFIG["output_dir"], "firstrepublic_bank_output.xlsx"
+            COMMON_CONFIG["output_dir"], "wellsfargo_bank_csv_output.xlsx"
         ),
     },
     "consolidated_core": {
@@ -249,6 +246,14 @@ TRANSFORMATION_MAPS = {
         "file_path": "file_path",
         "source": lambda x: "wellsfargo_visa",
         "transaction_type": lambda x: "Credit Card",
+    },
+    "wellsfargo_bank_csv": {
+        "transaction_date": "transaction_date",
+        "description": "description",
+        "amount": "amount",
+        "file_path": "source_file",
+        "source": lambda x: "wellsfargo_bank_csv",
+        "transaction_type": "transaction_type",
     },
 }
 

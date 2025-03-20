@@ -47,6 +47,9 @@ from dataextractai.parsers.wellsfargo_bank_parser import (
 from dataextractai.parsers.wellsfargo_mastercard_parser import (
     run as run_wells_fargo_mastercard_parser,
 )
+from dataextractai.parsers.wellsfargo_bank_csv_parser import (
+    run as run_wells_fargo_bank_csv_parser,
+)
 from dataextractai.parsers.amazon_parser import run as run_amazon_parser
 from dataextractai.parsers.bofa_bank_parser import run as run_bofa_bank_parser
 from dataextractai.parsers.bofa_visa_parser import run as run_bofa_visa_parser
@@ -76,6 +79,33 @@ def parse_date(date_str):
     raise ValueError(f"Unknown date format: {date_str}")
 
 
+def has_files_to_parse(directory):
+    """
+    Check if the specified directory exists and contains any files.
+
+    Args:
+        directory (str): Path to the directory to check
+
+    Returns:
+        bool: True if directory exists and contains files, False otherwise
+    """
+    if not os.path.exists(directory):
+        print(f"Directory does not exist: {directory}")
+        return False
+
+    files = [
+        f
+        for f in os.listdir(directory)
+        if os.path.isfile(os.path.join(directory, f))
+        and not f.startswith(".")  # Ignore hidden files
+    ]
+    if not files:
+        print(f"No files found in directory: {directory}")
+        return False
+
+    return True
+
+
 def run_all_parsers():
     print("Running all parsers...")
 
@@ -84,27 +114,52 @@ def run_all_parsers():
 
     # Run Amazon parser
     print("\nRunning Amazon parser...")
-    dataframes["amazon"] = run_amazon_parser()
+    if has_files_to_parse(PARSER_INPUT_DIRS["amazon"]):
+        dataframes["amazon"] = run_amazon_parser()
+    else:
+        dataframes["amazon"] = pd.DataFrame()
 
     # Run Bank of America bank parser
     print("\nRunning Bank of America bank parser...")
-    dataframes["bofa_bank"] = run_bofa_bank_parser()
+    if has_files_to_parse(PARSER_INPUT_DIRS["bofa_bank"]):
+        dataframes["bofa_bank"] = run_bofa_bank_parser()
+    else:
+        dataframes["bofa_bank"] = pd.DataFrame()
 
     # Run Bank of America VISA parser
     print("\nRunning Bank of America VISA parser...")
-    dataframes["bofa_visa"] = run_bofa_visa_parser()
+    if has_files_to_parse(PARSER_INPUT_DIRS["bofa_visa"]):
+        dataframes["bofa_visa"] = run_bofa_visa_parser()
+    else:
+        dataframes["bofa_visa"] = pd.DataFrame()
 
     # Run Chase VISA parser
     print("\nRunning Chase VISA parser...")
-    dataframes["chase_visa"] = run_chase_visa_parser()
+    if has_files_to_parse(PARSER_INPUT_DIRS["chase_visa"]):
+        dataframes["chase_visa"] = run_chase_visa_parser()
+    else:
+        dataframes["chase_visa"] = pd.DataFrame()
 
     # Run Wells Fargo bank parser
     print("\nRunning Wells Fargo bank parser...")
-    dataframes["wellsfargo_bank"] = run_wells_fargo_bank_parser()
+    if has_files_to_parse(PARSER_INPUT_DIRS["wellsfargo_bank"]):
+        dataframes["wellsfargo_bank"] = run_wells_fargo_bank_parser()
+    else:
+        dataframes["wellsfargo_bank"] = pd.DataFrame()
 
     # Run Wells Fargo MasterCard parser
     print("\nRunning Wells Fargo MasterCard parser...")
-    dataframes["wellsfargo_mastercard"] = run_wells_fargo_mastercard_parser()
+    if has_files_to_parse(PARSER_INPUT_DIRS["wellsfargo_mastercard"]):
+        dataframes["wellsfargo_mastercard"] = run_wells_fargo_mastercard_parser()
+    else:
+        dataframes["wellsfargo_mastercard"] = pd.DataFrame()
+
+    # Run Wells Fargo Bank CSV parser
+    print("\nRunning Wells Fargo Bank CSV parser...")
+    if has_files_to_parse(PARSER_INPUT_DIRS["wellsfargo_bank_csv"]):
+        dataframes["wellsfargo_bank_csv"] = run_wells_fargo_bank_csv_parser()
+    else:
+        dataframes["wellsfargo_bank_csv"] = pd.DataFrame()
 
     print("\nAll parsers have been executed.")
 
@@ -117,32 +172,19 @@ def run_all_parsers():
             # Transform and append the dataframe to the transformed_data list
             transformed_data.append(transform_to_core_structure(df, source))
 
-    # Concatenate all transformed data into a single dataframe
+    # Combine all transformed data
     if transformed_data:
-        transformed_data = pd.concat(transformed_data, ignore_index=True)
+        combined_df = pd.concat(transformed_data, ignore_index=True)
+        # Sort by date
+        combined_df = combined_df.sort_values("transaction_date")
+        # Save to CSV and Excel
+        combined_df.to_csv(OUTPUT_PATH_CSV, index=False)
+        combined_df.to_excel(OUTPUT_PATH_XLSX, index=False)
+        print(f"\nTotal transactions processed: {len(combined_df)}")
+        return combined_df
     else:
-        transformed_data = pd.DataFrame()
-
-    # Sort the DataFrame by 'transaction_date'
-    # First standardize the dates
-    # Convert and standardize 'transaction_date' to datetime objects
-    transformed_data["transaction_date"] = transformed_data["transaction_date"].apply(
-        parse_date
-    )
-    transformed_data = transformed_data.sort_values(by="transaction_date")
-
-    transformed_data["ID"] = range(1, len(transformed_data) + 1)
-    print(f"Total Transactions: {transformed_data}")
-
-    # rearrange columns and put 'ID' first
-    columns = ["ID"] + [col for col in transformed_data.columns if col != "ID"]
-    transformed_data = transformed_data[columns]
-
-    # export data
-    transformed_data.to_csv(OUTPUT_PATH_CSV, index=False)
-    transformed_data.to_excel(OUTPUT_PATH_XLSX, index=False)
-
-    return len(transformed_data)
+        print("\nNo transactions were processed.")
+        return pd.DataFrame()
 
 
 if __name__ == "__main__":
