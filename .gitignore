@@ -219,6 +219,20 @@ env/
 clients/*/
 !clients/_template/
 !clients/_examples/
+!clients/*/client_config.yaml
+
+# Web Backend
+web/backend/uploads/
+web/backend/output/
+web/backend/*.db
+web/backend/*.sqlite
+web/backend/*.sqlite3
+
+# Data Directory
+data/input/*
+data/output/*
+!data/input/.gitkeep
+!data/output/.gitkeep
 
 # Temporary files
 *.tmp
