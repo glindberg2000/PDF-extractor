@@ -1,7 +1,140 @@
+# PDF Extractor
+
+A Python-based tool for extracting and processing financial data from various bank statements and financial documents.
+
+## Features
+
+- **Multi-Format Support**: Processes PDF and CSV files from various financial institutions
+- **Client-Specific Processing**: Supports multiple clients with separate data directories
+- **Automated Data Extraction**: Extracts transaction data from bank statements
+- **Data Transformation**: Converts extracted data into a standardized format
+- **Output Generation**: Produces CSV and Excel files with processed data
+
+## Supported Financial Institutions
+
+- Amazon
+- Bank of America (Bank and VISA)
+- Chase (VISA)
+- Wells Fargo (Bank, MasterCard, VISA, and CSV format)
+- First Republic Bank
+
+## Installation
+
+1. Clone the repository:
+```bash
+git clone https://github.com/yourusername/PDF-extractor.git
+cd PDF-extractor
+```
+
+2. Create and activate a virtual environment:
+```bash
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+```
+
+3. Install dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+## Usage
+
+### Basic Usage
+
+1. Place your financial documents in the appropriate input directories:
+   - For default processing: `/data/input/<institution>/`
+   - For client-specific processing: `/clients/<client_name>/input/<institution>/`
+
+2. Run the parser:
+```bash
+# For default processing
+python scripts/grok.py run-parsers
+
+# For client-specific processing
+python scripts/grok.py run-parsers --client <client_name>
+```
+
+3. Find the processed data in:
+   - Default: `/data/output/`
+   - Client-specific: `/clients/<client_name>/output/`
+
+### Directory Structure
+
+```
+PDF-extractor/
+├── clients/
+│   └── <client_name>/
+│       ├── input/
+│       │   ├── amazon/
+│       │   ├── bofa_bank/
+│       │   ├── bofa_visa/
+│       │   ├── chase_visa/
+│       │   ├── wellsfargo_bank/
+│       │   ├── wellsfargo_mastercard/
+│       │   ├── wellsfargo_visa/
+│       │   ├── wellsfargo_bank_csv/
+│       │   ├── client_info/
+│       │   └── firstrepublic_bank/
+│       └── output/
+│           └── batch_outputs/
+├── data/
+│   ├── input/
+│   │   └── [same structure as client input]
+│   └── output/
+│       └── batch_outputs/
+└── scripts/
+    └── grok.py
+```
+
+### Output Files
+
+The tool generates several output files:
+- Individual institution outputs (CSV and Excel)
+- Consolidated core data
+- Consolidated updated data
+- Batch outputs
+- State tracking file
+
+## Configuration
+
+Client-specific configurations can be set in `/clients/<client_name>/client_config.yaml`:
+```yaml
+sheet_name: "ExpenseReport_<client_name>"
+client_name: "<client_name>"
+business_type: "<business_type>"
+output_format: "csv"  # or "xlsx"
+```
+
+## Development
+
+### Adding New Parsers
+
+1. Create a new parser module in `dataextractai/parsers/`
+2. Add parser configuration to `dataextractai/utils/config.py`
+3. Update the parser registry in `dataextractai/parsers/run_parsers.py`
+
+### Testing
+
+Run tests with:
+```bash
+python -m pytest tests/
+```
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
 # DataExtractAI
 
+## Overview
+DataExtractAI comes in two versions:
+1. **Command-Line Version (Original/Stable)**: Parser-based approach for specific financial institutions
+2. **Vision Version (Experimental)**: Uses GPT-4 Vision for universal document support
+
+# Command-Line Version
+
 ## Introduction
-`DataExtractAI` is a tool designed for parsing various financial documents and classifying transactions using advanced AI techniques. It streamlines the process of extracting data from PDFs, such as bank statements and credit card invoices, and uses AI to intelligently categorizes transactions, aiding in financial analysis and reporting.
+The original `DataExtractAI` is a robust tool for parsing various financial documents and classifying transactions using advanced AI techniques. It streamlines the process of extracting data from PDFs, such as bank statements and credit card invoices, and uses AI to intelligently categorize transactions, aiding in financial analysis and reporting.
 
 ## Features
 - Parses multiple PDF document types, including bank statements and credit card invoices.
@@ -169,10 +302,10 @@ If you have any questions or suggestions, please feel free to contact us at [gre
 ## Acknowledgements
 - OPENAI for breakthrough AI technology without which this coding could not have been completed, and all open source AI tools paving the way to massive productivity increases. 
 
-# DataExtractAI Vision
+# Vision Version (Experimental)
 
 ## Introduction
-`DataExtractAI Vision` is a modernized tool for extracting transaction data from financial documents using GPT-4 Vision. It eliminates the need for document-specific parsers by leveraging AI vision capabilities to understand and extract data from any financial statement format.
+`DataExtractAI Vision` is a modernized tool that uses GPT-4 Vision to extract transaction data from any financial document format. This experimental version aims to eliminate the need for document-specific parsers.
 
 ## Features
 - Universal PDF Support: Works with any financial document format

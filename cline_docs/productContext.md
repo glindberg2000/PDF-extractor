@@ -1,55 +1,75 @@
 # Product Context
 
 ## Purpose
-The PDF Extractor is a comprehensive financial document processing system designed to efficiently handle bank and Visa card statements. It provides an intuitive interface for uploading, processing, and managing financial documents while leveraging existing command-line processors.
+The PDF Extractor is a specialized tool designed to automate the extraction and processing of financial data from various bank statements and financial documents. It serves as a bridge between raw financial documents and structured financial data, making it easier to analyze and manage financial records.
 
-## Core Problems Solved
-1. **Document Management**
-   - Efficient upload and organization of PDF and CSV statements
-   - Proper tagging and categorization of documents by client and statement type
-   - Secure storage and retrieval of financial documents
+## Problems Solved
+1. **Manual Data Entry Elimination**: Automates the extraction of transaction data from PDF and CSV files, reducing manual data entry errors and time consumption.
+2. **Multi-Format Support**: Handles various file formats from different financial institutions, providing a unified interface for data processing.
+3. **Client-Specific Processing**: Supports multiple clients with separate data directories, allowing for organized and isolated data processing.
+4. **Standardized Output**: Converts diverse financial data formats into a standardized structure, facilitating easier analysis and reporting.
+5. **Batch Processing**: Enables processing of multiple files simultaneously, improving efficiency for large datasets.
 
-2. **Transaction Processing**
-   - Automated extraction of transaction data from various statement formats
-   - Integration with existing command-line processors
-   - Real-time processing status tracking and error handling
+## How It Works
+1. **Input Processing**:
+   - Accepts PDF and CSV files from various financial institutions
+   - Supports both default and client-specific directory structures
+   - Validates input files and formats
 
-3. **Transaction Categorization**
-   - Flexible categorization system for transactions
-   - Bulk categorization capabilities
-   - Support for custom categories per client
+2. **Data Extraction**:
+   - Parses PDF files using PyPDF2
+   - Processes CSV files using pandas
+   - Extracts relevant transaction data based on institution-specific patterns
 
-4. **Auditing and Compliance**
-   - Easy access to original documents
-   - Transaction matching and verification
-   - Comprehensive audit trail
+3. **Data Transformation**:
+   - Converts extracted data into a standardized format
+   - Applies institution-specific transformations
+   - Handles date formats and numerical values consistently
 
-## User Workflows
+4. **Output Generation**:
+   - Creates CSV and Excel files with processed data
+   - Generates consolidated reports
+   - Maintains state tracking for batch processing
 
-### Document Upload
-1. User navigates to Files section
-2. Selects file(s) for upload
-3. Tags with client and statement type
-4. System processes automatically
-5. Status updates in real-time
+5. **Client Management**:
+   - Supports multiple clients with isolated data directories
+   - Allows client-specific configurations
+   - Maintains separate input and output directories per client
 
-### Transaction Management
-1. View processed transactions
-2. Apply categories
-3. Audit against original documents
-4. Match transactions to statements
-5. Export or report as needed
+## Key Features
+- Multi-format support (PDF, CSV)
+- Client-specific processing
+- Automated data extraction
+- Standardized data transformation
+- Batch processing capabilities
+- Comprehensive output generation
+- Configurable processing options
 
-### Client Management
-1. Create/edit client profiles
-2. Assign statement types
-3. View client-specific documents
-4. Monitor processing status
-5. Access transaction history
+## Core Functionality
+1. Document Processing
+   - PDF parsing for multiple institutions
+   - CSV import support
+   - Batch processing capabilities
+
+2. AI Integration
+   - OpenAI-powered categorization
+   - Multiple AI assistants (Bookkeeper & CPA)
+   - Context-aware processing
+
+3. Data Export
+   - CSV/Excel output
+   - Google Sheets integration
+   - Structured for accounting use
+
+## Target Users
+- Accountants/Bookkeepers
+- Small Business Owners
+- Financial Advisors
+- Individual Users
 
 ## Success Criteria
-- Efficient document processing with minimal user intervention
-- Accurate transaction extraction and categorization
-- Reliable audit trail and document matching
-- Intuitive user interface for all operations
-- Scalable system for multiple clients and document types 
+1. Accurate extraction of transaction data
+2. Correct categorization of expenses
+3. Efficient batch processing
+4. Reliable Google Sheets integration
+5. Support for multiple clients 

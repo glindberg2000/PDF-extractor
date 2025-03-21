@@ -1,227 +1,153 @@
 # System Patterns
 
 ## Architecture Overview
+The system follows a modular architecture with clear separation of concerns:
 
-### Frontend Architecture
-1. **Component Structure**
-   - Dashboard: Overview and metrics
-   - Clients: Client management
-   - Files: Document handling
-   - Transactions: Transaction management
-   - Shared components (modals, tables, forms)
+1. **Configuration Management**
+   - Centralized configuration in `config.py`
+   - Client-specific configuration support
+   - Dynamic path management
+   - Configuration validation
 
-2. **State Management**
-   - React hooks for local state
-   - Context for global state
-   - WebSocket for real-time updates
+2. **Parser System**
+   - Modular parser design
+   - Institution-specific parsers
+   - Common interface for all parsers
+   - Error handling and logging
 
-3. **UI Patterns**
-   - Modal-based forms for actions
-   - Table-based data display
-   - Drag-and-drop file upload
-   - Status indicators and progress bars
+3. **Data Processing Pipeline**
+   - Input validation
+   - Data extraction
+   - Transformation
+   - Output generation
 
-### Backend Architecture
-1. **API Structure**
-   - RESTful endpoints for CRUD operations
-   - WebSocket for real-time updates
-   - Background task processing
-
-2. **File System Organization**
+4. **Directory Structure**
    ```
-   client_files/
-   ├── {client_id}_{client_name}/
-   │   ├── uploads/
-   │   ├── processed/
-   │   └── archived/
-   ```
-
-3. **Database Schema**
-   ```sql
-   -- Statement Types Table
-   CREATE TABLE statement_types (
-       id INTEGER PRIMARY KEY AUTOINCREMENT,
-       name TEXT NOT NULL UNIQUE,
-       parser_script TEXT NOT NULL,
-       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-   );
-
-   -- Statements Table
-   CREATE TABLE statements (
-       id INTEGER PRIMARY KEY AUTOINCREMENT,
-       client_id INTEGER NOT NULL,
-       statement_type_id INTEGER NOT NULL,
-       file_path TEXT NOT NULL,
-       status TEXT NOT NULL DEFAULT 'pending',
-       upload_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-       process_timestamp TIMESTAMP,
-       error_message TEXT,
-       FOREIGN KEY (client_id) REFERENCES clients(id),
-       FOREIGN KEY (statement_type_id) REFERENCES statement_types(id)
-   );
-
-   -- Transactions Table (existing)
-   CREATE TABLE transactions (
-       id INTEGER PRIMARY KEY AUTOINCREMENT,
-       statement_id INTEGER NOT NULL,
-       date DATE NOT NULL,
-       description TEXT NOT NULL,
-       amount DECIMAL(10,2) NOT NULL,
-       category TEXT,
-       FOREIGN KEY (statement_id) REFERENCES statements(id)
-   );
+   PDF-extractor/
+   ├── clients/
+   │   └── <client_name>/
+   │       ├── input/
+   │       └── output/
+   ├── data/
+   │   ├── input/
+   │   └── output/
+   └── scripts/
    ```
 
 ## Key Technical Decisions
 
-### 1. File Processing
-- Asynchronous processing using background tasks
-- Status tracking via WebSocket
-- File system organization by client
-- Support for multiple file formats
+1. **Client Isolation**
+   - Separate directories for each client
+   - Independent configuration per client
+   - Isolated data processing
 
-### 2. Data Management
-- SQLite for data storage
-- File system for document storage
-- JSON for configuration and metadata
-- CSV for transaction exports
+2. **Path Management**
+   - Dynamic path generation
+   - Configuration-based paths
+   - Directory validation
+   - Automatic directory creation
 
-### 3. Security
-- File type validation
-- Client isolation
-- Secure file storage
-- Access control
+3. **Data Transformation**
+   - Standardized data structure
+   - Institution-specific transformations
+   - Configurable transformation maps
+   - Validation at each step
 
-### 4. Performance
-- Batch processing
-- Background tasks
-- Efficient file storage
-- Optimized database queries
+4. **Error Handling**
+   - Graceful error recovery
+   - Detailed error logging
+   - Directory validation
+   - File format validation
 
 ## Design Patterns
 
-### 1. Repository Pattern
-- Abstract data access
-- Consistent CRUD operations
-- Transaction management
+1. **Factory Pattern**
+   - Parser creation
+   - Configuration management
+   - Path generation
 
-### 2. Factory Pattern
-- Parser creation
-- File handler creation
-- Document processor creation
+2. **Strategy Pattern**
+   - Institution-specific parsing
+   - Format-specific processing
+   - Transformation strategies
 
-### 3. Observer Pattern
-- Status updates
-- Processing notifications
-- Real-time updates
+3. **Observer Pattern**
+   - Progress tracking
+   - Logging system
+   - State management
 
-### 4. Strategy Pattern
-- Parser selection
-- File handling
-- Processing methods
+4. **Template Pattern**
+   - Parser interface
+   - Transformation pipeline
+   - Output generation
 
-## Error Handling
+## Key Technical Patterns
 
-### 1. File Processing
-- Validation errors
-- Processing failures
-- Format mismatches
+### 1. Parser Pattern
+- Standard interface: `run()` method
+- Returns pandas DataFrame
+- Handles file reading and parsing
+- Standardizes column names
 
-### 2. Data Management
-- Database constraints
-- File system errors
-- State inconsistencies
+### 2. Data Transformation
+- Source-specific transformation maps
+- Standard core data structure
+- Consistent date/amount handling
+- File path tracking
 
-### 3. User Interface
-- Form validation
-- Network errors
-- Processing status
+### 3. AI Processing
+- Batch processing with state management
+- Multiple AI assistant options
+- Client context integration
+- Error handling and recovery
 
-## Testing Strategy
-
-### 1. Unit Tests
-- Component testing
-- Service testing
-- Utility testing
-
-### 2. Integration Tests
-- API testing
-- File processing
-- Database operations
-
-### 3. End-to-End Tests
-- User workflows
-- File uploads
-- Processing pipeline
-
-## Code Organization
-
-1. Main Modules
-   ```
-   dataextractai_vision/
-   ├── __init__.py
-   ├── cli.py           # Command-line interface
-   └── extractor.py     # Core extraction logic
-   ```
-
-2. Support Files
-   ```
-   ├── requirements.txt  # Dependencies
-   ├── setup.py         # Package configuration
-   └── README.md        # Documentation
-   ```
-
-3. Data Organization
-   ```
-   clients/
-   ├── {client_name}/
-   │   ├── input/       # PDF statements
-   │   └── output/      # Extracted data
-   ```
-
-## Best Practices
-
-1. Code Quality
-   - Type hints for better maintainability
-   - Comprehensive docstrings
-   - Consistent error handling
-   - Detailed logging
-
-2. Data Management
-   - Atomic file operations
-   - Transaction tracking
-   - Source file preservation
-   - Processing history
-
-3. Error Recovery
-   - Graceful failure handling
-   - Detailed error logging
-   - State preservation
-   - Retry mechanisms
-
-4. Performance
-   - Efficient image processing
-   - Batch operations
-   - Resource cleanup
-   - Memory management
-
-## Directory Structure Pattern
-```
-├── data/
-│   ├── input/          # PDF document directories
-│   └── output/         # Processed data output
-├── dataextractai/
-│   ├── classifiers/    # AI classification logic
-│   ├── parsers/        # PDF parsing implementations
-│   └── utils/          # Shared utilities
-├── scripts/            # Command-line tools
-└── tests/              # Test suite
-```
+### 4. Google Sheets Integration
+- OAuth2 authentication
+- Automated column setup
+- Dropdown validations
+- Batch upload support
 
 ## Configuration Patterns
-- Environment-based configuration
-- Separate configuration for:
-  - Parser input/output paths
-  - AI assistant configurations
-  - Classification categories
-  - System prompts 
+
+### 1. Path Configuration
+```python
+PARSER_INPUT_DIRS = {
+    "amazon": "data/input/amazon",
+    "bofa_bank": "data/input/bofa_bank",
+    ...
+}
+```
+
+### 2. Transformation Maps
+```python
+TRANSFORMATION_MAPS = {
+    "source_name": {
+        "target_col": "source_col",
+        ...
+    }
+}
+```
+
+### 3. AI Configuration
+```python
+ASSISTANTS_CONFIG = {
+    "AmeliaAI": {...},
+    "DaveAI": {...}
+}
+```
+
+## Extension Points
+1. New Parser Addition
+   - Add parser file
+   - Update config paths
+   - Add transformation map
+
+2. New AI Assistant
+   - Add to ASSISTANTS_CONFIG
+   - Define system prompt
+   - Set model parameters
+
+3. New Export Format
+   - Add export function
+   - Update config paths
+   - Implement transformation 
