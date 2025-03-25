@@ -62,6 +62,28 @@ def extract_statement_date(text):
         logger.info(f"Using test date as both start and end date: {date_str}")
         return (date_str, date_str)
 
+    # First try the new format with line break: "Statement Period: May 11, 2024-\nMay 24, 2024"
+    match = re.search(
+        r"Statement Period:\s*([\w\s,]+\d{4})-\s*(?:\n|\s)*([\w\s,]+\d{4})", text
+    )
+    if match:
+        start_date_str = match.group(1).strip()
+        end_date_str = match.group(2).strip()
+        logger.debug(
+            f"Found date format with line break: {start_date_str} - {end_date_str}"
+        )
+
+        try:
+            start_date = datetime.strptime(start_date_str, "%B %d, %Y").strftime(
+                "%Y-%m-%d"
+            )
+            end_date = datetime.strptime(end_date_str, "%B %d, %Y").strftime("%Y-%m-%d")
+            logger.info(f"Found statement period: {start_date} to {end_date}")
+            return (start_date, end_date)
+        except ValueError:
+            logger.warning(f"Could not parse dates: {start_date_str} - {end_date_str}")
+            pass
+
     # Search for statement period pattern
     match = re.search(r"Statement Period:[\s\n]+([\w\s,]+)-[\s\n]+([\w\s,]+)", text)
     if match:
@@ -240,7 +262,7 @@ def extract_deposits_credits(text):
 
     # First find the "Deposits and Credits" section within "Account Activity"
     deposits_section_match = re.search(
-        r"Deposits and Credits(.*?)(?:Withdrawals and Debits|Total Deposits and Credits)",
+        r"Date Description Amount\s*Deposits and Credits(.*?)(?:Withdrawals and Debits|Total Deposits and Credits)",
         text,
         re.DOTALL,
     )
@@ -252,11 +274,14 @@ def extract_deposits_credits(text):
     logger.debug(f"Found Deposits and Credits section:\n{deposits_section}")
 
     # Pattern to match deposit entries: Date, Description, Amount
-    pattern = r"(\d{2}/\d{2})\s+(.*?)(?=\$)([\d,]+\.\d{2})"
+    # This pattern now handles multi-line entries where the description continues on the next line
+    pattern = r"(\d{2}/\d{2})\s+(.*?)\s+\$\s*([\d,]+\.\d{2})"
 
     matches = re.finditer(pattern, deposits_section)
     for match in matches:
-        date_str, description, amount_str = match.groups()
+        date_str = match.group(1)
+        description = match.group(2)
+        amount_str = match.group(3)
 
         # Clean amount (remove commas) and convert to float
         amount = float(amount_str.replace(",", ""))
@@ -265,9 +290,22 @@ def extract_deposits_credits(text):
         current_year = datetime.now().year
         date = f"{date_str}/{current_year}"
 
+        # Clean up description
+        description = description.strip()
+        # If there's a line after this one that doesn't start with a date, it's part of the description
+        next_line_match = re.search(
+            rf"{re.escape(match.group(0))}\s*\n([^\n]*?)(?=\n\d{{2}}/\d{{2}}|\n\s*Total|\Z)",
+            deposits_section,
+        )
+        if next_line_match and next_line_match.group(1).strip():
+            description = f"{description} {next_line_match.group(1).strip()}"
+
+        # Clean up description by removing any trailing reference numbers
+        description = re.sub(r"\s+\d+\s*$", "", description)
+
         transaction = {
             "transaction_date": date,
-            "description": description.strip(),
+            "description": description,
             "amount": amount,  # Positive since it's a deposit
             "transaction_type": "deposit",
         }
@@ -305,7 +343,7 @@ def extract_withdrawals_debits(text):
     logger.debug(f"Found Withdrawals and Debits section:\n{withdrawals_section}")
 
     # Pattern to match withdrawal entries: Date, Description, Amount
-    pattern = r"(\d{2}/\d{2})\s+(.*?)(?=\$)([\d,]+\.\d{2})\s*-"
+    pattern = r"(\d{2}/\d{2})\s+(.*?)\$\s*([\d,]+\.\d{2})\s*-"
 
     matches = re.finditer(pattern, withdrawals_section)
     for match in matches:
