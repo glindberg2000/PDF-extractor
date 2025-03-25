@@ -34,11 +34,8 @@ from typing import Optional
 from io import StringIO
 import json
 
-import gspread
-from googleapiclient.discovery import build
-from google.oauth2.service_account import Credentials
-from oauth2client.service_account import ServiceAccountCredentials
-from google.oauth2 import service_account
+from rich.console import Console
+from rich.theme import Theme
 
 from dataextractai.utils.utils import (
     create_directory_if_not_exists,
@@ -55,17 +52,11 @@ from dataextractai.utils.config import (
     CATEGORIES,
     CLASSIFICATIONS,
     REPORTS,
+    update_config_for_client,
+    get_client_sheets_config,
 )
 from dataextractai.classifiers.ai_categorizer import categorize_transaction
 from dataextractai.parsers.run_parsers import run_all_parsers
-from rich.console import Console
-from rich.theme import Theme
-
-
-# Retrieve the auth key and spreadsheet ID from the environment variable
-spreadsheet_id = os.getenv("GOOGLE_SHEETS_ID")
-credentials_json = os.environ.get("GOOGLE_SHEETS_CREDENTIALS_PATH")
-
 
 # Define a theme with a specific color for comments
 custom_theme = Theme(
@@ -77,7 +68,6 @@ custom_theme = Theme(
     }
 )
 console = Console(theme=custom_theme)
-
 
 # Define the path to the CSV file
 OUTPUT_PATH_CSV = PARSER_OUTPUT_PATHS["consolidated_core"]["csv"]
@@ -93,15 +83,30 @@ app = typer.Typer(
 )
 
 
+def get_client_option():
+    """Get the client option for commands."""
+    return typer.Option(
+        None,
+        "--client",
+        "-c",
+        help="Client name to use for processing. If not specified, uses legacy data directory.",
+    )
+
+
 @app.command()
-def run_parsers():
+def run_parsers(client: str = get_client_option()):
     """
     Run all pdf parsers and normalize and export data for further processing and reporting
 
     This command executes all configured parsers to process financial documents.
     It outputs the total number of lines processed across all files.
     """
-    total_lines = run_all_parsers()
+    if client:
+        console.print(
+            f"[fieldname]Using client directory[/fieldname]: [value]{client}[/value]"
+        )
+
+    total_lines = run_all_parsers(client)
     console.print(
         f"[fieldname]Total Lines Processed[/fieldname]: [value]{total_lines}[/value]",
         style="normal",
@@ -117,6 +122,13 @@ def upload_and_set_dropdown(csv_file_path, sheet_name, credentials_json, categor
     :param credentials_json: Path to the Google Service Account Credentials JSON file.
     :param categories: List of category names for the dropdown.
     """
+    # Import Google Sheets dependencies only when needed
+    import gspread
+    from googleapiclient.discovery import build
+    from google.oauth2.service_account import Credentials
+    from oauth2client.service_account import ServiceAccountCredentials
+    from google.oauth2 import service_account
+
     classification_categories = CLASSIFICATIONS
 
     # Read the CSV file with pandas
@@ -233,6 +245,10 @@ def upload_to_google_sheets(csv_file_path, sheet_name, credentials_json):
     :param sheet_name: Name of the Google Sheet to upload data to.
     :param credentials_json: Path to the Google Service Account Credentials JSON file.
     """
+    # Import Google Sheets dependencies only when needed
+    import gspread
+    from oauth2client.service_account import ServiceAccountCredentials
+
     # Define the scope for the Google Sheets API
     scope = [
         "https://www.googleapis.com/auth/spreadsheets",
@@ -261,12 +277,25 @@ def upload_to_google_sheets(csv_file_path, sheet_name, credentials_json):
 
 
 @app.command(help="Upload consoldated batch file to google sheets")
-def upload_to_sheet():
+def upload_to_sheet(client: str = get_client_option()):
     """
     Upload data to a specified Google Sheet.
     """
+    # Get Google Sheets credentials from environment
+    credentials_json = os.environ.get("GOOGLE_SHEETS_CREDENTIALS_PATH")
+    spreadsheet_id = os.getenv("GOOGLE_SHEETS_ID")
+
+    if client:
+        update_config_for_client(client)
+        sheets_config = get_client_sheets_config(client)
+        sheet_name = sheets_config["sheetname"]
+        if sheets_config.get("sheet_id"):
+            spreadsheet_id = sheets_config["sheet_id"]
+        console.print(f"[fieldname]Using client[/fieldname]: [value]{client}[/value]")
+    else:
+        sheet_name = REPORTS["sheetname"]
+
     csv_file_path = CONSOLIDATED_BATCH_PATH
-    sheet_name = REPORTS["sheetname"]
     if not credentials_json:
         typer.echo("Google Sheets credentials path not set.")
         raise typer.Exit()

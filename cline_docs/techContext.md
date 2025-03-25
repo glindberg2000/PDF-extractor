@@ -1,5 +1,156 @@
 # Technical Context
 
+## Current Technologies
+
+### Core Technologies
+- Python 3.8+
+- pandas for data processing
+- PyPDF2 for PDF parsing
+- OpenAI API for AI processing
+- Google Sheets API for data storage
+
+### CLI Frameworks
+1. Legacy System (grok.py):
+   - Typer for CLI interface
+   - Rich for terminal UI
+   - Click for command handling
+
+2. New System (main.py):
+   - Typer for CLI interface
+   - Rich for enhanced UI
+   - Click for advanced command handling
+
+### Data Processing
+- pandas for DataFrame operations
+- numpy for numerical operations
+- PyPDF2 for PDF parsing
+- csv for CSV file handling
+
+### AI Integration
+- OpenAI API
+- GPT-3.5/4 models
+- Prompt engineering
+- Response parsing
+
+### Google Integration
+- Google Sheets API v4
+- Google OAuth2
+- Service Account authentication
+
+## Development Setup
+
+### Environment
+```bash
+# Create virtual environment
+python -m venv venv
+source venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Set up environment variables
+cp .env.example .env
+# Edit .env with your credentials
+```
+
+### Configuration Files
+1. `.env`:
+   - API keys
+   - Credentials paths
+   - Environment settings
+
+2. `client_config.yaml`:
+   - Client information
+   - Parser settings
+   - Sheet configuration
+
+3. `sheets_config.yaml`:
+   - Sheet IDs
+   - Format settings
+   - Column mappings
+
+## Technical Constraints
+
+### Parser Limitations
+- PDF format compatibility
+- Statement format changes
+- OCR reliability
+- CSV format variations
+
+### AI Processing
+- API rate limits
+- Token limits
+- Cost considerations
+- Response validation
+
+### Google Sheets
+- Row limits
+- API quotas
+- Format restrictions
+- Update frequency
+
+## Planned Improvements
+
+### Architecture
+1. Class-based Pipeline:
+   ```python
+   class DataPipeline:
+       def __init__(self, client):
+           self.client = client
+           self.state = ClientState(client)
+           self.processor = AIProcessor(client)
+           self.sheets = SheetsManager(client)
+   ```
+
+2. Enhanced Error Handling:
+   ```python
+   class ErrorHandler:
+       def handle_parser_error(self, error):
+           log_error(error)
+           notify_admin(error)
+           suggest_fix(error)
+   ```
+
+3. Progress Tracking:
+   ```python
+   class ProgressTracker:
+       def update(self, stage, progress):
+           self.state.update(stage, progress)
+           self.notify_observers(stage, progress)
+   ```
+
+### Testing
+1. Unit Tests:
+   - Parser tests
+   - AI processing tests
+   - Sheet integration tests
+
+2. Integration Tests:
+   - End-to-end pipeline tests
+   - Client configuration tests
+   - Error handling tests
+
+3. Performance Tests:
+   - Large file processing
+   - Batch processing
+   - API rate limiting
+
+### Documentation
+1. Code Documentation:
+   - Type hints
+   - Docstrings
+   - Example usage
+
+2. User Documentation:
+   - Setup guides
+   - Usage examples
+   - Troubleshooting
+
+3. API Documentation:
+   - Endpoint descriptions
+   - Request/response formats
+   - Error codes
+
 ## Technologies Used
 - Python 3.11+
 - PyPDF2 for PDF processing

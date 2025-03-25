@@ -84,19 +84,38 @@ def process_csv_file(file_path):
     return result_df
 
 
-def run():
+def run(input_dir=None, output_paths=None, write_to_file=True):
     """
     Run the Wells Fargo CSV parser on all files in the source directory.
+
+    Args:
+        input_dir (str, optional): Directory containing CSV files. If None, uses default.
+        output_paths (dict, optional): Dictionary containing output paths. If None, uses default.
+        write_to_file (bool, optional): Whether to write results to file. Default is True.
 
     Returns:
         pandas.DataFrame: Combined data from all processed files
     """
     all_data = []
 
+    # Use provided paths or fall back to defaults
+    source_dir = input_dir if input_dir is not None else SOURCE_DIR
+
+    if output_paths is not None:
+        output_csv = (
+            output_paths["csv"] if output_paths is not None else OUTPUT_PATH_CSV
+        )
+        output_xlsx = (
+            output_paths["xlsx"] if output_paths is not None else OUTPUT_PATH_XLSX
+        )
+    else:
+        output_csv = OUTPUT_PATH_CSV
+        output_xlsx = OUTPUT_PATH_XLSX
+
     # Process each CSV file in the source directory
-    for filename in os.listdir(SOURCE_DIR):
+    for filename in os.listdir(source_dir):
         if filename.endswith(".csv"):
-            file_path = os.path.join(SOURCE_DIR, filename)
+            file_path = os.path.join(source_dir, filename)
             try:
                 df = process_csv_file(file_path)
                 all_data.append(df)
@@ -113,9 +132,10 @@ def run():
     # Sort by date
     combined_df = combined_df.sort_values("transaction_date")
 
-    # Export to CSV and XLSX
-    combined_df.to_csv(OUTPUT_PATH_CSV, index=False)
-    combined_df.to_excel(OUTPUT_PATH_XLSX, index=False)
+    # Export to CSV and XLSX if write_to_file is True
+    if write_to_file:
+        combined_df.to_csv(output_csv, index=False)
+        combined_df.to_excel(output_xlsx, index=False)
 
     return combined_df
 

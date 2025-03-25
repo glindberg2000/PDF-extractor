@@ -1,51 +1,22 @@
-"""AI utilities for category generation and transaction categorization."""
+"""AI utilities for data extraction and processing."""
 
 import os
 import json
 import yaml
 from typing import List, Dict, Optional, Tuple
-import openai
+from openai import OpenAI
 from dotenv import load_dotenv
+from .config import ASSISTANTS_CONFIG, PROMPTS, CATEGORIES, CLASSIFICATIONS
 
 load_dotenv()
 
 # Initialize OpenAI client
-openai.api_key = os.getenv("OPENAI_API_KEY")
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # Model configurations
 MODEL_SIMPLE = os.getenv("OPENAI_MODEL_FAST", "gpt-4o-mini-2024-07-18")
 MODEL_COMPLEX = os.getenv("OPENAI_MODEL_PRECISE", "o3-mini-2025-01-31")
 CONFIDENCE_THRESHOLD = float(os.getenv("CONFIDENCE_THRESHOLD", "0.8"))
-
-# Predefined categories and classifications
-CATEGORIES = [
-    "Office Supplies",
-    "Internet Expenses",
-    "Equipment Maintenance",
-    "Automobile",
-    "Service Fee",
-    "Parking and Tolls",
-    "Computer Expenses",
-    "Travel Expenses",
-    "Business Gifts",
-    "Advertising",
-    "Computer Equipment",
-    "Telecom",
-    "Office Rent",
-    "Utilities",
-    "Office Furniture",
-    "Electronics",
-    "Marketing and Promotion",
-    "Professional Fees (Legal, Accounting)",
-    "Software",
-    "Employee Benefits and Perks",
-    "Meals and Entertainment",
-    "Shipping and Postage",
-    "Education",
-    "Personal Items",
-]
-
-CLASSIFICATIONS = ["Business Expense", "Personal Expense", "Needs Review"]
 
 # AI Assistant configurations
 ASSISTANTS_CONFIG = {
@@ -71,6 +42,43 @@ Responsibilities:
 }
 
 
+def get_assistant(assistant_name: str) -> Dict:
+    """Get assistant configuration by name."""
+    return ASSISTANTS_CONFIG.get(assistant_name)
+
+
+def create_thread() -> str:
+    """Create a new conversation thread."""
+    thread = client.beta.threads.create()
+    return thread.id
+
+
+def add_message(thread_id: str, content: str) -> str:
+    """Add a message to a thread."""
+    message = client.beta.threads.messages.create(
+        thread_id=thread_id, role="user", content=content
+    )
+    return message.id
+
+
+def run_assistant(thread_id: str, assistant_name: str) -> str:
+    """Run an assistant on a thread."""
+    assistant = get_assistant(assistant_name)
+    if not assistant:
+        raise ValueError(f"Assistant {assistant_name} not found")
+
+    run = client.beta.threads.runs.create(
+        thread_id=thread_id, assistant_id=assistant["id"]
+    )
+    return run.id
+
+
+def get_messages(thread_id: str) -> List[Dict]:
+    """Get messages from a thread."""
+    messages = client.beta.threads.messages.list(thread_id=thread_id)
+    return messages.data
+
+
 def generate_enhanced_business_context(
     business_type: str,
     industry: str,
@@ -82,49 +90,170 @@ def generate_enhanced_business_context(
     location: str,
 ) -> Dict:
     """Generate enhanced business context using AI."""
-    prompt = f"""Based on the following business information, generate a comprehensive business context that will help with expense categorization and classification:
+    prompt = f"""Clean, standardize, and enhance the following business information:
+    Business Type: {business_type}
+    Industry: {industry}
+    Description: {business_description}
+    Typical Expenses: {', '.join(typical_expenses)}
+    Business Activities: {', '.join(business_activities)}
+    Employee Count: {employee_count}
+    Annual Revenue: {annual_revenue}
+    Location: {location}
+    
+    Rules:
+    1. If any field contains phrases like "and also", "add", "include", or "plus", treat it as an addition to existing information
+    2. Preserve existing information and append new items when requested
+    3. Fix any typos or grammatical errors
+    4. Use proper capitalization
+    5. Standardize common business terms
+    6. For activities and expenses:
+       - Keep existing items
+       - Add new items when requested
+       - Remove duplicates
+       - Sort alphabetically
+       - Use consistent formatting
+    7. Make it clear and professional
+    
+    Return a JSON object with the following fields:
+    {{
+        "business_type": "Standardized business type",
+        "industry": "Standardized industry name",
+        "business_description": "Enhanced business description",
+        "typical_expenses": ["List of standardized expenses"],
+        "business_activities": ["List of standardized activities"],
+        "employee_count": "Standardized employee count",
+        "annual_revenue": "Standardized revenue range",
+        "location": "Standardized location"
+    }}
+    
+    The response must be valid JSON only, with no additional text."""
 
-Business Type: {business_type}
-Industry: {industry}
-Description: {business_description}
-Typical Expenses: {', '.join(typical_expenses)}
-Business Activities: {', '.join(business_activities)}
-Employee Count: {employee_count}
-Annual Revenue: {annual_revenue}
-Location: {location}
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a business information standardization expert. Return only the cleaned value, no explanation or JSON.",
+                },
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.1,
+        )
 
-Generate a JSON object with the following fields:
-1. business_context: Detailed description of the business context
-2. expense_patterns: List of common expense patterns and their business purposes
-3. tax_considerations: List of relevant tax considerations
-4. industry_specific_rules: List of industry-specific rules or guidelines
-5. recommended_categories: List of recommended expense categories with descriptions
-6. risk_factors: List of potential risk factors for expense classification
-7. compliance_requirements: List of compliance requirements for expense tracking
-8. best_practices: List of best practices for expense management
+        enhanced_context = json.loads(response.choices[0].message.content)
 
-Focus on providing detailed, actionable information that will help with accurate expense categorization and classification."""
+        # Ensure we preserve existing data when no changes were requested
+        if not business_type or business_type.lower() in ["n/a", "not set"]:
+            enhanced_context["business_type"] = business_type
+        if not industry or industry.lower() in ["n/a", "not set"]:
+            enhanced_context["industry"] = industry
+        if not business_activities:
+            enhanced_context["business_activities"] = []
+        if not typical_expenses:
+            enhanced_context["typical_expenses"] = []
 
-    response = openai.chat.completions.create(
-        model=MODEL_COMPLEX,
-        messages=[
-            {
-                "role": "system",
-                "content": "You are an expert business analyst and CPA with deep knowledge of expense categorization and tax compliance.",
-            },
-            {"role": "user", "content": prompt},
-        ],
-        response_format={"type": "json_object"},
-    )
+        return enhanced_context
+    except Exception as e:
+        print(f"Error enhancing business context: {e}")
+        # Return original values if enhancement fails
+        return {
+            "business_type": business_type,
+            "industry": industry,
+            "business_description": business_description,
+            "typical_expenses": typical_expenses,
+            "business_activities": business_activities,
+            "employee_count": employee_count,
+            "annual_revenue": annual_revenue,
+            "location": location,
+        }
 
-    return json.loads(response.choices[0].message.content)
+
+def categorize_transaction(
+    description: str, categories: List[str], use_dave: bool = False
+) -> Dict:
+    """Categorize a transaction using AI."""
+    assistant_name = "DaveAI" if use_dave else "AmeliaAI"
+    assistant = get_assistant(assistant_name)
+    thread_id = create_thread()
+
+    prompt = PROMPTS["categorize_one"].format(categories=categories)
+    add_message(thread_id, prompt + description)
+    run_id = run_assistant(thread_id, assistant_name)
+
+    messages = get_messages(thread_id)
+    if messages and len(messages) > 0:
+        return json.loads(messages[0].content[0].text.value)
+    return {"category": "Uncategorized", "confidence": 0.0}
+
+
+def review_transaction(transaction: Dict, context: Dict) -> Dict:
+    """Review a transaction using AI."""
+    assistant = get_assistant("AmeliaAI")
+    thread_id = create_thread()
+
+    prompt = f"""Please review this transaction:
+    Description: {transaction['description']}
+    Amount: ${transaction['amount']}
+    Current Category: {transaction.get('category', 'Uncategorized')}
+    Current Classification: {transaction.get('classification', 'Unclassified')}
+    
+    Business Context:
+    Type: {context.get('business_type', 'Not specified')}
+    Industry: {context.get('industry', 'Not specified')}
+    Activities: {', '.join(context.get('business_activities', []))}
+    Typical Expenses: {', '.join(context.get('typical_expenses', []))}
+    
+    Please provide:
+    1. Correct category from: {', '.join(CATEGORIES)}
+    2. Correct classification from: {', '.join(CLASSIFICATIONS)}
+    3. Confidence level (0-1)
+    4. Any relevant comments
+    
+    Return in JSON format."""
+
+    add_message(thread_id, prompt)
+    run_id = run_assistant(thread_id, "AmeliaAI")
+
+    messages = get_messages(thread_id)
+    if messages and len(messages) > 0:
+        return json.loads(messages[0].content[0].text.value)
+    return transaction
+
+
+def enhance_business_profile(client_name: str) -> Dict:
+    """Enhance business profile using AI."""
+    assistant = get_assistant("AmeliaAI")
+    thread_id = create_thread()
+
+    prompt = f"""Please enhance the business profile for client: {client_name}
+    
+    Please provide enhanced values for:
+    1. Business Type
+    2. Industry
+    3. Annual Revenue
+    4. Number of Employees
+    5. Location
+    6. Fiscal Year End
+    7. Business Activities
+    8. Typical Expenses
+    
+    Return the enhanced profile in JSON format with the same structure as the input."""
+
+    add_message(thread_id, prompt)
+    run_id = run_assistant(thread_id, "AmeliaAI")
+
+    messages = get_messages(thread_id)
+    if messages and len(messages) > 0:
+        return json.loads(messages[0].content[0].text.value)
+    return {}
 
 
 def get_payee(assistant_config: Dict, description: str) -> Tuple[Dict, float]:
     """Extract or infer the payee from the transaction description with confidence level."""
     prompt = f"""Determine by any means necessary, or extract or infer, the payee of the transaction and return a clean succinct vendor name whether is a company, person or city government agency, utility or other entity. Use your best judgement come up with the most logical and recognizable vendor name which can be used for general ledgers and tax forms purposes and return it in the object json key 'payee'. Also include a 'confidence' field with a value between 0 and 1 indicating your confidence in the payee identification. The transaction description is: {description}"""
 
-    response = openai.ChatCompletion.create(
+    response = client.ChatCompletion.create(
         model=assistant_config["model"],
         messages=[
             {
@@ -146,7 +275,7 @@ def get_category(assistant_config: Dict, description: str) -> Tuple[Dict, float]
     formatted_categories = ", ".join([f'"{category}"' for category in CATEGORIES])
     prompt = f"""Categorize the transaction description into one of the business categories: {formatted_categories}, Return the best category match for the description in the list provided and assign it to the object json key 'category'. Also include a 'confidence' field with a value between 0 and 1 indicating your confidence in the categorization. The description to categorize is: {description}"""
 
-    response = openai.ChatCompletion.create(
+    response = client.ChatCompletion.create(
         model=assistant_config["model"],
         messages=[
             {
@@ -175,7 +304,7 @@ def get_classification(
 Client Context:
 {client_context}"""
 
-    response = openai.ChatCompletion.create(
+    response = client.ChatCompletion.create(
         model=assistant_config["model"],
         messages=[
             {
@@ -190,87 +319,6 @@ Client Context:
     result = json.loads(response.choices[0].message.content)
     confidence = result.get("confidence", 0.0)
     return result, confidence
-
-
-def categorize_transaction(
-    description: str,
-    amount: float,
-    client_context: Dict,
-    model_type: str = "fast",
-) -> Tuple[Dict, float]:
-    """Categorize a transaction using AI."""
-    model = MODEL_COMPLEX if model_type == "precise" else MODEL_SIMPLE
-
-    prompt = f"""Categorize this transaction based on the provided business context:
-
-Transaction: {description}
-Amount: ${amount:.2f}
-
-Business Context:
-{json.dumps(client_context, indent=2)}
-
-Return a JSON object with the following fields:
-1. classification: "Business Expense", "Personal Expense", or "Needs Review"
-2. category: Specific accounting category
-3. confidence: Confidence score (0-1)
-4. reasoning: Detailed explanation of the categorization
-5. tax_implications: Brief description of tax implications
-6. needs_review: Whether this transaction needs human review
-7. review_notes: Notes for human review if needed"""
-
-    response = openai.chat.completions.create(
-        model=model,
-        messages=[
-            {
-                "role": "system",
-                "content": "You are an expert accountant specializing in business expense categorization.",
-            },
-            {"role": "user", "content": prompt},
-        ],
-        response_format={"type": "json_object"},
-    )
-
-    result = json.loads(response.choices[0].message.content)
-    confidence = result.get("confidence", 0.0)
-    return result, confidence
-
-
-def review_transaction(
-    transaction: Dict,
-    client_context: Dict,
-) -> Dict:
-    """Review a transaction using the precise model for complex cases."""
-    prompt = f"""Review this transaction in detail based on the provided business context:
-
-Transaction:
-{json.dumps(transaction, indent=2)}
-
-Business Context:
-{json.dumps(client_context, indent=2)}
-
-Return a JSON object with the following fields:
-1. classification: Final classification decision
-2. category: Recommended category
-3. confidence: Confidence score (0-1)
-4. detailed_analysis: Comprehensive analysis of the transaction
-5. tax_implications: Detailed tax implications
-6. compliance_notes: Any compliance-related notes
-7. recommendations: List of recommendations for handling this transaction
-8. questions: List of questions that need clarification"""
-
-    response = openai.chat.completions.create(
-        model=MODEL_COMPLEX,
-        messages=[
-            {
-                "role": "system",
-                "content": "You are a senior CPA with expertise in complex business expense analysis and tax compliance.",
-            },
-            {"role": "user", "content": prompt},
-        ],
-        response_format={"type": "json_object"},
-    )
-
-    return json.loads(response.choices[0].message.content)
 
 
 def generate_categories(
@@ -306,7 +354,7 @@ Consider:
 - Compliance requirements
 - Best practices for expense tracking"""
 
-    response = openai.chat.completions.create(
+    response = client.chat.completions.create(
         model=MODEL_COMPLEX,
         messages=[
             {
@@ -371,7 +419,7 @@ Format the response as a JSON array of objects with 'index' and 'category' field
 Example: [{{"index": 0, "category": "Office Supplies"}}, {{"index": 1, "category": "Travel"}}]"""
 
         try:
-            response = openai.ChatCompletion.create(
+            response = client.ChatCompletion.create(
                 model="gpt-3.5-turbo",
                 messages=[
                     {
@@ -456,7 +504,7 @@ Consider:
 5. Consider the business context for relevance"""
 
     try:
-        response = openai.chat.completions.create(
+        response = client.chat.completions.create(
             model=os.getenv("OPENAI_MODEL_PRECISE", "o3-mini-2025-01-31"),
             messages=[
                 {

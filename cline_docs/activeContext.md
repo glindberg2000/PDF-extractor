@@ -1,5 +1,133 @@
 # Active Context
 
+## Current State
+- Successfully implemented multi-client parser system
+- Fixed client name handling with spaces
+- Standardized directory structure for clients
+- Implemented basic client configuration system
+
+## Recent Changes
+- Fixed Wells Fargo Visa parser integration
+- Standardized on `first_republic_bank` directory naming
+- Moved legacy input directory to `data/input_legacy_grok`
+- Consolidated test clients into `data/clients/_examples/test_client`
+- Deleted old CLI files:
+  - `dataextractai/cli/main.py`
+  - `dataextractai/cli/questionnaire.py`
+  - `dataextractai/cli/categories.py`
+- Updated README.md to reflect new CLI usage
+- Confirmed new CLI is working at `app/cli.py` with `main.py` entry point
+
+## Current CLI Structure
+1. Legacy System (scripts/grok.py):
+   - Complete pipeline for single client
+   - AI processing
+   - Google Sheets integration
+   - Batch processing
+
+2. New Multi-Client System (dataextractai/cli/main.py):
+   - Client management
+   - Document processing
+   - Basic categorization
+   - Google Sheets setup/upload
+
+## Next Steps
+
+### 1. Port Legacy Features
+1. AI Processing:
+   - Batch processing system
+   - Multiple AI assistants support
+   - Progress tracking per client
+   - State management
+
+2. Data Consolidation:
+   - Batch merging
+   - Data normalization
+   - Year filtering
+   - Transaction deduplication
+
+3. Google Sheets Integration:
+   - Client-specific sheet configuration
+   - Category/Classification dropdowns
+   - Sheet formatting
+   - Data validation
+
+### 2. CLI Consolidation
+1. Phase out grok.py:
+   - Document all features
+   - Create migration path
+   - Port unique functionality
+
+2. Enhance main.py:
+   - Add missing features
+   - Improve error handling
+   - Add progress tracking
+   - Better logging
+
+### 3. Testing & Documentation
+1. Add comprehensive tests
+2. Update documentation
+3. Create migration guides
+4. Add example configurations
+
+### 4. Fix First Republic Bank parser issues
+1. Parser is running but finding 0 transactions
+2. Need to investigate date parsing in `first_republic_bank_parser.py`
+3. Warning about date format "May 01, 2024 - May 24, 2024" not being parsed correctly
+4. Verify PDF structure hasn't changed
+
+### 5. Future Improvements
+1. Add more comprehensive error handling in parsers
+2. Improve logging for better debugging
+3. Add unit tests for date parsing edge cases
+
+## Current CLI Commands
+```bash
+# List all categories
+python -m dataextractai.cli.main categories list <client_name>
+
+# Add a new category
+python -m dataextractai.cli.main categories add <client_name>
+
+# Edit an existing category
+python -m dataextractai.cli.main categories edit <client_name>
+
+# Delete a category (by number or name)
+python -m dataextractai.cli.main categories delete <client_name>
+
+# Generate AI-suggested categories
+python -m dataextractai.cli.main categories generate <client_name>
+```
+
+## Category Management Features
+1. **List Categories**
+   - Shows all categories with numbers
+   - Displays system and custom categories
+   - Shows descriptions and tax implications
+
+2. **Add Categories**
+   - Natural language input
+   - AI-assisted formatting
+   - System category matching
+   - Tax implication suggestions
+
+3. **Edit Categories**
+   - Natural language updates
+   - Side-by-side change preview
+   - System category matching
+   - Confidence level tracking
+
+4. **Delete Categories**
+   - Support for number or name input
+   - Confirmation prompts
+   - Category details preview
+
+5. **Generate Categories**
+   - Uses full business context
+   - Industry-specific suggestions
+   - Tax implication guidance
+   - System category matching
+
 ## Current Work
 - Successfully implemented client-specific directory structure
 - Fixed path handling in parser modules
@@ -18,30 +146,6 @@
    - FastAPI backend framework
    - Database schema defined
    - File upload system working
-
-## Recent Changes
-1. Added `get_current_paths` function to `config.py`
-2. Updated `run_all_parsers` to use client-specific paths
-3. Improved directory creation and validation
-4. Enhanced debug logging for path verification
-5. Updated documentation to reflect new functionality
-
-## Current Focus
-Getting command-line version fully operational with:
-1. All parsers working
-2. Google Sheets integration
-3. Multi-client support
-4. AI categorization
-
-## Next Steps
-1. Add more comprehensive error handling
-2. Implement progress tracking for long-running processes
-3. Add validation for client configuration files
-4. Enhance logging with more detailed transaction counts
-5. Add support for more financial institutions
-6. Implement parallel processing for large datasets
-7. Add data validation and cleaning steps
-8. Enhance the transformation pipeline
 
 ## Known Issues
 1. Parser System

@@ -1,22 +1,15 @@
-# PDF Extractor
+# PDF Transaction Extractor
 
-A Python-based tool for extracting and processing financial data from various bank statements and financial documents.
+A powerful tool for extracting, categorizing, and analyzing financial transactions from PDF statements using AI.
 
 ## Features
 
-- **Multi-Format Support**: Processes PDF and CSV files from various financial institutions
-- **Client-Specific Processing**: Supports multiple clients with separate data directories
-- **Automated Data Extraction**: Extracts transaction data from bank statements
-- **Data Transformation**: Converts extracted data into a standardized format
-- **Output Generation**: Produces CSV and Excel files with processed data
-
-## Supported Financial Institutions
-
-- Amazon
-- Bank of America (Bank and VISA)
-- Chase (VISA)
-- Wells Fargo (Bank, MasterCard, VISA, and CSV format)
-- First Republic Bank
+- **Multi-Format Support**: Handles various PDF statement formats
+- **AI-Powered Categorization**: Intelligent transaction classification
+- **Multi-Client Support**: Manage multiple client accounts
+- **Google Sheets Integration**: Export data to spreadsheets
+- **Custom Category Management**: AI-assisted category creation and management
+- **Business Context Awareness**: Industry-specific categorization
 
 ## Installation
 
@@ -37,88 +30,94 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
+4. Set up environment variables:
+```bash
+cp .env.example .env
+# Edit .env with your API keys and settings
+```
+
 ## Usage
 
-### Basic Usage
+### Command Line Interface
 
-1. Place your financial documents in the appropriate input directories:
-   - For default processing: `/data/input/<institution>/`
-   - For client-specific processing: `/clients/<client_name>/input/<institution>/`
+The CLI provides an interactive menu system for managing clients and processing documents. To start:
 
-2. Run the parser:
 ```bash
-# For default processing
-python scripts/grok.py run-parsers
-
-# For client-specific processing
-python scripts/grok.py run-parsers --client <client_name>
+python main.py
 ```
 
-3. Find the processed data in:
-   - Default: `/data/output/`
-   - Client-specific: `/clients/<client_name>/output/`
+This will present you with the following options:
+1. Client Management
+   - Create new client
+   - List clients
+   - Update client
+   - Delete client
+   - Manage categories
+   - Enhance business profile
+2. Process Documents
+3. Categorize Transactions
+4. Upload to Google Sheets
+5. Google Sheets Setup
 
-### Directory Structure
+### Supported Document Types
 
+Place your PDF files in the appropriate input directories:
 ```
-PDF-extractor/
-├── clients/
-│   └── <client_name>/
-│       ├── input/
-│       │   ├── amazon/
-│       │   ├── bofa_bank/
-│       │   ├── bofa_visa/
-│       │   ├── chase_visa/
-│       │   ├── wellsfargo_bank/
-│       │   ├── wellsfargo_mastercard/
-│       │   ├── wellsfargo_visa/
-│       │   ├── wellsfargo_bank_csv/
-│       │   ├── client_info/
-│       │   └── firstrepublic_bank/
-│       └── output/
-│           └── batch_outputs/
-├── data/
-│   ├── input/
-│   │   └── [same structure as client input]
-│   └── output/
-│       └── batch_outputs/
-└── scripts/
-    └── grok.py
+data/clients/<client_name>/input/<parser_type>/
 ```
 
-### Output Files
+Available parser types:
+- `amazon` - Amazon order invoices
+- `bofa_bank` - Bank of America bank statements
+- `bofa_visa` - Bank of America credit card statements
+- `chase_visa` - Chase Visa credit card statements
+- `wellsfargo_bank` - Wells Fargo bank statements
+- `wellsfargo_mastercard` - Wells Fargo Mastercard statements
+- `wellsfargo_visa` - Wells Fargo Visa statements
+- `wellsfargo_bank_csv` - Wells Fargo bank CSV exports
+- `first_republic_bank` - First Republic bank statements
 
-The tool generates several output files:
-- Individual institution outputs (CSV and Excel)
-- Consolidated core data
-- Consolidated updated data
-- Batch outputs
-- State tracking file
+### Client Configuration
 
-## Configuration
+Each client needs a configuration file at `data/clients/<client_name>/client_config.yaml`:
 
-Client-specific configurations can be set in `/clients/<client_name>/client_config.yaml`:
 ```yaml
-sheet_name: "ExpenseReport_<client_name>"
-client_name: "<client_name>"
-business_type: "<business_type>"
-output_format: "csv"  # or "xlsx"
+business_type: "Business Type"
+business_details:
+  industry: "Industry"
+  business_activities: ["Activity 1", "Activity 2"]
+  typical_expenses: ["Expense 1", "Expense 2"]
+  location: "Location"
+  annual_revenue: "Revenue Range"
+custom_categories: []
 ```
 
 ## Development
 
-### Adding New Parsers
+### Project Structure
 
-1. Create a new parser module in `dataextractai/parsers/`
-2. Add parser configuration to `dataextractai/utils/config.py`
-3. Update the parser registry in `dataextractai/parsers/run_parsers.py`
-
-### Testing
-
-Run tests with:
-```bash
-python -m pytest tests/
 ```
+dataextractai/
+├── agents/           # AI agents for different tasks
+├── cli/             # Command-line interface
+├── parsers/         # PDF parsing modules
+├── utils/           # Utility functions
+└── __init__.py
+```
+
+### Running Tests
+
+```bash
+pytest
+```
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Commit your changes
+4. Push to the branch
+5. Create a Pull Request
 
 ## License
 
@@ -443,4 +442,57 @@ For questions or suggestions, please contact [greglindbereg@gmail.com](mailto:gr
 - OpenAI for the powerful GPT-4 Vision API
 - The open-source community for various Python libraries
 - All contributors and users of the project
+
+## Client Data Structure
+
+The project uses a standardized directory structure for client data:
+
+```
+data/clients/
+├── _template/              # Template structure for new clients
+│   ├── client_config.yaml  # Template configuration
+│   ├── input/             # Input directories for different parsers
+│   │   ├── amazon/
+│   │   ├── bofa_bank/
+│   │   ├── bofa_visa/
+│   │   ├── chase_visa/
+│   │   ├── first_republic_bank/
+│   │   ├── wellsfargo_bank/
+│   │   ├── wellsfargo_bank_csv/
+│   │   ├── wellsfargo_mastercard/
+│   │   └── wellsfargo_visa/
+│   └── output/            # Processed output files
+├── _examples/             # Example client setups
+│   └── tech_consultant/   # Example for a tech consultant
+└── [client_name]/         # Individual client directories
+```
+
+### Setting Up a New Client
+
+1. Copy the `_template` directory to create a new client:
+   ```bash
+   cp -r data/clients/_template data/clients/new_client_name
+   ```
+
+2. Edit the `client_config.yaml` file to set:
+   - Client name and type
+   - Google Sheets configuration
+   - Parser selection
+   - AI processing settings
+   - Custom categories
+
+3. Place source documents in the appropriate input directories:
+   - Bank statements in respective bank folders
+   - Credit card statements in respective card folders
+   - Ensure files are in supported formats (PDF, CSV)
+
+### Client Configuration
+
+The `client_config.yaml` file controls:
+- Sheet names and IDs for Google Sheets export
+- Which parsers to run for the client
+- AI assistant selection and settings
+- Custom categories for expense classification
+
+See the example configurations in `data/clients/_examples/` for reference implementations.
 

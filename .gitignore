@@ -280,3 +280,52 @@ Thumbs.db
 *.db
 *.sqlite3
 
+# Credentials and Secrets
+credentials.json
+token.json
+*.key
+sheets_config.yaml
+client_config.yaml
+!data/clients/_template/client_config.yaml
+!data/clients/_examples/*/client_config.yaml
+
+# Client Data Structure
+data/clients/*
+!data/clients/_template/
+!data/clients/_examples/
+!data/clients/_template/**/.gitkeep
+!data/clients/_examples/**/.gitkeep
+
+# Input/Output Structure for each client
+data/clients/*/input/*
+data/clients/*/output/*
+!data/clients/*/input/.gitkeep
+!data/clients/*/output/.gitkeep
+
+# Parser-specific input directories
+data/clients/*/input/amazon/*
+data/clients/*/input/bofa_bank/*
+data/clients/*/input/bofa_visa/*
+data/clients/*/input/chase_visa/*
+data/clients/*/input/wellsfargo_bank/*
+data/clients/*/input/wellsfargo_mastercard/*
+data/clients/*/input/wellsfargo_visa/*
+data/clients/*/input/wellsfargo_bank_csv/*
+data/clients/*/input/first_republic_bank/*
+!data/clients/_template/input/**/.gitkeep
+!data/clients/_examples/*/input/**/.gitkeep
+
+# Deprecated files and directories
+deprecated/
+dataextractai_vision/
+dataextractai_vision.egg-info/
+web/
+processing_history.db
+extraction.log
+directory_structure.txt
+test_run_parsers.py
+test_menu.py
+conda-requirements.txt
+environment.yml
+new_requirements.txt
+

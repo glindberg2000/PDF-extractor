@@ -432,3 +432,35 @@ def upload_to_sheets(client_name: str) -> bool:
     except Exception as e:
         console.print(f"[red]Error uploading to Google Sheets: {str(e)}[/red]")
         return False
+
+
+def create_sheets_for_client(
+    service, spreadsheet_id: str, client_name: str
+) -> Dict[str, int]:
+    """Create and set up sheets for a client's data."""
+    sheets_to_create = [
+        {
+            "name": f"{client_name}_{datetime.now().strftime('%Y%m%d')}",
+            "description": "Main transaction sheet with all transactions",
+        },
+        {
+            "name": "Categories",
+            "description": "Category definitions and usage statistics",
+        },
+        {"name": "Summary", "description": "Monthly and category summaries"},
+    ]
+
+    sheet_ids = {}
+    for sheet_info in sheets_to_create:
+        if not create_sheet(service, spreadsheet_id, sheet_info["name"]):
+            return {}
+        # Get the sheet ID
+        sheet_metadata = (
+            service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
+        )
+        for s in sheet_metadata.get("sheets", ""):
+            if s["properties"]["title"] == sheet_info["name"]:
+                sheet_ids[sheet_info["name"]] = s["properties"]["sheetId"]
+                break
+
+    return sheet_ids

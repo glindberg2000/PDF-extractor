@@ -1,0 +1,37 @@
+# Template Client Configuration
+name: "Template Client"
+type: "business"  # or "personal"
+sheets:
+  sheetname: "Template Financial Data"
+  sheet_id: ""  # Google Sheets ID if using custom sheet
+
+# Parser Settings
+parsers:
+  - amazon
+  - bofa_bank
+  - bofa_visa
+  - chase_visa
+  - wellsfargo_bank
+  - wellsfargo_mastercard
+  - wellsfargo_visa
+  - wellsfargo_bank_csv
+  - first_republic_bank
+
+# AI Processing Settings
+ai_settings:
+  assistant: "AmeliaAI"  # or "DaveAI"
+  batch_size: 25
+  expense_threshold: 0.0  # Minimum amount to process
+
+# Categories and Classifications
+categories:
+  - "Advertising"
+  - "Contractors"
+  - "Equipment"
+  - "Insurance"
+  - "Office Supplies"
+  - "Professional Services"
+  - "Software/Subscriptions"
+  - "Travel"
+  - "Utilities"
+  - "Other" 
