@@ -331,7 +331,7 @@ def extract_withdrawals_debits(text):
 
     # Find the "Withdrawals and Debits" section within "Account Activity"
     withdrawals_section_match = re.search(
-        r"Withdrawals and Debits(.*?)(?:Total Withdrawals and Debits|ANNUAL PERCENTAGE)",
+        r"Withdrawals and Debits\s*(?:Date Description Amount\s*)?(.*?)(?=Total Withdrawals and Debits|Total For Total)",
         text,
         re.DOTALL,
     )
@@ -342,12 +342,27 @@ def extract_withdrawals_debits(text):
     withdrawals_section = withdrawals_section_match.group(1)
     logger.debug(f"Found Withdrawals and Debits section:\n{withdrawals_section}")
 
-    # Pattern to match withdrawal entries: Date, Description, Amount
-    pattern = r"(\d{2}/\d{2})\s+(.*?)\$\s*([\d,]+\.\d{2})\s*-"
+    # Pattern to match withdrawal entries: Date, Description, Amount with negative sign
+    pattern = r"(\d{2}/\d{2})\s+(.*?)\s+\$\s*([\d,]+\.\d{2})\s*-\s*\n([^$]*?)(?=\n\d{2}/\d{2}|\n\s*Total|\Z)"
 
-    matches = re.finditer(pattern, withdrawals_section)
+    # First try to find the section between "Withdrawals and Debits" and "Total Withdrawals and Debits"
+    section_match = re.search(
+        r"Withdrawals and Debits\s*\n(.*?)(?=Total Withdrawals and Debits)",
+        text,
+        re.DOTALL,
+    )
+    if section_match:
+        withdrawals_section = section_match.group(1)
+        logger.debug(
+            f"Found Withdrawals and Debits section (method 2):\n{withdrawals_section}"
+        )
+
+    matches = re.finditer(pattern, withdrawals_section, re.DOTALL)
     for match in matches:
-        date_str, description, amount_str = match.groups()
+        date_str = match.group(1)
+        description = match.group(2)
+        amount_str = match.group(3)
+        additional_desc = match.group(4) if match.group(4) else ""
 
         # Clean amount (remove commas) and convert to float
         amount = float(amount_str.replace(",", ""))
@@ -356,9 +371,93 @@ def extract_withdrawals_debits(text):
         current_year = datetime.now().year
         date = f"{date_str}/{current_year}"
 
+        # Clean up description
+        description = description.strip()
+        if additional_desc:
+            # Split additional description into lines and clean each line
+            additional_lines = [
+                line.strip() for line in additional_desc.split("\n") if line.strip()
+            ]
+            # Only keep lines that don't contain common footer text and are not empty
+            additional_lines = [
+                line
+                for line in additional_lines
+                if not any(
+                    x in line.lower()
+                    for x in [
+                        "pine street",
+                        "san francisco",
+                        "firstrepublic.com",
+                        "member fdic",
+                        "©2023",
+                        "page",
+                        "balance your account",
+                        "items outstanding",
+                        "enter:",
+                        "add",
+                        "subtract",
+                        "calculate",
+                        "in case of errors",
+                        "please call us",
+                        "account statement",
+                        "atm rebate checking",
+                        "statement period",
+                        "account number",
+                        "account activity",
+                        "deposits and credits",
+                        "withdrawals and debits",
+                        "total",
+                        "fee summary",
+                    ]
+                )
+            ]
+            if additional_lines:
+                # Take only the first line of additional description
+                description = f"{description} {additional_lines[0]}"
+
+        # Clean up description by removing any trailing reference numbers and card numbers
+        description = re.sub(r"\s+\d+\s*$", "", description)
+        description = re.sub(r"XXXXXXXXXXXX\d+", "", description)
+        description = re.sub(r"\s+$", "", description)
+
+        # Skip transactions that have invalid descriptions
+        if any(
+            x in description.lower()
+            for x in [
+                "pine street",
+                "san francisco",
+                "firstrepublic.com",
+                "member fdic",
+                "©2023",
+                "page",
+                "balance your account",
+                "items outstanding",
+                "enter:",
+                "add",
+                "subtract",
+                "calculate",
+                "in case of errors",
+                "please call us",
+                "account statement",
+                "atm rebate checking",
+                "statement period",
+                "account number",
+                "account activity",
+                "deposits and credits",
+                "withdrawals and debits",
+                "total",
+                "fee summary",
+            ]
+        ):
+            continue
+
+        # Skip if description is empty
+        if not description:
+            continue
+
         transaction = {
             "transaction_date": date,
-            "description": description.strip(),
+            "description": description,
             "amount": -amount,  # Negative since it's a withdrawal
             "transaction_type": "withdrawal",
         }
