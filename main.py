@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-from app.cli import CLI
+from dataextractai.menu import start_menu
 
 
 def main():
     """Main entry point for the application."""
-    cli = CLI()
-    cli.start()
+    start_menu()
 
 
 if __name__ == "__main__":

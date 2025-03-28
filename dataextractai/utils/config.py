@@ -2,6 +2,7 @@
 import os
 import yaml
 from typing import Dict
+import pandas as pd
 
 # Define the base directory (root of the project)
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -278,12 +279,18 @@ DATA_MANIFESTS = {
         "source": None,
     },
     "wellsfargo_visa": {
-        "date": "date",
-        "description": "string",
-        "amount": "float",
-        "transaction_type": "string",
-        "statement_date": "date",
-        "file_path": "string",
+        "transaction_date": "transaction_date",
+        "description": "description",
+        "amount": "amount",
+        "file_path": "file_path",
+        "source": lambda x: "wellsfargo_visa",
+        "transaction_type": lambda x: "Credit Card",
+        "post_date": "post_date",
+        "reference_number": "reference_number",
+        "credits": "credits",
+        "charges": "charges",
+        "statement_date": "statement_date",
+        "card_ending": "card_ending",
     },
 }
 
@@ -337,7 +344,7 @@ TRANSFORMATION_MAPS = {
         "transaction_type": lambda x: "Debit/Check",
     },
     "wellsfargo_visa": {
-        "transaction_date": "date",
+        "transaction_date": "transaction_date",
         "description": "description",
         "amount": "amount",
         "file_path": "file_path",
@@ -353,12 +360,19 @@ TRANSFORMATION_MAPS = {
         "transaction_type": "transaction_type",
     },
     "first_republic_bank": {
-        "transaction_date": "date",
-        "description": "description",
-        "amount": "amount",
-        "file_path": "file_path",
-        "source": lambda x: "first_republic_bank",
-        "transaction_type": "transaction_type",
+        "transaction_date": lambda row: (
+            row["statement_end_date"]
+            if "INTEREST CREDIT" in str(row["description"])
+            and (pd.isna(row["transaction_date"]) or row["transaction_date"] == "")
+            else row["transaction_date"]
+        ),
+        "description": lambda x: x["description"],
+        "amount": lambda x: x["amount"],
+        "transaction_type": lambda x: x["transaction_type"],
+        "statement_start_date": lambda x: x["statement_start_date"],
+        "statement_end_date": lambda x: x["statement_end_date"],
+        "account_number": lambda x: x["account_number"],
+        "file_path": lambda x: x["file_path"],
     },
 }
 

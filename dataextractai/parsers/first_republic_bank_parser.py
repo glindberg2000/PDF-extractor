@@ -303,6 +303,10 @@ def extract_deposits_credits(text):
         # Clean up description by removing any trailing reference numbers
         description = re.sub(r"\s+\d+\s*$", "", description)
 
+        # For interest credits, pass the raw date string (MM/DD) to let the transaction normalizer handle it
+        if "INTEREST CREDIT" in description:
+            date = date_str
+
         transaction = {
             "transaction_date": date,
             "description": description,

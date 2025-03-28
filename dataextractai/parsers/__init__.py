@@ -20,3 +20,4 @@ from .first_republic_bank_parser import run as run_first_republic_bank_parser
 
 # Create a version of run_parsers that can be imported
 from .run_parsers import run_all_parsers
+
