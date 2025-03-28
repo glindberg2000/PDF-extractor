@@ -69,7 +69,9 @@ def extract_transactions(pdf_path):
             logger.debug("Full text extracted from PDF")
 
             # Extract payment transactions
-            payment_transactions = extract_payment_transactions(full_text)
+            payment_transactions = extract_payment_transactions(
+                full_text, statement_date
+            )
             for transaction in payment_transactions:
                 transaction["transaction_type"] = "payment"
                 transaction["statement_date"] = statement_date
@@ -77,7 +79,9 @@ def extract_transactions(pdf_path):
                 transactions.append(transaction)
 
             # Extract purchase transactions
-            purchase_transactions = extract_purchase_transactions(full_text)
+            purchase_transactions = extract_purchase_transactions(
+                full_text, statement_date
+            )
             for transaction in purchase_transactions:
                 transaction["transaction_type"] = "purchase"
                 transaction["statement_date"] = statement_date
@@ -91,7 +95,7 @@ def extract_transactions(pdf_path):
     return transactions
 
 
-def extract_payment_transactions(text):
+def extract_payment_transactions(text, statement_date):
     """Extract payment transactions from the statement text."""
     transactions = []
 
@@ -113,10 +117,10 @@ def extract_payment_transactions(text):
     for match in matches:
         trans_date, post_date, reference_number, description, amount = match.groups()
 
-        # Convert dates to full dates (assume current year)
-        current_year = datetime.now().year
-        trans_date_full = f"{trans_date}/{current_year}"
-        post_date_full = f"{post_date}/{current_year}"
+        # Convert dates to full dates using statement period year
+        statement_year = datetime.strptime(statement_date, "%Y-%m-%d").year
+        trans_date_full = f"{trans_date}/{statement_year}"
+        post_date_full = f"{post_date}/{statement_year}"
 
         # Clean amount (remove commas)
         amount = float(amount.replace(",", ""))
@@ -137,7 +141,7 @@ def extract_payment_transactions(text):
     return transactions
 
 
-def extract_purchase_transactions(text):
+def extract_purchase_transactions(text, statement_date):
     """Extract purchase transactions from the statement text."""
     transactions = []
 
@@ -150,10 +154,10 @@ def extract_purchase_transactions(text):
             match.groups()
         )
 
-        # Convert dates to full dates (assume current year)
-        current_year = datetime.now().year
-        trans_date_full = f"{trans_date}/{current_year}"
-        post_date_full = f"{post_date}/{current_year}"
+        # Convert dates to full dates using statement period year
+        statement_year = datetime.strptime(statement_date, "%Y-%m-%d").year
+        trans_date_full = f"{trans_date}/{statement_year}"
+        post_date_full = f"{post_date}/{statement_year}"
 
         # Clean amount (remove commas)
         amount = float(amount.replace(",", ""))
