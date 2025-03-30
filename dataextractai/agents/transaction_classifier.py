@@ -1,131 +1,438 @@
-"""Transaction classifier for categorizing transactions using AI."""
+"""
+Transaction Classifier Agent
+
+This module implements the AI-based transaction classification system using a three-pass approach:
+1. Payee identification
+2. Category assignment
+3. Classification (business vs personal)
+
+The classifier uses the client's business profile for context and can suggest new categories
+when needed. It also provides reasoning for all classifications.
+"""
 
 import os
 import json
 import pandas as pd
 from typing import Dict, List, Optional
 from openai import OpenAI
-from dotenv import load_dotenv
-import logging
-from datetime import datetime
-import re
-
+from ..utils.config import (
+    ASSISTANTS_CONFIG,
+    PROMPTS,
+    STANDARD_CATEGORIES,
+    CLASSIFICATIONS,
+)
 from .client_profile_manager import ClientProfileManager
-
-load_dotenv()
-
-logger = logging.getLogger(__name__)
-
-# Get model configurations from environment
-OPENAI_MODEL_FAST = os.getenv("OPENAI_MODEL_FAST", "gpt-4o-mini-2024-07-18")
-OPENAI_MODEL_PRECISE = os.getenv("OPENAI_MODEL_PRECISE", "o3-mini-2025-01-31")
+from ..models.ai_responses import (
+    PayeeResponse,
+    CategoryResponse,
+    ClassificationResponse,
+)
 
 
 class TransactionClassifier:
-    """Classifies transactions using AI and client business context."""
+    def __init__(self, client_name: str, model_type: str = "fast"):
+        """Initialize the transaction classifier.
 
-    def __init__(self, client_name: str):
+        Args:
+            client_name: Name of the client whose transactions to classify
+            model_type: Type of model to use ("fast" or "precise")
+        """
         self.client_name = client_name
-        self.client_dir = os.path.join("data", "clients", client_name)
-        self.output_dir = os.path.join(self.client_dir, "output")
-        self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        self.client = OpenAI()
         self.profile_manager = ClientProfileManager(client_name)
+        self.business_profile = self.profile_manager._load_profile()
+        self.model_type = model_type
 
-    def classify_transactions(self, transactions_df: pd.DataFrame) -> pd.DataFrame:
-        """Classify transactions using AI and client business context."""
-        if transactions_df.empty:
-            logger.warning("No transactions to classify")
-            return transactions_df
+        # Use client's custom categories if available, otherwise use standard
+        self.categories = (
+            self.business_profile.get("custom_categories", [])
+            + self.business_profile.get("ai_generated_categories", [])
+            + STANDARD_CATEGORIES
+        )
 
-        # Add classification columns if they don't exist
-        classification_columns = [
-            "main_category",
-            "subcategory",
-            "confidence",
-            "reasoning",
-            "business_context",
-            "questions",
-        ]
-        for col in classification_columns:
-            if col not in transactions_df.columns:
-                transactions_df[col] = None
+        # Get business context for AI prompts
+        self.business_context = self._get_business_context()
 
-        # Get the categorization prompt
-        prompt_template = self.profile_manager.generate_categorization_prompt()
-        if not prompt_template:
-            logger.error("Failed to generate categorization prompt")
-            return transactions_df
+    def _get_business_context(self) -> str:
+        """Get formatted business context for AI prompts."""
+        context = []
 
-        # Process each transaction
-        for idx, row in transactions_df.iterrows():
-            # Skip transactions that don't need classification
-            if self._should_skip_transaction(row):
-                continue
+        # Add business type and description
+        context.append(
+            f"Business Type: {self.business_profile.get('business_type', '')}"
+        )
+        context.append(
+            f"Business Description: {self.business_profile.get('business_description', '')}"
+        )
 
-            # Format the prompt with transaction details
-            prompt = prompt_template.format(
-                description=row["normalized_description"],
-                amount=row["amount"],
-                date=row["transaction_date"],
+        # Add industry insights
+        if "industry_insights" in self.business_profile:
+            context.append(
+                f"Industry Insights: {self.business_profile['industry_insights']}"
             )
 
+        # Add common patterns
+        if "common_patterns" in self.business_profile:
+            context.append("Common Transaction Patterns:")
+            for pattern in self.business_profile["common_patterns"]:
+                context.append(f"- {pattern}")
+
+        return "\n".join(context)
+
+    def _get_model(self) -> str:
+        """Get the appropriate model based on model type."""
+        if self.model_type == "fast":
+            return os.getenv("OPENAI_MODEL_FAST", "gpt-4o-mini")
+        else:
+            return os.getenv("OPENAI_MODEL_PRECISE", "o3-mini")
+
+    def classify_transactions(self, transactions_df: pd.DataFrame) -> pd.DataFrame:
+        """Classify all transactions in the DataFrame using a three-pass approach.
+
+        Args:
+            transactions_df: DataFrame containing transactions to classify
+
+        Returns:
+            DataFrame with added classification columns
+        """
+        # Initialize new columns
+        transactions_df["payee"] = None
+        transactions_df["payee_confidence"] = None
+        transactions_df["payee_reasoning"] = None
+        transactions_df["category"] = None
+        transactions_df["category_confidence"] = None
+        transactions_df["category_reasoning"] = None
+        transactions_df["suggested_new_category"] = None
+        transactions_df["new_category_reasoning"] = None
+        transactions_df["classification"] = None
+        transactions_df["classification_confidence"] = None
+        transactions_df["classification_reasoning"] = None
+        transactions_df["tax_implications"] = None
+
+        # Pass 1: Process all payees
+        print("Pass 1: Processing payees...")
+        for idx, row in transactions_df.iterrows():
             try:
-                # Get AI classification
-                response = self.client.chat.completions.create(
-                    model=OPENAI_MODEL_PRECISE,
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": "You are a transaction categorization expert.",
-                        },
-                        {"role": "user", "content": prompt},
-                    ],
-                    response_format={"type": "json_object"},
-                )
-
-                classification = json.loads(response.choices[0].message.content)
-
-                # Update the DataFrame with classification results
-                for col in classification_columns:
-                    transactions_df.at[idx, col] = classification.get(col)
-
-                logger.info(
-                    f"Classified transaction {idx}: {classification['main_category']} ({classification['confidence']})"
-                )
-
+                payee_result = self._get_payee(row["description"])
+                transactions_df.at[idx, "payee"] = payee_result.payee
+                transactions_df.at[idx, "payee_confidence"] = payee_result.confidence
+                transactions_df.at[idx, "payee_reasoning"] = payee_result.reasoning
             except Exception as e:
-                logger.error(f"Error classifying transaction {idx}: {e}")
+                print(f"Error processing payee for transaction {idx}: {str(e)}")
+                transactions_df.at[idx, "payee"] = "Unknown Payee"
+                transactions_df.at[idx, "payee_confidence"] = "low"
+                transactions_df.at[idx, "payee_reasoning"] = (
+                    f"Error during processing: {str(e)}"
+                )
 
-        # Save classified transactions
-        output_file = os.path.join(
-            self.output_dir, f"{self.client_name}_classified_transactions.csv"
-        )
-        transactions_df.to_csv(output_file, index=False)
-        logger.info(f"Saved classified transactions to {output_file}")
+        # Pass 2: Process all categories
+        print("Pass 2: Processing categories...")
+        for idx, row in transactions_df.iterrows():
+            try:
+                category_result = self._get_category(row["description"], row["payee"])
+                transactions_df.at[idx, "category"] = category_result.category
+                transactions_df.at[idx, "category_confidence"] = (
+                    category_result.confidence
+                )
+                transactions_df.at[idx, "category_reasoning"] = (
+                    category_result.reasoning
+                )
+                transactions_df.at[idx, "suggested_new_category"] = (
+                    category_result.suggested_new_category
+                )
+                transactions_df.at[idx, "new_category_reasoning"] = (
+                    category_result.new_category_reasoning
+                )
+            except Exception as e:
+                print(f"Error processing category for transaction {idx}: {str(e)}")
+                transactions_df.at[idx, "category"] = "Unclassified"
+                transactions_df.at[idx, "category_confidence"] = "low"
+                transactions_df.at[idx, "category_reasoning"] = (
+                    f"Error during processing: {str(e)}"
+                )
+
+        # Pass 3: Process all classifications
+        print("Pass 3: Processing classifications...")
+        for idx, row in transactions_df.iterrows():
+            try:
+                classification_result = self._get_classification(
+                    row["description"], row["payee"], row["category"]
+                )
+                transactions_df.at[idx, "classification"] = (
+                    classification_result.classification
+                )
+                transactions_df.at[idx, "classification_confidence"] = (
+                    classification_result.confidence
+                )
+                transactions_df.at[idx, "classification_reasoning"] = (
+                    classification_result.reasoning
+                )
+                transactions_df.at[idx, "tax_implications"] = (
+                    classification_result.tax_implications
+                )
+            except Exception as e:
+                print(
+                    f"Error processing classification for transaction {idx}: {str(e)}"
+                )
+                transactions_df.at[idx, "classification"] = "Unclassified"
+                transactions_df.at[idx, "classification_confidence"] = "low"
+                transactions_df.at[idx, "classification_reasoning"] = (
+                    f"Error during processing: {str(e)}"
+                )
 
         return transactions_df
 
-    def _should_skip_transaction(self, transaction: pd.Series) -> bool:
-        """Determine if a transaction should be skipped for classification."""
-        # Skip transactions with no description
-        if (
-            pd.isna(transaction["normalized_description"])
-            or not transaction["normalized_description"].strip()
-        ):
-            return True
+    def _get_payee(self, description: str) -> PayeeResponse:
+        """Identify the payee/merchant from the transaction description."""
+        prompt = (
+            PROMPTS["get_payee"]
+            + f"\n\nTransaction: {description}\n\nBusiness Context:\n{self.business_context}"
+        )
 
-        # Skip common transaction types that don't need classification
-        skip_patterns = [
-            r"ACH\s+CREDIT",  # ACH credits
-            r"POS\s+CREDIT",  # POS credits
-            r"DEPOSIT",  # Deposits
-            r"INTEREST\s+CREDIT",  # Interest credits
-            r"TRANSFER",  # Transfers
-            r"ATM\s+WITHDRAWAL",  # ATM withdrawals
-            r"FEE",  # Fees
-            r"PAYMENT",  # Payments
-            r"REFUND",  # Refunds
-        ]
+        response = self.client.responses.create(
+            model=self._get_model(),
+            input=[
+                {
+                    "role": "system",
+                    "content": ASSISTANTS_CONFIG["AmeliaAI"]["instructions"],
+                },
+                {"role": "user", "content": prompt},
+            ],
+            text={
+                "format": {
+                    "type": "json_schema",
+                    "name": "payee_response",
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "payee": {
+                                "type": "string",
+                                "description": "The identified payee/merchant name",
+                            },
+                            "confidence": {
+                                "type": "string",
+                                "enum": ["high", "medium", "low"],
+                                "description": "Confidence level in the identification",
+                            },
+                            "reasoning": {
+                                "type": "string",
+                                "description": "Explanation of the identification",
+                            },
+                        },
+                        "required": ["payee", "confidence", "reasoning"],
+                        "additionalProperties": False,
+                    },
+                    "strict": True,
+                }
+            },
+        )
 
-        description = transaction["normalized_description"].upper()
-        return any(re.search(pattern, description) for pattern in skip_patterns)
+        print(f"Raw response: {response.output_text}")  # Debug log
+        try:
+            # Clean up the response text to ensure valid JSON
+            response_text = response.output_text.strip()
+            if response_text.startswith("```json"):
+                response_text = response_text[7:]
+            if response_text.endswith("```"):
+                response_text = response_text[:-3]
+            response_text = response_text.strip()
+
+            return PayeeResponse(**json.loads(response_text))
+        except Exception as e:
+            print(f"Error parsing response: {str(e)}")
+            print(f"Response content: {response.output_text}")
+            raise
+
+    def _get_category(self, description: str, payee: str) -> CategoryResponse:
+        """Categorize the transaction based on description and payee."""
+        formatted_categories = ", ".join([f'"{cat}"' for cat in self.categories])
+        prompt = (
+            PROMPTS["get_category"].format(categories=formatted_categories)
+            + f"\n\nTransaction: {description}\nPayee: {payee}\n\nBusiness Context:\n{self.business_context}"
+        )
+
+        response = self.client.responses.create(
+            model=self._get_model(),
+            input=[
+                {
+                    "role": "system",
+                    "content": ASSISTANTS_CONFIG["AmeliaAI"]["instructions"],
+                },
+                {"role": "user", "content": prompt},
+            ],
+            text={
+                "format": {
+                    "type": "json_schema",
+                    "name": "category_response",
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "category": {
+                                "type": "string",
+                                "description": "The assigned category from the list",
+                            },
+                            "confidence": {
+                                "type": "string",
+                                "enum": ["high", "medium", "low"],
+                                "description": "Confidence level in the categorization",
+                            },
+                            "reasoning": {
+                                "type": "string",
+                                "description": "Explanation of the categorization",
+                            },
+                            "suggested_new_category": {
+                                "type": ["string", "null"],
+                                "description": "New category if needed",
+                            },
+                            "new_category_reasoning": {
+                                "type": ["string", "null"],
+                                "description": "Explanation for suggested new category",
+                            },
+                        },
+                        "required": [
+                            "category",
+                            "confidence",
+                            "reasoning",
+                            "suggested_new_category",
+                            "new_category_reasoning",
+                        ],
+                        "additionalProperties": False,
+                    },
+                    "strict": True,
+                }
+            },
+        )
+
+        print(f"Raw category response: {response.output_text}")  # Debug log
+        try:
+            # Clean up the response text to ensure valid JSON
+            response_text = response.output_text.strip()
+            if response_text.startswith("```json"):
+                response_text = response_text[7:]
+            if response_text.endswith("```"):
+                response_text = response_text[:-3]
+            response_text = response_text.strip()
+
+            return CategoryResponse(**json.loads(response_text))
+        except Exception as e:
+            print(f"Error parsing category response: {str(e)}")
+            print(f"Response content: {response.output_text}")
+            raise
+
+    def _get_classification(
+        self, description: str, payee: str, category: str
+    ) -> ClassificationResponse:
+        """Classify the transaction as business or personal."""
+        prompt = (
+            PROMPTS["get_classification"]
+            + f"\n\nTransaction: {description}\nPayee: {payee}\nCategory: {category}\n\nBusiness Context:\n{self.business_context}"
+        )
+
+        response = self.client.responses.create(
+            model=self._get_model(),
+            input=[
+                {
+                    "role": "system",
+                    "content": ASSISTANTS_CONFIG["DaveAI"]["instructions"],
+                },
+                {"role": "user", "content": prompt},
+            ],
+            text={
+                "format": {
+                    "type": "json_schema",
+                    "name": "classification_response",
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "classification": {
+                                "type": "string",
+                                "enum": ["Business", "Personal", "Unclassified"],
+                                "description": "Classification result",
+                            },
+                            "confidence": {
+                                "type": "string",
+                                "enum": ["high", "medium", "low"],
+                                "description": "Confidence level in the classification",
+                            },
+                            "reasoning": {
+                                "type": "string",
+                                "description": "Explanation of the classification",
+                            },
+                            "tax_implications": {
+                                "type": ["string", "null"],
+                                "description": "Tax implications if relevant",
+                            },
+                        },
+                        "required": [
+                            "classification",
+                            "confidence",
+                            "reasoning",
+                            "tax_implications",
+                        ],
+                        "additionalProperties": False,
+                    },
+                    "strict": True,
+                }
+            },
+        )
+
+        print(f"Raw classification response: {response.output_text}")  # Debug log
+        try:
+            # Clean up the response text to ensure valid JSON
+            response_text = response.output_text.strip()
+            if response_text.startswith("```json"):
+                response_text = response_text[7:]
+            if response_text.endswith("```"):
+                response_text = response_text[:-3]
+            response_text = response_text.strip()
+
+            return ClassificationResponse(**json.loads(response_text))
+        except Exception as e:
+            print(f"Error parsing classification response: {str(e)}")
+            print(f"Response content: {response.output_text}")
+            raise
+
+    def test_structured_output(self) -> None:
+        """Test that structured outputs are working correctly with a simple schema."""
+        test_description = "Walmart Supercenter #1234 - Groceries"
+
+        response = self.client.responses.create(
+            model=self._get_model(),
+            input=[
+                {
+                    "role": "system",
+                    "content": "You are a transaction classifier. Classify the given transaction.",
+                },
+                {
+                    "role": "user",
+                    "content": f"Classify this transaction: {test_description}",
+                },
+            ],
+            text={
+                "format": {
+                    "type": "json_schema",
+                    "name": "test_classification",
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "store": {
+                                "type": "string",
+                                "description": "The store name from the transaction",
+                            },
+                            "category": {
+                                "type": "string",
+                                "enum": ["Groceries", "Other"],
+                                "description": "The category of the transaction",
+                            },
+                        },
+                        "required": ["store", "category"],
+                        "additionalProperties": False,
+                    },
+                    "strict": True,
+                }
+            },
+        )
+
+        result = json.loads(response.output_text)
+        print(f"Test result: {result}")
+        return result
