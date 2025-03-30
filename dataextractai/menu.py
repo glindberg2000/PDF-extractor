@@ -98,7 +98,7 @@ def start_menu():
                     else ""
                 )
                 default_categories = (
-                    ",".join(existing_profile.get("custom_categories", []))
+                    ", ".join(existing_profile.get("custom_categories", []))
                     if existing_profile
                     else ""
                 )
@@ -118,13 +118,22 @@ def start_menu():
                     default=default_categories,
                 ).ask()
 
+                # Clean up custom categories
+                if custom_categories:
+                    # Split by comma, clean each category, and filter out empty strings
+                    cleaned_categories = [
+                        cat.strip().title()  # Clean up formatting
+                        for cat in custom_categories.split(",")
+                        if cat.strip()  # Remove empty strings
+                    ]
+                else:
+                    cleaned_categories = None
+
                 # Update profile with new values
                 profile = profile_manager.create_or_update_profile(
                     business_type=business_type,
                     business_description=business_description,
-                    custom_categories=(
-                        custom_categories.split(",") if custom_categories else None
-                    ),
+                    custom_categories=cleaned_categories,
                 )
                 click.echo(f"Profile created/updated:\n{json.dumps(profile, indent=2)}")
             except Exception as e:

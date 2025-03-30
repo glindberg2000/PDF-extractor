@@ -120,6 +120,11 @@ Return the response as a JSON object with the following structure:
         # Update with enhanced data
         merged.update(
             {
+                "business_type": enhanced["business_type"],
+                "business_description": enhanced["business_description"],
+                "custom_categories": enhanced[
+                    "custom_categories"
+                ],  # Use the new custom categories
                 "ai_generated_categories": enhanced["ai_generated_categories"],
                 "common_patterns": enhanced["common_patterns"],
                 "industry_insights": enhanced["industry_insights"],
@@ -127,14 +132,6 @@ Return the response as a JSON object with the following structure:
                 "business_context": enhanced["business_context"],
                 "last_updated": enhanced["last_updated"],
             }
-        )
-
-        # Preserve custom categories
-        merged["custom_categories"] = list(
-            set(
-                existing.get("custom_categories", [])
-                + enhanced.get("custom_categories", [])
-            )
         )
 
         return merged
