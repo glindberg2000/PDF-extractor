@@ -1,5 +1,11 @@
 # Active Context
 
+## Current Task
+Implementing transaction classification system with three-pass approach:
+1. Payee identification
+2. Category assignment
+3. Business/Personal classification
+
 ## Current State
 - Successfully implemented multi-client parser system
 - Fixed client name handling with spaces
@@ -7,23 +13,18 @@
 - Implemented basic client configuration system
 
 ## Recent Changes
-- Fixed Wells Fargo Visa parser integration
-- Standardized on `first_republic_bank` directory naming
-- Moved legacy input directory to `data/input_legacy_grok`
-- Consolidated test clients into `data/clients/_examples/test_client`
-- Deleted old CLI files:
-  - `dataextractai/cli/main.py`
-  - `dataextractai/cli/questionnaire.py`
-  - `dataextractai/cli/categories.py`
-- Updated README.md to reflect new CLI usage
-- Confirmed new CLI is working at `app/cli.py` with `main.py` entry point
+- Implemented three-pass transaction classification to prevent synchronization issues
+- Fixed category processing to use AI-generated categories from business profile
+- Added proper error handling and progress messages for each pass
+- Improved JSON response handling and cleanup
+- Added support for processing specific row ranges and resuming from previous passes
 
 ## Current CLI Structure
 1. Legacy System (scripts/grok.py):
-   - Complete pipeline for single client
-   - AI processing
+   - Two-pass AI classification approach
+   - Uses OpenAI assistants (AmeliaAI, DaveAI)
+   - Batch processing with review workflow
    - Google Sheets integration
-   - Batch processing
 
 2. New Multi-Client System (dataextractai/cli/main.py):
    - Client management
@@ -32,6 +33,10 @@
    - Google Sheets setup/upload
 
 ## Next Steps
+1. Test category processing with more transactions
+2. Consider adding support for custom categories from business profile
+3. Implement proper output file handling for each pass
+4. Add progress tracking and resume functionality
 
 ### 1. Port Legacy Features
 1. AI Processing:
@@ -135,17 +140,10 @@ python -m dataextractai.cli.main categories generate <client_name>
 - Implemented debug logging for path verification
 
 ## Current Status
-1. Command-Line Version (Core)
-   - Functional parser system
-   - Working Google Sheets integration
-   - Basic AI categorization
-   - Recently added Wells Fargo CSV parser
-
-2. Web Version (In Progress)
-   - React frontend started
-   - FastAPI backend framework
-   - Database schema defined
-   - File upload system working
+- Payee identification pass working correctly
+- Category pass now working with AI-generated categories
+- Classification pass pending testing
+- Output file handling needs improvement
 
 ## Known Issues
 1. Parser System
@@ -170,4 +168,17 @@ python -m dataextractai.cli.main categories generate <client_name>
 1. Design file upload component
 2. Implement drag-and-drop interface
 3. Add file validation
-4. Create status tracking UI 
+4. Create status tracking UI
+
+## Legacy System (scripts/grok.py):
+- Two-pass AI classification approach
+- Uses OpenAI assistants (AmeliaAI, DaveAI)
+- Batch processing with review workflow
+- Google Sheets integration
+
+## Current System:
+- Modular parser architecture
+- Transaction normalization
+- Client profile management
+- CLI and menu interfaces
+- AI classifier system (in progress) 

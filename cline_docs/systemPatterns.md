@@ -88,6 +88,43 @@
            self.setup_validations()
    ```
 
+## Core Architecture
+
+### 1. Parser System
+- Modular parser architecture
+- Each parser handles specific document format
+- Standardized output format
+- Transaction normalization
+
+### 2. AI Classifier System
+- Two-pass classification approach:
+  1. Payee Identification
+     - Uses AI to identify merchant/payee
+     - Provides context for categorization
+  2. Category Assignment
+     - Uses payee + description to determine category
+     - Predefined category list
+  3. Classification
+     - Uses category + description to classify
+     - Business vs personal classification
+- Client Profile Integration
+  - Uses client business info for context
+  - Custom categories per client
+  - Business type and description
+
+### 3. Data Flow
+1. Document Processing
+   - PDF/CSV input files
+   - Parser extraction
+   - Transaction normalization
+2. AI Classification
+   - Batch processing
+   - Review workflow
+   - Classification storage
+3. Output Generation
+   - CSV/Excel export
+   - Google Sheets integration
+
 ## Design Patterns
 
 1. Factory Pattern:
@@ -171,25 +208,23 @@
 
 ## Design Patterns
 
-1. **Factory Pattern**
-   - Parser creation
-   - Configuration management
-   - Path generation
+### 1. Parser Pattern
+- Factory pattern for parser creation
+- Strategy pattern for parsing logic
+- Template pattern for common operations
+- Observer pattern for logging
 
-2. **Strategy Pattern**
-   - Institution-specific parsing
-   - Format-specific processing
-   - Transformation strategies
+### 2. AI Classification Pattern
+- Chain of Responsibility for classification passes
+- Strategy pattern for AI models
+- Factory pattern for client profiles
+- Observer pattern for batch processing
 
-3. **Observer Pattern**
-   - Progress tracking
-   - Logging system
-   - State management
-
-4. **Template Pattern**
-   - Parser interface
-   - Transformation pipeline
-   - Output generation
+### 3. Data Management Pattern
+- Repository pattern for data access
+- Factory pattern for data transformation
+- Strategy pattern for normalization
+- Observer pattern for updates
 
 ## Key Technical Patterns
 
@@ -261,3 +296,46 @@ ASSISTANTS_CONFIG = {
    - Add export function
    - Update config paths
    - Implement transformation 
+
+## Transaction Classification System
+
+### Three-Pass Approach
+1. Payee Identification Pass
+   - Processes all transactions to identify payees
+   - Uses structured output format for consistent responses
+   - Stores results in DataFrame for use in subsequent passes
+
+2. Category Assignment Pass
+   - Uses identified payees from Pass 1
+   - Uses AI-generated categories from business profile
+   - Structured output includes confidence and reasoning
+
+3. Classification Pass
+   - Uses results from Passes 1 and 2
+   - Classifies as Business/Personal/Unclassified
+   - Includes tax implications in reasoning
+
+### Key Technical Decisions
+- Sequential processing to prevent synchronization issues
+- Structured JSON responses for all AI calls
+- Business profile integration for context
+- Error handling at each pass level
+- Progress tracking and resume capability
+
+### Data Flow
+1. Input: Raw transaction data
+2. Pass 1: Payee identification
+3. Pass 2: Category assignment
+4. Pass 3: Classification
+5. Output: Fully classified transactions
+
+### Error Handling
+- Each pass has independent error handling
+- Failed transactions marked with error status
+- Progress saved after each pass
+- Resume capability from last successful pass
+
+### Output Management
+- Separate files for each pass
+- Naming convention: {base_filename}_{pass_name}.csv
+- Final results in {base_filename}_final.csv 

@@ -1,9 +1,9 @@
 # Template Client Configuration
 name: "Template Client"
-type: "business"  # or "personal"
+type: "business" # or "personal"
 sheets:
   sheetname: "Template Financial Data"
-  sheet_id: ""  # Google Sheets ID if using custom sheet
+  sheet_id: "" # Google Sheets ID if using custom sheet
 
 # Parser Settings
 parsers:
@@ -19,9 +19,9 @@ parsers:
 
 # AI Processing Settings
 ai_settings:
-  assistant: "AmeliaAI"  # or "DaveAI"
+  assistant: "AmeliaAI" # or "DaveAI"
   batch_size: 25
-  expense_threshold: 0.0  # Minimum amount to process
+  expense_threshold: 0.0 # Minimum amount to process
 
 # Categories and Classifications
 categories:
@@ -34,4 +34,4 @@ categories:
   - "Software/Subscriptions"
   - "Travel"
   - "Utilities"
-  - "Other" 
+  - "Other"

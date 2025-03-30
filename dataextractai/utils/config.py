@@ -1,11 +1,16 @@
 # dataextractai/utils/config.py
 import os
 import yaml
-from typing import Dict
+from typing import Dict, Any
 import pandas as pd
+from pathlib import Path
 
 # Define the base directory (root of the project)
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Get model configurations from environment
+OPENAI_MODEL_FAST = os.getenv("OPENAI_MODEL_FAST", "gpt-4o-mini-2024-07-18")
+OPENAI_MODEL_PRECISE = os.getenv("OPENAI_MODEL_PRECISE", "o3-mini-2025-01-31")
 
 
 # Client configuration
@@ -376,134 +381,136 @@ TRANSFORMATION_MAPS = {
     },
 }
 
+# AI Assistant Configurations
 ASSISTANTS_CONFIG = {
     "AmeliaAI": {
-        "id": "asst_gD4jt79G1dN8bsVxZq7j3eBj",
         "model": os.getenv("OPENAI_MODEL_FAST", "gpt-4o-mini-2024-07-18"),
-        "name": "Amelia_AI",
-        "instructions": "You are a personalized financial assistant called Amelia AI, designed specifically for the meticulous handling of your client's accounting and bookkeeping requirements. You are an expert in the categorization of transactions, but you also come with a deep understanding of your client's unique financial transactions and business operations. Your expertise extends to working seamlessly with your CPA, Dave AI, ensuring that your client's books are not only well-maintained but also optimized for tax reporting. Let's get started on securing your client's financial integrity and maximizing their tax benefits. \n\n**Core Competencies:**\n\n1. **Transaction Categorization**: Leveraging AI algorithms, you are adept at parsing through bank statements, credit card expenditures, invoices, and receipts to classify each transaction with high accuracy into predefined or customized expense categories relevant to your client's business and personal finances.\n\n2. **Audit-Ready Bookkeeping**: You maintain scrupulous corporate books and records, adhering to the best practices in bookkeeping to ensure your financial statements and ledgers are comprehensive and audit-ready.\n\n3. **Expense Tracking and Optimization**: With an intricate knowledge of allowable deductions and business expense regulations for both Federal and California-specific rules, you systematically identify potential write-offs, helping to minimize your client's tax liability while maintaining compliance with all applicable tax laws.\n\n4. **Contextual Intelligence**: Understanding that transactions are not just numbers but stories, you are equipped with the ability to analyze the context and narrative behind each transaction, ensuring the correct financial representation and relevance to their business operations.\n\n5. **Regular Reporting**: You generate timely reports, summarizing your client's financial activities, including profit and loss statements, cash flow analysis, and expense breakdowns. These reports are not only user-friendly for your client's review but also structured to facilitate Dave AI's subsequent tax law interpretation and filings.\n\n6. **Collaborative Platform**: Acting as an intermediary you offer a collaborative workspace for the client and Dave AI. You ensure all preliminary categorizations are in place for Dave AI to provide expert tax law insights, streamlining the tax preparation process.\n\n**Tailored Consultation**: Drawing from a background in small business operations you offer personalized consultative advice on financial decisions, expenditure tracking, and cost-saving opportunities, ensuring your client are always making informed decisions for their business's financial health.\n\n**Secure Data Management**: With robust security protocols in place, you ensure the confidentiality and integrity of your client's financial data. As you receive uploaded bank statements or receipts, your clients can rest assured that their sensitive information is managed with the utmost care and protection. Keep in mind that you are an advocate for your clients and should aggressively including expenses for business write-offs with strongest justifictions possible within the legal framework.",
-        "purpose": "General bookkeeping queries",
-        "json_mode": True,
+        "instructions": """You are Amelia, an expert financial transaction analyzer. Your task is to analyze transactions and provide structured responses in JSON format.
+
+IMPORTANT: Your responses MUST be valid JSON objects with the exact fields specified in the prompt. Do not include any text before or after the JSON object.
+
+For each response:
+1. Use the exact field names specified
+2. Ensure all required fields are present
+3. Use the exact confidence levels: "high", "medium", or "low"
+4. Provide clear reasoning for your decisions
+5. If suggesting new categories, include both the category and reasoning
+6. For classifications, use exactly: "Business", "Personal", or "Unclassified"
+
+Example valid response:
+{
+    "payee": "Example Store",
+    "confidence": "high",
+    "reasoning": "Clear merchant name in description"
+}""",
     },
     "DaveAI": {
-        "id": "asst_uYSKmlCerY8CGTKIZdrA3Zcx",
         "model": os.getenv("OPENAI_MODEL_PRECISE", "o3-mini-2025-01-31"),
-        "name": "CPA_Dave_AI",
-        "instructions": "You are Dave AI, an AI-powered Tax and Accounting Assistant. As a Certified Public Accountant with extensive experience as a former IRS Auditor, you possess an encyclopedic knowledge of tax law and regulations, particularly those applicable to LLCs and individuals in California. Your expertise covers accounting, small business operations, bookkeeping, and strategic approaches to identifying and maximizing tax deductions and write-offs relevant to both personal and business finances. \n\nYou will be tasked with the following responsibilities:\n\n1. Review and analyze financial data from uploaded Excel and other data files, categorizing transactions accurately according to tax-relevant classifications (e.g., costs of goods sold, capital expenditures, ordinary business expenses, home office expenses, vehicle use, etc.).\n\n2. Identify potential tax write-offs and deductions for a California LLC, advising on best bookkeeping practices to support the claims for these tax benefits during the fiscal year, and ensuring that these meet both federal and state tax compliance standards.\n\n3. Generate reports that detail the categorized transactions and highlight potential tax write-offs, while considering the complexities of the tax code, including distinguishing between standard vs. itemized deductions, understanding the implications of pass-through entity taxation, and applying the latest changes in tax legislation.\n\n4. Provide guidance on how to optimize tax positions by suggesting timing of expenses, deferment of income, and other legal tax planning strategies.\n\n5. Offer recommendations on record-keeping practices, including which financial documents should be maintained, for how long, and in what format, to meet both legal and operational needs.\n\n6. Explain complex tax concepts in an easily understandable manner, clarifying the rationale behind tax laws and how they apply to specific personal and business financial decisions.\n\nYour advice should always be current with IRS regulations, California state tax laws, and best accounting principles. You will not provide legal advice or definitive tax filing instructions, but you will prepare comprehensive and intelligible information to assist in pre-filing tax stages, which can then be reviewed and utilized by a human Certified Public Accountant.\n\nPlease note, for all tasks regarding tax deductions and write-offs, you will: \n\n- Base your analysis on the provided financial data, offering insights into eligible tax deductions for both the LLC and the individual, ensuring to flag any transactions that may warrant further human CPA review for nuanced tax treatment.\n \n- Exercise professional judgment informed by historical tax court rulings, IRS guidelines, and accepted accounting principles to determine the most beneficial categorization of expenses for tax purposes without exposing the individual or business to undue audit risk.\n\n- Educate your client on potential audit triggers and the importance of substantiation for each deduction, so that they can be proactive in compiling necessary documentation and receipts aligned with tax law requirements.\n\n- Remain up-to-date with the most recent tax law changes, including any specific COVID-19 related tax provisions, credits, or deductions that could impact the tax year in question.\n\n- Suggest automation tools and software that could integrate with their bookkeeping practices to streamline expense tracking, deduction categorization, and preliminary tax considerations.\n\n- Assist your client in understanding the impact of different business decisions on their tax situation, such as making large purchases or investments at the end of the tax year, and the interplay between personal and LLC finances for tax purposes.\n\n- Lastly, compile all findings and suggestions into an organized, exportable report, complete with visual aids such as charts or graphs where appropriate, to aid in the discussion with their human CPA and ensure a thorough understanding of my potential tax liabilities and savings.\n\nAs a conscientious AI assistant, you will prioritize accuracy, compliance, and efficiency, while maintaining confidentiality and integrity in handling financial data. Your ultimate goal is to empower your client with knowledge and tools to make informed tax-related decisions and prepare for a smooth tax filing process.\n\nPlease be advised that you also have an ally in financial management, Amelia AI. She has been integrated into our accounting workflow to assist you in preliminary bookkeeping and transaction processing. Amelia AI specializes in the intelligent classification of financial records, meticulous extraction of transaction details from various documents, and organizing them into comprehensive bookkeeping records. \n\nHer capabilities include identifying potential tax write-offs and ensuring that all transactions are categorized according to relevant tax categories for both personal and businesses (USA, California LLC). The reports generated by Amelia AI will serve as the foundation upon which you can perform your expert analysis and facilitate tax preparation.\n\nYour collaboration with Amelia AI will enhance our efficiency and accuracy, allowing you to focus on the more complex aspects of tax strategy and compliance. She is designed to complement your expertise by handling the initial stages of transaction categorization and record-keeping. This collaborative approach aims to streamline our workflow, reduce redundancies, and promote a seamless integration of financial data for tax reporting purposes.\n\nWe trust this partnership between you and Amelia AI will be instrumental in delivering exceptional service and value to your clients.",
-        "purpose": "Complex CPA-related inquiries",
-        "json_mode": True,
-    },
-    "GregAI": {
-        "id": "asst_oRBkIi9TBtuP4jLZ0yjusHqE",
-        "model": os.getenv("OPENAI_MODEL_PRECISE", "o3-mini-2025-01-31"),
-        "name": "Greg_AI",
-        "instructions": "You are Greg AI, an AI-powered personal assistant designed to assist its creator, Greg, with financial, tax, and business-related tasks. Client file attached.",
+        "instructions": """You are Dave, an expert tax and business expense classifier. Your task is to classify transactions and provide structured responses in JSON format.
+
+IMPORTANT: Your responses MUST be valid JSON objects with the exact fields specified in the prompt. Do not include any text before or after the JSON object.
+
+For each response:
+1. Use the exact field names specified
+2. Ensure all required fields are present
+3. Use the exact confidence levels: "high", "medium", or "low"
+4. Provide clear reasoning for your decisions
+5. Include tax implications when relevant
+6. For classifications, use exactly: "Business", "Personal", or "Unclassified"
+
+Example valid response:
+{
+    "classification": "Business",
+    "confidence": "high",
+    "reasoning": "Office supplies for business use",
+    "tax_implications": "Fully deductible business expense"
+}""",
     },
 }
 
-
-CLASSIFICATIONS = ["Business Expense", "Personal Expense", "Needs Review"]
-
-CATEGORIES = [
-    "Office Supplies",
-    "Internet Expenses",
-    "Equipment Maintenance",
-    "Automobile",
-    "Service Fee",
-    "Parking and Tolls",
-    "Computer Expenses",
-    "Travel Expenses",
-    "Business Gifts",
-    "Advertising",
-    "Computer Equipment",
-    "Telecom",
-    "Office Rent",
-    "Utilities",
-    "Office Furniture",
-    "Electronics",
-    "Marketing and Promotion",
-    "Professional Fees (Legal, Accounting)",
-    "Software",
-    "Employee Benefits and Perks",
-    "Meals and Entertainment",
-    "Shipping and Postage",
-    "Education",
-    "Personal Items",
-]
-
-
+# System Prompts
 PROMPTS = {
-    "categorize_one": """
-Please categorize the provide transaction description into one of the business categories: {categories}, Return the best category match for the description but if it's clearly not business related be sure to choose 'Personal. The description to categorize is: 
-""",
-    "categorize_classify": """
-Please categorize the provide transaction description into one of the business categories: {categories}, Return the best category match for the description in the variable 'category'. Secondly, return another variable 'classifiction' and determine if this is can be considered a business or is personal expense. If you're unsure return 'needs review' for the 'classification' variable. The description to categorize and classify is: 
-""",
-    "categorize_classify_comment": """
-Please categorize the transaction description into one of the business categories: {categories}, Return the best category match for the description in the variable 'category'. Secondly, return another variable 'classifiction' and determine if this is can be considered a business or is personal expense. If you're unsure return 'needs review' for the 'classification' variable. The final variable to return is 'comments' which should include your reasoning, justification, and/or question you might have before you can be sure of your previous answers. The description to categorize and classify is:  
-""",
-    "get_payee": """
-Determine by any means necessary, or extract or infer, the payee of the transaction and return a clean succint vendor name whether is a company, person or city goverment agency, utility or other entity. Use your best judgement come come up with the most logcial and recognizable vendor name which can be used for general ledgers and tax forms purposes and return it in the object key 'payee'. The transaction description is:   
-""",
-    "get_category": """
-Categorize the transaction description into one of the business categories: {categories}, Return the best category match for the description in the list provided and assign it to the object json key 'category'. The description to categorize is:  
-""",
-    "get_classification": """
-Return best classification of the transaction given the options {classifications}. Use the information in the client file for clues about wether this transaction is personal or business related. Return your choice in the json key 'classiciation' by choosing from the list provided. Also include a one sentence justification, reasoning, or question about your choice in the 'comments' json key.  The transaction to classify is:  
-""",
-    "classify_json": """
-Respond with a downloadable file with JSON data: Classify the first 10 transactions in your locally accessible CSV file: rows 1 to 10, based on the provided categories: {categories}. Examine the 'description' field to determine the classification and consider other fields like 'amount' and 'quantity' as necessary.
+    "get_payee": """Identify the payee/merchant from the transaction description.
 
-For each transaction, output a JSON object with the following details:
-- ID: The original identifier from the transaction.
-- Description: The original description
-- Category: Assign one of the provided categories or 'needs clarification'.
-- Status: Either 'Cleared' for definitive classifications or 'Review' if the transaction is unclear and requires Dave AI or a human for further review.
-- Comments: Include any relevant observations or questions that may assist with further review if needed.
+IMPORTANT: Return a JSON object with EXACTLY these field names:
+{
+    "payee": "string - The identified payee/merchant name",
+    "confidence": "string - Must be exactly 'high', 'medium', or 'low'",
+    "reasoning": "string - Explanation of the identification"
+}
 
-The response should be a JSON list of objects, each representing a classified transaction. The format should be as follows:
+Example:
+{
+    "payee": "Walmart",
+    "confidence": "high",
+    "reasoning": "Clear merchant name in description"
+}""",
+    "get_category": """Categorize the transaction based on the description and payee.
 
-```json
-[
-    {{  "transaction_date": [original transaction_date],
-        "ID": [original ID],
-        "transaction_date": [original transaction date],
-        "description": [original description],
-        "amount": [original amount],
-        "source": [original source],
-        "file_path": [original file path],
-        "category": [pick best fit from supplied list of categories],
-        "classification": [is this a business or personal expense, or both]
-        "Status": [choose the best status: Needs Review, Closed, Unknown],
-        "Comments": [explain your thinking about why you classified, categorized or assigned status unless it's obvious ],
-   
-    }},
-    // Additional classified transactions
+Available categories: {categories}
+
+IMPORTANT: Return a JSON object with EXACTLY these field names:
+{
+    "category": "string - The assigned category from the list",
+    "confidence": "string - Must be exactly 'high', 'medium', or 'low'",
+    "reasoning": "string - Explanation of the categorization",
+    "suggested_new_category": "string or null - New category if needed",
+    "new_category_reasoning": "string or null - Explanation for suggested new category"
+}
+
+Example:
+{
+    "category": "Office Supplies",
+    "confidence": "high",
+    "reasoning": "Purchase of office supplies from Staples",
+    "suggested_new_category": null,
+    "new_category_reasoning": null
+}""",
+    "get_classification": """Classify the transaction as business or personal.
+
+IMPORTANT: Return a JSON object with EXACTLY these field names:
+{
+    "classification": "string - Must be exactly 'Business', 'Personal', or 'Unclassified'",
+    "confidence": "string - Must be exactly 'high', 'medium', or 'low'",
+    "reasoning": "string - Explanation of the classification",
+    "tax_implications": "string or null - Tax implications if relevant"
+}
+
+Example:
+{
+    "classification": "Business",
+    "confidence": "high",
+    "reasoning": "Office supplies for business use",
+    "tax_implications": "Fully deductible business expense"
+}""",
+}
+
+# Standard Categories and Classifications
+STANDARD_CATEGORIES = [
+    "Advertising",
+    "Bank Fees",
+    "Business Insurance",
+    "Business Travel",
+    "Contract Labor",
+    "Depreciation",
+    "Employee Benefits",
+    "Equipment",
+    "Interest",
+    "Legal & Professional",
+    "Office Expenses",
+    "Other",
+    "Payroll",
+    "Rent",
+    "Repairs & Maintenance",
+    "Supplies",
+    "Taxes",
+    "Training",
+    "Unclassified",
+    "Utilities",
+    "Vehicle Expenses",
 ]
 
-Below is the client file you can use for additional context so you better classify transactions and determine what should be personal vs business related:
-
-""",
-    "classify_csv": """
-Classify the transactions based on the provided categories: {categories}. Examine the 'description' field to determine the classification and consider other fields like 'amount' and 'quantity' as necessary.
-
-The first row of your response should include a columns headers in CSV format [transaction_date,description,amount,file_path,source,transaction_type,ID] containing the original row headers from your file with the addition of the following generated headers [classification, category, status, review, comments]. The generated column data should be analyzed and generated as follows:
-
-        "classification": [pick best fit from supplied list of categories],
-        "category": [is this a business or personal expense? or both],
-        "status": [ Choose 'Cleared' classification if you have high confidence in your classification, or choose 'review' if the transaction is unclear, ambiguous and requires Dave AI or a human for further review],
-        "comments": [explain your thinking about why you classified, categorized or assigned status unless it's obvious ]
-   
-Below is the client file you can use for additional context so you better classify transactions and determine what should be personal vs business related:
-
-""",
-    "classify_download": """
-Read your locally accessible CSV file and extract rows with 'ID' range 1 to 9, and examine the 'description' field of each row to determine best fit category from the following list: {categories}. Use your best judgement about which category best explain the description for each line. Include your category choice in a new column called 'category'. then classify the  category as either 'Personal' or 'Business' or 'Both' and include that in a new colum called 'classification'.  You may also consider the client information supplied below this instruction to help better classify between personal and business expenses. Also include a 'status' column which will indicate your degree of confidence level from the following choices: 'Confident', 'Needs Review', 'Unknown'. Also include a comments column where you can include you reasoning and thought process for any of the previous choices you made. In your your response include the original CSV data, plus your new columns: category, classification, status, notes. Print the rows back  to me directly. no need to create a downloadable CSV file or dataframe link. 
-   
-Client information is following for more context about the transactions and how they might be classified:
-
-""",
-}
+CLASSIFICATIONS = ["Business", "Personal", "Unclassified"]
 
 # Ensure that all directories exist or create them
 for path in PARSER_INPUT_DIRS.values():
@@ -721,144 +728,172 @@ def get_current_paths(config: Dict) -> Dict:
     if not client_name:
         raise ValueError("Client name is required in configuration")
 
+    # Handle spaces in client name for file paths
+    path_client_name = client_name.replace(" ", "_")
+
     # Construct input directories for each parser
     input_dirs = {
-        "amazon": os.path.join(input_dir, client_name, "input", "amazon"),
-        "bofa_bank": os.path.join(input_dir, client_name, "input", "bofa_bank"),
-        "bofa_visa": os.path.join(input_dir, client_name, "input", "bofa_visa"),
-        "chase_visa": os.path.join(input_dir, client_name, "input", "chase_visa"),
+        "amazon": os.path.join(input_dir, path_client_name, "input", "amazon"),
+        "bofa_bank": os.path.join(input_dir, path_client_name, "input", "bofa_bank"),
+        "bofa_visa": os.path.join(input_dir, path_client_name, "input", "bofa_visa"),
+        "chase_visa": os.path.join(input_dir, path_client_name, "input", "chase_visa"),
         "wellsfargo_bank": os.path.join(
-            input_dir, client_name, "input", "wellsfargo_bank"
+            input_dir, path_client_name, "input", "wellsfargo_bank"
         ),
         "wellsfargo_mastercard": os.path.join(
-            input_dir, client_name, "input", "wellsfargo_mastercard"
+            input_dir, path_client_name, "input", "wellsfargo_mastercard"
         ),
         "wellsfargo_visa": os.path.join(
-            input_dir, client_name, "input", "wellsfargo_visa"
+            input_dir, path_client_name, "input", "wellsfargo_visa"
         ),
         "wellsfargo_bank_csv": os.path.join(
-            input_dir, client_name, "input", "wellsfargo_bank_csv"
+            input_dir, path_client_name, "input", "wellsfargo_bank_csv"
         ),
-        "client_info": os.path.join(input_dir, client_name, "input", "client_info"),
+        "client_info": os.path.join(
+            input_dir, path_client_name, "input", "client_info"
+        ),
         "first_republic_bank": os.path.join(
-            input_dir, client_name, "input", "first_republic_bank"
+            input_dir, path_client_name, "input", "first_republic_bank"
         ),
     }
 
     # Construct output paths for each parser
     output_paths = {
         "amazon": {
-            "csv": os.path.join(output_dir, client_name, "output", "amazon_output.csv"),
+            "csv": os.path.join(
+                output_dir, path_client_name, "output", "amazon_output.csv"
+            ),
             "xlsx": os.path.join(
-                output_dir, client_name, "output", "amazon_output.xlsx"
+                output_dir, path_client_name, "output", "amazon_output.xlsx"
             ),
         },
         "bofa_bank": {
             "csv": os.path.join(
-                output_dir, client_name, "output", "bofa_bank_output.csv"
+                output_dir, path_client_name, "output", "bofa_bank_output.csv"
             ),
             "xlsx": os.path.join(
-                output_dir, client_name, "output", "bofa_bank_output.xlsx"
+                output_dir, path_client_name, "output", "bofa_bank_output.xlsx"
             ),
         },
         "bofa_visa": {
             "csv": os.path.join(
-                output_dir, client_name, "output", "bofa_visa_output.csv"
+                output_dir, path_client_name, "output", "bofa_visa_output.csv"
             ),
             "xlsx": os.path.join(
-                output_dir, client_name, "output", "bofa_visa_output.xlsx"
+                output_dir, path_client_name, "output", "bofa_visa_output.xlsx"
             ),
         },
         "chase_visa": {
             "csv": os.path.join(
-                output_dir, client_name, "output", "chase_visa_output.csv"
+                output_dir, path_client_name, "output", "chase_visa_output.csv"
             ),
             "xlsx": os.path.join(
-                output_dir, client_name, "output", "chase_visa_output.xlsx"
+                output_dir, path_client_name, "output", "chase_visa_output.xlsx"
             ),
         },
         "wellsfargo_bank": {
             "csv": os.path.join(
-                output_dir, client_name, "output", "wellsfargo_bank_output.csv"
+                output_dir, path_client_name, "output", "wellsfargo_bank_output.csv"
             ),
             "xlsx": os.path.join(
-                output_dir, client_name, "output", "wellsfargo_bank_output.xlsx"
+                output_dir, path_client_name, "output", "wellsfargo_bank_output.xlsx"
             ),
         },
         "wellsfargo_mastercard": {
             "csv": os.path.join(
-                output_dir, client_name, "output", "wellsfargo_mastercard_output.csv"
+                output_dir,
+                path_client_name,
+                "output",
+                "wellsfargo_mastercard_output.csv",
             ),
             "xlsx": os.path.join(
-                output_dir, client_name, "output", "wellsfargo_mastercard_output.xlsx"
+                output_dir,
+                path_client_name,
+                "output",
+                "wellsfargo_mastercard_output.xlsx",
             ),
             "filtered": os.path.join(
-                output_dir, client_name, "output", "wellsfargo_mastercard_filtered.csv"
+                output_dir,
+                path_client_name,
+                "output",
+                "wellsfargo_mastercard_filtered.csv",
             ),
         },
         "wellsfargo_visa": {
             "csv": os.path.join(
-                output_dir, client_name, "output", "wellsfargo_visa_output.csv"
+                output_dir, path_client_name, "output", "wellsfargo_visa_output.csv"
             ),
             "xlsx": os.path.join(
-                output_dir, client_name, "output", "wellsfargo_visa_output.xlsx"
+                output_dir, path_client_name, "output", "wellsfargo_visa_output.xlsx"
             ),
         },
         "wellsfargo_bank_csv": {
             "csv": os.path.join(
-                output_dir, client_name, "output", "wellsfargo_bank_csv_output.csv"
+                output_dir, path_client_name, "output", "wellsfargo_bank_csv_output.csv"
             ),
             "xlsx": os.path.join(
-                output_dir, client_name, "output", "wellsfargo_bank_csv_output.xlsx"
+                output_dir,
+                path_client_name,
+                "output",
+                "wellsfargo_bank_csv_output.xlsx",
             ),
         },
         "first_republic_bank": {
             "csv": os.path.join(
-                output_dir, client_name, "output", "first_republic_bank_output.csv"
+                output_dir, path_client_name, "output", "first_republic_bank_output.csv"
             ),
             "xlsx": os.path.join(
-                output_dir, client_name, "output", "first_republic_bank_output.xlsx"
+                output_dir,
+                path_client_name,
+                "output",
+                "first_republic_bank_output.xlsx",
             ),
         },
         "consolidated_core": {
             "csv": os.path.join(
-                output_dir, client_name, "output", "consolidated_core_output.csv"
+                output_dir, path_client_name, "output", "consolidated_core_output.csv"
             ),
             "xlsx": os.path.join(
-                output_dir, client_name, "output", "consolidated_core_output.xlsx"
+                output_dir, path_client_name, "output", "consolidated_core_output.xlsx"
             ),
         },
         "consolidated_updated": {
             "csv": os.path.join(
-                output_dir, client_name, "output", "consolidated_updated_output.csv"
+                output_dir,
+                path_client_name,
+                "output",
+                "consolidated_updated_output.csv",
             ),
             "xlsx": os.path.join(
-                output_dir, client_name, "output", "consolidated_updated_output.xlsx"
+                output_dir,
+                path_client_name,
+                "output",
+                "consolidated_updated_output.xlsx",
             ),
         },
         "batch": {
             "csv": os.path.join(
-                batch_output_dir, client_name, "output", "batch_output.csv"
+                batch_output_dir, path_client_name, "output", "batch_output.csv"
             ),
             "xlsx": os.path.join(
-                batch_output_dir, client_name, "output", "batch_output.xlsx"
+                batch_output_dir, path_client_name, "output", "batch_output.xlsx"
             ),
         },
         "consolidated_batched": {
             "csv": os.path.join(
                 batch_output_dir,
-                client_name,
+                path_client_name,
                 "output",
                 "consolidated_batched_output.csv",
             ),
             "xlsx": os.path.join(
                 batch_output_dir,
-                client_name,
+                path_client_name,
                 "output",
                 "consolidated_batched_output.xlsx",
             ),
         },
-        "state": os.path.join(output_dir, client_name, "output", "state.json"),
+        "state": os.path.join(output_dir, path_client_name, "output", "state.json"),
     }
 
     return {

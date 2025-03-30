@@ -4,12 +4,13 @@ import questionary
 import click
 import os
 import json
-from typing import Optional
+import pandas as pd
+from typing import Optional, List
 from .parsers.run_parsers import run_all_parsers
 from .utils.transaction_normalizer import TransactionNormalizer
 from .agents.client_profile_manager import ClientProfileManager
 from .agents.transaction_classifier import TransactionClassifier
-from .utils.config import get_client_config
+from .utils.config import get_client_config, get_current_paths
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -53,8 +54,13 @@ def start_menu():
                 "Create/Update Business Profile",
                 "Run Parsers",
                 "Normalize Transactions",
-                "Classify Transactions",
-                "Process All (Parse, Normalize, Classify)",
+                "Classify Transactions (Fast Mode)",
+                "Classify Transactions (Precise Mode)",
+                "Process All (Fast Mode)",
+                "Process All (Precise Mode)",
+                "Process Row Range (Fast Mode)",
+                "Process Row Range (Precise Mode)",
+                "Resume Processing from Pass",
                 "Exit",
             ],
         ).ask()
@@ -147,56 +153,93 @@ def start_menu():
             except Exception as e:
                 click.echo(f"Error: {e}")
 
-        elif action == "Classify Transactions":
+        elif action in [
+            "Classify Transactions (Fast Mode)",
+            "Classify Transactions (Precise Mode)",
+            "Process All (Fast Mode)",
+            "Process All (Precise Mode)",
+            "Process Row Range (Fast Mode)",
+            "Process Row Range (Precise Mode)",
+            "Resume Processing from Pass",
+        ]:
             try:
-                # First normalize transactions
-                normalizer = TransactionNormalizer(client_name)
-                transactions_df = normalizer.normalize_transactions()
+                # Set LLM mode
+                llm_mode = "fast" if "Fast Mode" in action else "precise"
+                os.environ["OPENAI_MODEL_FAST"] = OPENAI_MODEL_FAST
+                os.environ["OPENAI_MODEL_PRECISE"] = OPENAI_MODEL_PRECISE
 
-                if transactions_df.empty:
+                # Get paths
+                config = get_client_config(client_name)
+                paths = get_current_paths(config)
+
+                # Read normalized transactions
+                normalized_file = os.path.join(
+                    paths["output_paths"]["consolidated_core"]["csv"].replace(
+                        "consolidated_core_output.csv",
+                        f"{client_name.replace(' ', '_')}_normalized_transactions.csv",
+                    )
+                )
+
+                if not os.path.exists(normalized_file):
                     click.echo(
-                        f"No transactions found to classify for client: {client_name}"
+                        f"No normalized transactions found for client: {client_name}"
                     )
                     continue
 
-                # Then classify transactions
-                classifier = TransactionClassifier(client_name)
-                classified_df = classifier.classify_transactions(transactions_df)
+                # Read transactions
+                transactions_df = pd.read_csv(normalized_file)
+                if transactions_df.empty:
+                    click.echo(f"No transactions found in {normalized_file}")
+                    continue
 
-                if not classified_df.empty:
-                    click.echo(
-                        f"Successfully classified transactions for client: {client_name}"
+                # Get row range if needed
+                start_row = None
+                end_row = None
+                if "Row Range" in action:
+                    start_row = int(
+                        questionary.text("Enter starting row (0-based):").ask()
                     )
-                else:
-                    click.echo(
-                        f"No transactions were classified for client: {client_name}"
+                    end_row = int(
+                        questionary.text("Enter ending row (exclusive):").ask()
                     )
-            except Exception as e:
-                click.echo(f"Error: {e}")
 
-        elif action == "Process All (Parse, Normalize, Classify)":
-            try:
-                # Run parsers
-                config = get_client_config(client_name)
-                run_all_parsers(client_name, config)
-                click.echo(f"Successfully ran parsers for client: {client_name}")
-
-                # Normalize transactions
-                normalizer = TransactionNormalizer(client_name)
-                transactions_df = normalizer.normalize_transactions()
-                if not transactions_df.empty:
-                    click.echo(
-                        f"Successfully normalized transactions for client: {client_name}"
-                    )
-                else:
-                    click.echo(
-                        f"No transactions found to normalize for client: {client_name}"
+                # Get resume pass if needed
+                resume_from_pass = None
+                if action == "Resume Processing from Pass":
+                    resume_from_pass = int(
+                        questionary.select(
+                            "Select pass to resume from:",
+                            choices=[
+                                "1 - Payee Identification",
+                                "2 - Category Assignment",
+                                "3 - Classification",
+                            ],
+                        )
+                        .ask()
+                        .split(" - ")[0]
                     )
 
                 # Classify transactions
-                classifier = TransactionClassifier(client_name)
-                classified_df = classifier.classify_transactions(transactions_df)
+                classifier = TransactionClassifier(
+                    client_name=client_name,
+                    model_type=llm_mode,
+                )
+                classified_df = classifier.classify_transactions(
+                    transactions_df,
+                    start_row=start_row,
+                    end_row=end_row,
+                    resume_from_pass=resume_from_pass,
+                )
+
                 if not classified_df.empty:
+                    # Save classified transactions
+                    output_file = os.path.join(
+                        paths["output_paths"]["consolidated_core"]["csv"].replace(
+                            "consolidated_core_output.csv",
+                            f"{client_name.replace(' ', '_')}_classified_transactions.csv",
+                        )
+                    )
+                    classified_df.to_csv(output_file, index=False)
                     click.echo(
                         f"Successfully classified transactions for client: {client_name}"
                     )
@@ -206,3 +249,7 @@ def start_menu():
                     )
             except Exception as e:
                 click.echo(f"Error: {e}")
+
+
+if __name__ == "__main__":
+    start_menu()
