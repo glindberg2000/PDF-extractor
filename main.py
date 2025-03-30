@@ -6,6 +6,30 @@ import pandas as pd
 from dataextractai.agents.transaction_classifier import TransactionClassifier
 
 
+def display_banner():
+    """Display the Amelia AI Bookkeeping banner."""
+    banner = """
+    █████╗ ███╗   ███╗███████╗██╗     █████╗ ██╗
+   ██╔══██╗████╗ ████║██╔════╝██║    ██╔══██╗██║
+   ███████║██╔████╔██║█████╗  ██║    ███████║██║
+   ██╔══██║██║╚██╔╝██║██╔══╝  ██║    ██╔══██║██║
+   ██║  ██║██║ ╚═╝ ██║███████╗███████╗██║  ██║██║
+   ╚═╝  ╚═╝╚═╝     ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝╚═╝
+   
+   █████╗ ██╗    ██████╗ ██╗  ██╗███████╗██████╗ ██████╗ ██╗███╗   ██╗ ██████╗ 
+  ██╔══██╗██║    ██╔══██╗██║ ██╔╝██╔════╝██╔══██╗██╔══██╗██║████╗  ██║██╔════╝ 
+  ███████║██║    ██████╔╝█████╔╝ █████╗  ██████╔╝██████╔╝██║██╔██╗ ██║██║  ███╗
+  ██╔══██║██║    ██╔══██╗██╔═██╗ ██╔══╝  ██╔══██╗██╔══██╗██║██║╚██╗██║██║   ██║
+  ██║  ██║██║    ██████╔╝██║  ██╗███████╗██║  ██║██║  ██║██║██║ ╚████║╚██████╔╝
+  ╚═╝  ╚═╝╚═╝    ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝ ╚═════╝ 
+                                                                               
+   Intelligent Transaction Processing & Bookkeeping Assistant
+   Version 1.0.0
+"""
+    print(banner)
+    print("=" * 80)  # Separator line
+
+
 def process_transactions(
     client_name: str,
     model_type: str = "fast",
@@ -56,6 +80,9 @@ def process_transactions(
 
 def main():
     """Main entry point."""
+    # Display startup banner
+    display_banner()
+
     # Ensure required directories exist
     required_dirs = ["data/transactions", "data/profiles", "logs"]
     for dir_path in required_dirs:
