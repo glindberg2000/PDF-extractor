@@ -297,45 +297,68 @@ ASSISTANTS_CONFIG = {
    - Update config paths
    - Implement transformation 
 
-## Transaction Classification System
+## Transaction Processing System
 
 ### Three-Pass Approach
-1. Payee Identification Pass
-   - Processes all transactions to identify payees
-   - Uses structured output format for consistent responses
-   - Stores results in DataFrame for use in subsequent passes
+1. Payee Identification
+   - Normalizes transaction descriptions
+   - Identifies unique payees
+   - Assigns confidence levels
+   - Provides reasoning for decisions
 
-2. Category Assignment Pass
-   - Uses identified payees from Pass 1
-   - Uses AI-generated categories from business profile
-   - Structured output includes confidence and reasoning
+2. Category Assignment
+   - Uses payee information
+   - Considers transaction context
+   - Suggests new categories when needed
+   - Maintains category consistency
 
-3. Classification Pass
-   - Uses results from Passes 1 and 2
-   - Classifies as Business/Personal/Unclassified
-   - Includes tax implications in reasoning
+3. Classification
+   - Determines business vs personal nature
+   - Considers tax implications
+   - Provides detailed reasoning
+   - Ensures proper capitalization
 
-### Key Technical Decisions
-- Sequential processing to prevent synchronization issues
-- Structured JSON responses for all AI calls
-- Business profile integration for context
-- Error handling at each pass level
-- Progress tracking and resume capability
+### Caching System
+1. Cache Storage
+   - JSON file in client output directory
+   - Persistent between program runs
+   - Separate entries for each pass
+   - Normalized cache keys
 
-### Data Flow
-1. Input: Raw transaction data
-2. Pass 1: Payee identification
-3. Pass 2: Category assignment
-4. Pass 3: Classification
-5. Output: Fully classified transactions
+2. Cache Key Structure
+   - Description (normalized)
+   - Payee (for category/classification)
+   - Category (for classification)
+   - Pipe-separated format
+
+3. Cache Operations
+   - Load on startup
+   - Save after each new result
+   - Clear logging of hits/misses
+   - Error handling for file operations
 
 ### Error Handling
-- Each pass has independent error handling
-- Failed transactions marked with error status
-- Progress saved after each pass
-- Resume capability from last successful pass
+1. Transaction Level
+   - Individual transaction failures
+   - Default values for errors
+   - Detailed error messages
+   - Progress preservation
 
-### Output Management
-- Separate files for each pass
-- Naming convention: {base_filename}_{pass_name}.csv
-- Final results in {base_filename}_final.csv 
+2. System Level
+   - Cache file operations
+   - API call failures
+   - Data validation
+   - Progress tracking
+
+### Progress Management
+1. Save Points
+   - After each pass
+   - After each transaction
+   - After cache updates
+   - Before program exit
+
+2. Resume Capability
+   - Start from any pass
+   - Skip cached transactions
+   - Maintain consistency
+   - Clear progress logging 
