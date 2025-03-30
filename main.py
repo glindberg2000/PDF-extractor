@@ -55,7 +55,7 @@ def process_transactions(
 
 
 def main():
-    """Main entry point for the application."""
+    """Main entry point."""
     # Ensure required directories exist
     required_dirs = ["data/transactions", "data/profiles", "logs"]
     for dir_path in required_dirs:
@@ -63,7 +63,7 @@ def main():
             os.makedirs(dir_path)
             print(f"Created directory: {dir_path}")
 
-    # Start the questionnaire-style menu
+    # Start the interactive menu
     start_menu()
 
 

@@ -54,10 +54,16 @@ def start_menu():
                 "Create/Update Business Profile",
                 "Run Parsers",
                 "Normalize Transactions",
-                "Classify Transactions (Fast Mode)",
-                "Classify Transactions (Precise Mode)",
-                "Process All (Fast Mode)",
-                "Process All (Precise Mode)",
+                "\nTransaction Classification (Three-Pass Process):",
+                "Pass 1: Identify Payees (Fast Mode)",
+                "Pass 1: Identify Payees (Precise Mode)",
+                "Pass 2: Assign Categories (Fast Mode)",
+                "Pass 2: Assign Categories (Precise Mode)",
+                "Pass 3: Classify Transactions (Fast Mode)",
+                "Pass 3: Classify Transactions (Precise Mode)",
+                "\nBatch Processing Options:",
+                "Process All Passes (Fast Mode)",
+                "Process All Passes (Precise Mode)",
                 "Process Row Range (Fast Mode)",
                 "Process Row Range (Precise Mode)",
                 "Resume Processing from Pass",
@@ -163,10 +169,14 @@ def start_menu():
                 click.echo(f"Error: {e}")
 
         elif action in [
-            "Classify Transactions (Fast Mode)",
-            "Classify Transactions (Precise Mode)",
-            "Process All (Fast Mode)",
-            "Process All (Precise Mode)",
+            "Pass 1: Identify Payees (Fast Mode)",
+            "Pass 1: Identify Payees (Precise Mode)",
+            "Pass 2: Assign Categories (Fast Mode)",
+            "Pass 2: Assign Categories (Precise Mode)",
+            "Pass 3: Classify Transactions (Fast Mode)",
+            "Pass 3: Classify Transactions (Precise Mode)",
+            "Process All Passes (Fast Mode)",
+            "Process All Passes (Precise Mode)",
             "Process Row Range (Fast Mode)",
             "Process Row Range (Precise Mode)",
             "Resume Processing from Pass",
@@ -227,13 +237,19 @@ def start_menu():
                         .ask()
                         .split(" - ")[0]
                     )
+                elif "Pass 1" in action:
+                    resume_from_pass = 1
+                elif "Pass 2" in action:
+                    resume_from_pass = 2
+                elif "Pass 3" in action:
+                    resume_from_pass = 3
 
                 # Classify transactions
                 classifier = TransactionClassifier(
                     client_name=client_name,
                     model_type=llm_mode,
                 )
-                classified_df = classifier.classify_transactions(
+                classified_df = classifier.process_transactions(
                     transactions_df,
                     start_row=start_row,
                     end_row=end_row,
