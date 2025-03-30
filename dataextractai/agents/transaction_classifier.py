@@ -308,35 +308,14 @@ class TransactionClassifier:
         print(f"DEBUG: Description: {description}")
         print(f"DEBUG: Payee: {payee}")
 
-        # Use a clean test list of categories
-        test_categories = [
-            "Advertising",
-            "Bank Fees",
-            "Business Insurance",
-            "Business Travel",
-            "Contract Labor",
-            "Depreciation",
-            "Employee Benefits",
-            "Equipment",
-            "Interest",
-            "Legal and Professional",
-            "Office Expenses",
-            "Other",
-            "Payroll",
-            "Rent",
-            "Repairs and Maintenance",
-            "Supplies",
-            "Taxes",
-            "Training",
-            "Utilities",
-            "Vehicle Expenses",
-        ]
-        print(f"DEBUG: Using test categories: {test_categories}")
+        # Use AI-generated categories from business profile
+        categories = self.business_profile.get("ai_generated_categories", [])
+        print(f"DEBUG: Using AI-generated categories: {categories}")
 
         print(f"\n=== Starting category processing for: {description} ===")
 
         # Format categories as a simple comma-separated list
-        formatted_categories = ", ".join(test_categories)
+        formatted_categories = ", ".join(categories)
 
         # Construct the prompt with proper formatting
         prompt = f"""Categorize the transaction based on the description and payee.
@@ -354,9 +333,9 @@ IMPORTANT: Return a JSON object with EXACTLY these field names:
 
 Example:
 {{
-    "category": "Office Supplies",
+    "category": "Content Production",
     "confidence": "high",
-    "reasoning": "Purchase of office supplies from Staples",
+    "reasoning": "Purchase of video production equipment",
     "suggested_new_category": null,
     "new_category_reasoning": null
 }}
