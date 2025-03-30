@@ -7,7 +7,7 @@ from dataextractai.agents.transaction_classifier import TransactionClassifier
 
 
 def display_banner():
-    """Display the Amelia AI Bookkeeping banner."""
+    """Display the Amelia AI Bookkeeping banner"""
     banner = r"""
 ╔══════════════════════════════════════════════════════════════════════════╗
 ║      █████╗ ███╗   ███╗███████╗██╗     ██╗ █████╗    █████╗ ██╗          ║
