@@ -3,13 +3,11 @@
 import pandas as pd
 import openpyxl
 from openpyxl.worksheet.datavalidation import DataValidation
-from openpyxl.chart import PieChart, Reference, BarChart
-from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+from openpyxl.chart import PieChart, Reference
+from openpyxl.styles import PatternFill, Font, Alignment
 from openpyxl.utils import get_column_letter
-import numpy as np
-from typing import List, Dict, Optional
+import json
 import os
-from openpyxl.workbook.defined_name import DefinedName
 
 
 class ExcelReportFormatter:
@@ -23,241 +21,215 @@ class ExcelReportFormatter:
         self.header_font = Font(color="FFFFFF", bold=True)
         self.header_alignment = Alignment(horizontal="center", vertical="center")
 
-        # Define column groups for different sheets
-        self.raw_data_columns = [
-            "transaction_date",
-            "description",
-            "amount",
-            "file_path",
-            "source",
-            "transaction_type",
-            "normalized_amount",
-            "statement_start_date",
-            "statement_end_date",
-            "account_number",
-            "transaction_id",
-            "payee",
-            "payee_confidence",
-            "payee_reasoning",
-            "category",
-            "category_confidence",
-            "category_reasoning",
-            "suggested_new_category",
-            "new_category_reasoning",
-            "classification",
-            "classification_confidence",
-            "classification_reasoning",
-            "tax_implications",
-        ]
-
-        self.clean_data_columns = [
+        # Define columns to show/hide
+        self.visible_columns = [
             "transaction_date",
             "description",
             "normalized_amount",
             "payee",
-            "payee_confidence",
             "category",
-            "category_confidence",
-            "suggested_new_category",
             "classification",
-            "classification_confidence",
             "tax_implications",
         ]
 
-        self.summary_columns = [
-            "category",
-            "total_amount",
-            "transaction_count",
-            "average_amount",
-            "average_confidence",
-        ]
+    def _get_business_categories(self, client_name):
+        """Get categories from business profile."""
+        profile_path = os.path.join(
+            "data", "clients", client_name, "business_profile.json"
+        )
+        try:
+            with open(profile_path, "r") as f:
+                profile = json.load(f)
 
-    def create_report(
-        self,
-        data: pd.DataFrame,
-        output_path: str,
-        categories: list = None,
-        classifications: list = None,
-    ):
-        """Create a complete Excel report with multiple sheets."""
+            # Combine AI-generated and custom categories
+            categories = set()
+
+            # Add main categories from hierarchy
+            if "category_hierarchy" in profile:
+                categories.update(profile["category_hierarchy"]["main_categories"])
+                # Add subcategories
+                for subcats in profile["category_hierarchy"]["subcategories"].values():
+                    categories.update(subcats)
+
+            # Add custom categories
+            if "custom_categories" in profile:
+                categories.update(profile["custom_categories"])
+
+            # Add AI-generated categories
+            if "ai_generated_categories" in profile:
+                categories.update(profile["ai_generated_categories"])
+
+            # Add "Other" category
+            categories.add("Other")
+
+            return sorted(list(categories))
+        except Exception as e:
+            print(f"Error reading business profile: {e}")
+            return [
+                "Income",
+                "Business Expense",
+                "Personal Expense",
+                "Transfer",
+                "Other",
+            ]
+
+    def create_report(self, data: pd.DataFrame, output_path: str, client_name: str):
+        """Create Excel report with validation and charts."""
+        # Get categories from business profile
+        categories = self._get_business_categories(client_name)
+        classifications = [
+            "Personal",
+            "Business",
+            "Mixed Use",
+        ]  # Default classifications
+
         # Create workbook
         wb = openpyxl.Workbook()
-
-        # Remove default sheet
-        wb.remove(wb.active)
-
-        # Create sheets
-        self._create_raw_data_sheet(wb, data)
-        self._create_clean_data_sheet(wb, data, categories, classifications)
-        self._create_summary_sheet(wb, data)
-
-        # Save workbook
-        wb.save(output_path)
-
-    def _create_raw_data_sheet(self, workbook, data):
-        """Create the Raw Data sheet with original transaction data."""
-        ws = workbook.create_sheet("Raw Data")
-
-        # Filter columns and reorder
-        df_raw = data[self.raw_data_columns].copy()
+        ws = wb.active
+        ws.title = "Transactions"
 
         # Write headers
-        for col, header in enumerate(df_raw.columns, 1):
+        all_columns = list(data.columns)
+        for col, header in enumerate(all_columns, 1):
             cell = ws.cell(row=1, column=col, value=header)
             cell.fill = self.header_fill
             cell.font = self.header_font
             cell.alignment = self.header_alignment
 
-        # Write data
-        for row in range(len(df_raw)):
-            for col, value in enumerate(df_raw.iloc[row], 1):
-                ws.cell(row=row + 2, column=col, value=value)
-
-        # Auto-adjust column widths
-        for col in range(1, len(df_raw.columns) + 1):
-            ws.column_dimensions[get_column_letter(col)].width = 15
-
-        # Add filters
-        ws.auto_filter.ref = f"A1:{get_column_letter(len(df_raw.columns))}1"
-
-    def _create_clean_data_sheet(self, workbook, data, categories, classifications):
-        """Create the Clean Data sheet with validation dropdowns."""
-        ws = workbook.create_sheet("Clean Data")
-
-        # Filter and reorder columns
-        df_clean = data[self.clean_data_columns].copy()
-
-        # Write headers
-        for col, header in enumerate(df_clean.columns, 1):
-            cell = ws.cell(row=1, column=col, value=header)
-            cell.fill = self.header_fill
-            cell.font = self.header_font
-            cell.alignment = self.header_alignment
+            # Hide columns not in visible_columns
+            if header not in self.visible_columns:
+                ws.column_dimensions[get_column_letter(col)].hidden = True
 
         # Write data
-        for row in range(len(df_clean)):
-            for col, value in enumerate(df_clean.iloc[row], 1):
+        for row in range(len(data)):
+            for col, value in enumerate(data.iloc[row], 1):
                 ws.cell(row=row + 2, column=col, value=value)
 
         # Add data validation for categories and classifications
-        if categories:
-            # Create a hidden sheet for validation lists
-            validation_sheet = workbook.create_sheet("_Validation")
-            validation_sheet.sheet_state = "hidden"
+        # Create hidden validation sheet
+        validation_sheet = wb.create_sheet("_Validation")
+        validation_sheet.sheet_state = "hidden"
 
-            # Write categories to validation sheet
-            for i, cat in enumerate(categories, 1):
-                validation_sheet[f"A{i}"] = cat
+        # Write categories and classifications
+        for i, cat in enumerate(categories, 1):
+            validation_sheet[f"A{i}"] = cat
+        for i, cls in enumerate(classifications, 1):
+            validation_sheet[f"B{i}"] = cls
 
-            # Create validation using direct range reference
+        # Get column letters for validation
+        try:
+            category_col = get_column_letter(all_columns.index("category") + 1)
+            class_col = get_column_letter(all_columns.index("classification") + 1)
+
+            # Add validation to category column
             cat_validation = DataValidation(
                 type="list",
                 formula1=f"'_Validation'!$A$1:$A${len(categories)}",
                 allow_blank=True,
             )
             ws.add_data_validation(cat_validation)
-            cat_col = df_clean.columns.get_loc("category") + 1
-            cat_validation.add(
-                f"{get_column_letter(cat_col)}2:{get_column_letter(cat_col)}{len(df_clean)+1}"
-            )
+            cat_validation.add(f"{category_col}2:{category_col}{len(data)+1}")
 
-        if classifications:
-            # Write classifications to validation sheet
-            for i, cls in enumerate(classifications, 1):
-                validation_sheet[f"B{i}"] = cls
-
-            # Create validation using direct range reference
+            # Add validation to classification column
             class_validation = DataValidation(
                 type="list",
                 formula1=f"'_Validation'!$B$1:$B${len(classifications)}",
                 allow_blank=True,
             )
             ws.add_data_validation(class_validation)
-            class_col = df_clean.columns.get_loc("classification") + 1
-            class_validation.add(
-                f"{get_column_letter(class_col)}2:{get_column_letter(class_col)}{len(df_clean)+1}"
-            )
+            class_validation.add(f"{class_col}2:{class_col}{len(data)+1}")
+        except ValueError as e:
+            print(f"Warning: Could not add validation - {e}")
 
-        # Auto-adjust column widths
-        for col in range(1, len(df_clean.columns) + 1):
-            ws.column_dimensions[get_column_letter(col)].width = 15
+        # Create summary sheet
+        summary = wb.create_sheet("Summary")
 
-        # Add filters
-        ws.auto_filter.ref = f"A1:{get_column_letter(len(df_clean.columns))}1"
-
-    def _create_summary_sheet(self, workbook, data):
-        """Create the Summary sheet with totals and charts using formulas."""
-        ws = workbook.create_sheet("Summary")
-
-        # Find column indices from the clean data columns list
-        category_col = get_column_letter(self.clean_data_columns.index("category") + 1)
-        amount_col = get_column_letter(
-            self.clean_data_columns.index("normalized_amount") + 1
-        )
-        confidence_col = get_column_letter(
-            self.clean_data_columns.index("category_confidence") + 1
-        )
-        last_row = len(data) + 1
-
-        # Write headers
-        headers = [
+        # Write summary headers
+        summary_headers = [
             "Category",
             "Total Amount",
             "Transaction Count",
             "Average Amount",
-            "Average Confidence",
         ]
-        for col, header in enumerate(headers, 1):
-            cell = ws.cell(row=1, column=col, value=header)
+        for col, header in enumerate(summary_headers, 1):
+            cell = summary.cell(row=1, column=col, value=header)
             cell.fill = self.header_fill
             cell.font = self.header_font
             cell.alignment = self.header_alignment
 
-        # Get unique categories and ensure they're strings before sorting
-        categories = sorted(
-            str(cat) for cat in data["category"].unique() if pd.notna(cat)
-        )
+        # Get column letters for summary calculations
+        try:
+            amount_col = get_column_letter(all_columns.index("normalized_amount") + 1)
+            category_col = get_column_letter(all_columns.index("category") + 1)
+            last_row = len(data) + 1
 
-        # Write category rows with formulas
-        for row, category in enumerate(categories, 2):
-            # Category name
-            ws.cell(row=row, column=1, value=category)
+            # Write category rows with formulas
+            for row, category in enumerate(categories, 2):
+                # Category name
+                summary.cell(row=row, column=1, value=category)
 
-            # Total Amount (SUMIF)
-            total_formula = f"=SUMIF('Clean Data'!{category_col}2:{category_col}{last_row},A{row},'Clean Data'!{amount_col}2:{amount_col}{last_row})"
-            ws.cell(row=row, column=2, value=total_formula).number_format = (
-                '"$"#,##0.00'
+                # Total Amount (SUMIF)
+                total_formula = f'=SUMIF(Transactions!{category_col}2:{category_col}{last_row},"{category}",Transactions!{amount_col}2:{amount_col}{last_row})'
+                summary.cell(row=row, column=2, value=total_formula).number_format = (
+                    '"$"#,##0.00'
+                )
+
+                # Transaction Count (COUNTIF)
+                count_formula = f'=COUNTIF(Transactions!{category_col}2:{category_col}{last_row},"{category}")'
+                summary.cell(row=row, column=3, value=count_formula)
+
+                # Average Amount (IF to avoid div/0)
+                avg_formula = f"=IF(C{row}>0,B{row}/C{row},0)"
+                summary.cell(row=row, column=4, value=avg_formula).number_format = (
+                    '"$"#,##0.00'
+                )
+
+            # Add totals row
+            total_row = len(categories) + 2
+            summary.cell(row=total_row, column=1, value="Total").font = Font(bold=True)
+            summary.cell(
+                row=total_row, column=2, value=f"=SUM(B2:B{total_row-1})"
+            ).number_format = '"$"#,##0.00'
+            summary.cell(
+                row=total_row, column=3, value=f"=SUM(C2:C{total_row-1})"
+            ).font = Font(bold=True)
+            summary.cell(
+                row=total_row,
+                column=4,
+                value=f"=IF(C{total_row}>0,B{total_row}/C{total_row},0)",
+            ).number_format = '"$"#,##0.00'
+
+            # Create pie chart
+            pie = PieChart()
+            pie.title = "Expenses by Category"
+
+            # Use direct references for chart data
+            last_category_row = len(categories) + 1
+            data_ref = Reference(
+                summary, min_col=2, min_row=1, max_row=last_category_row
             )
-
-            # Transaction Count (COUNTIF)
-            count_formula = f"=COUNTIF('Clean Data'!{category_col}2:{category_col}{last_row},A{row})"
-            ws.cell(row=row, column=3, value=count_formula)
-
-            # Average Amount (AVERAGEIF)
-            avg_amount_formula = f"=IF(C{row}>0,B{row}/C{row},0)"
-            ws.cell(row=row, column=4, value=avg_amount_formula).number_format = (
-                '"$"#,##0.00'
+            labels_ref = Reference(
+                summary, min_col=1, min_row=2, max_row=last_category_row
             )
+            pie.add_data(data_ref, titles_from_data=True)
+            pie.set_categories(labels_ref)
 
-            # Average Confidence (AVERAGEIF)
-            avg_conf_formula = f"=AVERAGEIF('Clean Data'!{category_col}2:{category_col}{last_row},A{row},'Clean Data'!{confidence_col}2:{confidence_col}{last_row})"
-            conf_cell = ws.cell(row=row, column=5, value=avg_conf_formula)
-            conf_cell.number_format = "0.00%"
+            # Add chart to worksheet
+            summary.add_chart(pie, "F2")
 
-        # Create pie chart
-        pie = PieChart()
-        pie.title = "Expenses by Category"
+        except ValueError as e:
+            print(f"Warning: Could not create summary calculations - {e}")
 
-        # Use direct references for chart data
-        last_category_row = len(categories) + 1
-        data_ref = Reference(ws, min_col=2, min_row=1, max_row=last_category_row)
-        labels_ref = Reference(ws, min_col=1, min_row=2, max_row=last_category_row)
-        pie.add_data(data_ref, titles_from_data=True)
-        pie.set_categories(labels_ref)
+        # Auto-adjust column widths and add filters
+        for sheet in [ws, summary]:
+            max_col = len(all_columns) if sheet == ws else len(summary_headers)
+            for col in range(1, max_col + 1):
+                if not (
+                    sheet == ws
+                    and list(data.columns)[col - 1] not in self.visible_columns
+                ):
+                    sheet.column_dimensions[get_column_letter(col)].width = 15
+            sheet.auto_filter.ref = f"A1:{get_column_letter(max_col)}1"
 
-        # Add chart to worksheet
-        ws.add_chart(pie, "F2")
-
-        # Auto-adjust column widths
-        for col in range(1, len(headers) + 1):
-            ws.column_dimensions[get_column_letter(col)].width = 15
+        # Save workbook
+        wb.save(output_path)
