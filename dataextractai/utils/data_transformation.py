@@ -15,8 +15,9 @@ from dataextractai.utils.config import TRANSFORMATION_MAPS
 
 def apply_transformation_map(df, source):
     transformation_map = TRANSFORMATION_MAPS[source]
-    transformed_df = df.copy()  # Start with a copy of the original DataFrame
+    transformed_df = pd.DataFrame()  # Create a new empty DataFrame
 
+    # First, apply the transformation map
     for target_col, source_col in transformation_map.items():
         if callable(source_col):
             # Apply the lambda function to the DataFrame
@@ -24,5 +25,9 @@ def apply_transformation_map(df, source):
         else:
             # Directly map the source column to the target column
             transformed_df[target_col] = df[source_col]
+
+    # Preserve the source column if it exists
+    if "source" in df.columns:
+        transformed_df["source"] = df["source"]
 
     return transformed_df

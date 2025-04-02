@@ -536,23 +536,48 @@ def update_transaction_years(transactions, statement_end_date):
                 continue
 
             try:
-                # Parse the transaction date
-                trans_date = datetime.strptime(
-                    transaction["transaction_date"], "%m/%d/%Y"
+                # Extract month and day from transaction date
+                trans_date_match = re.match(
+                    r"(\d{2})/(\d{2})(?:/\d{4})?", transaction["transaction_date"]
                 )
+                if not trans_date_match:
+                    logger.warning(
+                        f"Invalid transaction date format: {transaction['transaction_date']}"
+                    )
+                    continue
+
+                month, day = map(int, trans_date_match.groups()[:2])
+
+                # Create date with statement year first
+                year = statement_year
 
                 # If statement is in January and transaction is in December, use previous year
-                if statement_month == 1 and trans_date.month == 12:
-                    trans_date = trans_date.replace(year=statement_year - 1)
-                else:
-                    trans_date = trans_date.replace(year=statement_year)
+                if statement_month == 1 and month == 12:
+                    year = statement_year - 1
 
-                # Update the transaction date
-                transaction["transaction_date"] = trans_date.strftime("%Y-%m-%d")
-                logger.debug(
-                    f"Updated transaction date: {transaction['transaction_date']}"
-                )
-            except ValueError as e:
+                # Create the date and validate it
+                try:
+                    trans_date = datetime(year, month, day)
+                    transaction["transaction_date"] = trans_date.strftime("%Y-%m-%d")
+                    logger.debug(
+                        f"Updated transaction date: {transaction['transaction_date']}"
+                    )
+                except ValueError as e:
+                    logger.warning(f"Invalid date {month}/{day}/{year}: {e}")
+                    # Try the next year if this year's date is invalid (e.g., Feb 29 in non-leap year)
+                    try:
+                        trans_date = datetime(year + 1, month, day)
+                        transaction["transaction_date"] = trans_date.strftime(
+                            "%Y-%m-%d"
+                        )
+                        logger.warning(
+                            f"Used next year for invalid date. New date: {transaction['transaction_date']}"
+                        )
+                    except ValueError as e2:
+                        logger.error(
+                            f"Could not fix invalid date {month}/{day}/{year}: {e2}"
+                        )
+            except Exception as e:
                 logger.warning(
                     f"Could not process date {transaction['transaction_date']}: {e}"
                 )

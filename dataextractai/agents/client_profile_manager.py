@@ -6,6 +6,8 @@ from typing import Dict, List, Optional
 from openai import OpenAI
 from dotenv import load_dotenv
 import logging
+from datetime import datetime
+from ..db.client_db import ClientDB
 
 load_dotenv()
 
@@ -24,6 +26,7 @@ class ClientProfileManager:
         self.client_dir = os.path.join("data", "clients", client_name)
         self.profile_file = os.path.join(self.client_dir, "business_profile.json")
         self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        self.db = ClientDB()  # Add database instance
 
     def create_or_update_profile(
         self,
@@ -137,18 +140,32 @@ Return the response as a JSON object with the following structure:
         return merged
 
     def _load_profile(self) -> Optional[Dict]:
-        """Load the client's business profile from file."""
+        """Load the client's business profile from DB and file."""
+        # Try DB first
+        profile = self.db.load_profile(self.client_name)
+        if profile:
+            return profile
+
+        # Fall back to file
         if os.path.exists(self.profile_file):
             try:
                 with open(self.profile_file, "r") as f:
-                    return json.load(f)
+                    profile = json.load(f)
+                # If we loaded from file, save to DB for next time
+                self.db.save_profile(self.client_name, profile)
+                return profile
             except Exception as e:
-                logger.error(f"Error loading profile: {e}")
+                logger.error(f"Error loading profile from file: {e}")
         return None
 
     def _save_profile(self, profile: Dict) -> None:
-        """Save the client's business profile to file."""
+        """Save the client's business profile to both DB and file."""
         try:
+            # Save to DB
+            self.db.save_profile(self.client_name, profile)
+
+            # Save to file as backup
+            os.makedirs(os.path.dirname(self.profile_file), exist_ok=True)
             with open(self.profile_file, "w") as f:
                 json.dump(profile, f, indent=2)
             logger.info(f"Saved business profile for {self.client_name}")

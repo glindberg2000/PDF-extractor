@@ -378,6 +378,7 @@ TRANSFORMATION_MAPS = {
         "statement_end_date": lambda x: x["statement_end_date"],
         "account_number": lambda x: x["account_number"],
         "file_path": lambda x: x["file_path"],
+        "source": lambda x: "first_republic_bank",
     },
 }
 

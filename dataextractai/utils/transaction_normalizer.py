@@ -18,6 +18,12 @@ class TransactionNormalizer:
     def __init__(self, client_name: str):
         self.client_name = client_name
         self.output_dir = os.path.join("data", "clients", client_name, "output")
+        self._transaction_counter = 0  # Counter for generating unique IDs
+
+    def _generate_transaction_id(self, source: str, index: int) -> str:
+        """Generate a unique transaction ID that includes the source."""
+        self._transaction_counter += 1
+        return f"{source}_{self._transaction_counter}"
 
     def normalize_date(self, date_str, row=None):
         """Normalize a date string to a pandas datetime object."""
@@ -84,12 +90,22 @@ class TransactionNormalizer:
                     # Get source name from file
                     source = file.replace("_output.csv", "")
 
-                    # Add source column if not present
-                    if "source" not in df.columns:
-                        df["source"] = source
-
                     # Reset index to avoid duplicate indices
                     df = df.reset_index(drop=True)
+
+                    # Add transaction_id if not present
+                    if "transaction_id" not in df.columns:
+                        df["transaction_id"] = [
+                            self._generate_transaction_id(source, i)
+                            for i in range(len(df))
+                        ]
+
+                    # Ensure source is set (do this before transformations)
+                    df["source"] = source
+
+                    # Add file_path if not present
+                    if "file_path" not in df.columns:
+                        df["file_path"] = file_path
 
                     # Apply transformation map if available
                     if source in TRANSFORMATION_MAPS:
@@ -153,10 +169,6 @@ class TransactionNormalizer:
                                     "statement_end_date"
                                 ]
 
-                    # Add file_path if not present
-                    if "file_path" not in df.columns:
-                        df["file_path"] = file_path
-
                     # Convert dates and amounts
                     if "transaction_date" in df.columns:
                         df["normalized_date"] = df.apply(
@@ -165,32 +177,47 @@ class TransactionNormalizer:
                             ),
                             axis=1,
                         )
-                        # Count and log rows with NaT dates
-                        nat_count = df["normalized_date"].isna().sum()
-                        if nat_count > 0:
+                        # Handle invalid dates
+                        invalid_dates = df["normalized_date"].isna()
+                        if invalid_dates.any():
                             logger.warning(
-                                f"Warning: {nat_count} rows have invalid dates in {file}"
+                                f"Found {invalid_dates.sum()} invalid dates in {file}"
                             )
-                            # Log the problematic rows
-                            problematic_rows = df[df["normalized_date"].isna()]
-                            for _, row in problematic_rows.iterrows():
-                                logger.warning(
-                                    f"Row with missing date: {row.to_dict()}"
-                                )
-                                # For interest credits with missing dates, use the statement end date
-                                if (
-                                    "description" in row
-                                    and "INTEREST CREDIT" in str(row["description"])
-                                    and "statement_end_date" in row
-                                    and not pd.isna(row["statement_end_date"])
+                            # For invalid dates, try to use statement dates
+                            for idx in df[invalid_dates].index:
+                                row = df.loc[idx]
+                                logger.warning(f"Invalid date in row: {row.to_dict()}")
+
+                                # Try to use statement end date first
+                                if "statement_end_date" in row and pd.notnull(
+                                    row["statement_end_date"]
                                 ):
-                                    df.loc[row.name, "normalized_date"] = (
-                                        pd.to_datetime(
-                                            row["statement_end_date"],
-                                            format="%Y-%m-%d",
-                                            errors="coerce",
-                                        )
+                                    df.loc[idx, "normalized_date"] = pd.to_datetime(
+                                        row["statement_end_date"],
+                                        format="%Y-%m-%d",
+                                        errors="coerce",
                                     )
+                                    logger.info(
+                                        f"Using statement end date {row['statement_end_date']} for transaction"
+                                    )
+                                # Then try statement start date
+                                elif "statement_start_date" in row and pd.notnull(
+                                    row["statement_start_date"]
+                                ):
+                                    df.loc[idx, "normalized_date"] = pd.to_datetime(
+                                        row["statement_start_date"],
+                                        format="%Y-%m-%d",
+                                        errors="coerce",
+                                    )
+                                    logger.info(
+                                        f"Using statement start date {row['statement_start_date']} for transaction"
+                                    )
+
+                        # Use normalized dates
+                        df.loc[:, "transaction_date"] = df["normalized_date"].apply(
+                            lambda x: x.strftime("%Y-%m-%d") if pd.notnull(x) else None
+                        )
+                        df = df.drop("normalized_date", axis=1)
                     else:
                         logger.warning(
                             f"Warning: 'transaction_date' column not found in {file}"

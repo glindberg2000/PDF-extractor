@@ -92,25 +92,9 @@ if __name__ == "__main__":
 
 setup(
     name="dataextractai",
-    version="1.0.0",
+    version="0.1",
     packages=find_packages(),
-    install_requires=[
-        "pandas>=2.0.0",
-        "numpy>=1.21.0",
-        "PyYAML>=6.0.0",
-        "python-dotenv>=1.0.0",
-        "openai>=1.0.0",
-        "pdfplumber>=0.7.0",
-        "PyPDF2>=3.0.0",
-        "PyMuPDF>=1.23.0",
-        "typer>=0.9.0",
-        "rich>=12.0.0",
-        "click>=8.0.0",
-        "google-auth-oauthlib>=1.0.0",
-        "google-auth-httplib2>=0.1.0",
-        "google-api-python-client>=2.0.0",
-        "gspread>=5.0.0",
-    ],
+    install_requires=["openai", "python-dotenv", "pandas", "questionary", "click"],
     entry_points={
         "console_scripts": [
             "dataextractai=dataextractai.cli.main:app",

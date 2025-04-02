@@ -13,7 +13,9 @@ from .agents.transaction_classifier import TransactionClassifier
 from .utils.config import get_client_config, get_current_paths
 from .sheets.sheet_manager import GoogleSheetManager
 from .sheets.config import get_sheets_config, save_sheets_config
+from .db.client_db import ClientDB
 from dotenv import load_dotenv
+import sqlite3
 
 # Load environment variables
 load_dotenv()
@@ -25,12 +27,26 @@ OPENAI_MODEL_PRECISE = os.getenv("OPENAI_MODEL_PRECISE", "o3-mini-2025-01-31")
 
 def get_client_list():
     """Get list of available clients."""
+    # First check database
+    db = ClientDB()
+    with sqlite3.connect(db.db_path) as conn:
+        cursor = conn.execute("SELECT name FROM clients ORDER BY name")
+        clients = [row[0] for row in cursor.fetchall()]
+
+    # Then check filesystem for backward compatibility
     client_dir = os.path.join("data", "clients")
-    if not os.path.exists(client_dir):
-        return []
-    return [
-        d for d in os.listdir(client_dir) if os.path.isdir(os.path.join(client_dir, d))
-    ]
+    if os.path.exists(client_dir):
+        fs_clients = [
+            d
+            for d in os.listdir(client_dir)
+            if os.path.isdir(os.path.join(client_dir, d))
+        ]
+        # Add any clients from filesystem not in database
+        for client in fs_clients:
+            if client not in clients:
+                clients.append(client)
+
+    return sorted(clients)
 
 
 def list_clients():
@@ -62,30 +78,18 @@ def handle_sheets_menu(client_name: str):
         # Get client's sheet configuration
         config = get_sheets_config(client_name)
 
-        # Find final files in client's output directory
-        output_dir = os.path.join("data", "clients", client_name, "output")
-        if not os.path.exists(output_dir):
-            click.echo(f"No output directory found for client: {client_name}")
+        # Get transactions from database
+        db = ClientDB()
+        transactions_df = db.load_normalized_transactions(client_name)
+
+        if transactions_df.empty:
+            click.echo("No transactions found for client")
             return
 
-        final_files = [f for f in os.listdir(output_dir) if "final" in f.lower()]
-        if not final_files:
-            click.echo("No final files found in output directory")
-            return
-
-        # Select file to upload
-        file_choice = questionary.select(
-            "Select file to upload:", choices=final_files + ["Cancel"]
-        ).ask()
-
-        if file_choice == "Cancel":
-            return
-
-        # Upload file
-        file_path = os.path.join(output_dir, file_choice)
+        # Upload to sheets
         sheet_id = sheet_manager.update_client_sheet(
             client_name=client_name,
-            data_file=file_path,
+            data=transactions_df,
             sheet_id=config.get("sheet_id"),
         )
 
@@ -93,7 +97,7 @@ def handle_sheets_menu(client_name: str):
         config["sheet_id"] = sheet_id
         save_sheets_config(client_name, config)
 
-        click.echo(f"Successfully uploaded {file_choice} to Google Sheets")
+        click.echo(f"Successfully uploaded transactions to Google Sheets")
 
     except Exception as e:
         click.echo(f"Error with Google Sheets operation: {e}")
@@ -102,38 +106,25 @@ def handle_sheets_menu(client_name: str):
 def handle_excel_export(client_name: str):
     """Handle Excel report generation."""
     try:
-        # Find final files in client's output directory
-        output_dir = os.path.join("data", "clients", client_name, "output")
-        if not os.path.exists(output_dir):
-            click.echo(f"No output directory found for client: {client_name}")
-            return
+        # Get transactions from database
+        db = ClientDB()
+        transactions_df = db.load_normalized_transactions(client_name)
 
-        final_files = [f for f in os.listdir(output_dir) if "final" in f.lower()]
-        if not final_files:
-            click.echo("No final files found in output directory")
-            return
-
-        # Select file to process
-        file_choice = questionary.select(
-            "Select file to create Excel report from:", choices=final_files + ["Cancel"]
-        ).ask()
-
-        if file_choice == "Cancel":
+        if transactions_df.empty:
+            click.echo("No transactions found for client")
             return
 
         # Create Excel report
-        file_path = os.path.join(output_dir, file_choice)
+        output_dir = os.path.join("data", "clients", client_name, "output")
+        os.makedirs(output_dir, exist_ok=True)
         excel_output = os.path.join(output_dir, f"{client_name}_report.xlsx")
-
-        # Read the CSV data
-        df = pd.read_csv(file_path)
 
         # Create Excel report
         from .sheets.excel_formatter import ExcelReportFormatter
 
         formatter = ExcelReportFormatter()
         formatter.create_report(
-            data=df, output_path=excel_output, client_name=client_name
+            data=transactions_df, output_path=excel_output, client_name=client_name
         )
 
         click.echo(f"Successfully created Excel report at: {excel_output}")
@@ -189,9 +180,9 @@ def start_menu():
 
         if action == "Create/Update Business Profile":
             try:
-                # Try to load existing profile
-                profile_manager = ClientProfileManager(client_name)
-                existing_profile = profile_manager._load_profile()
+                # Try to load existing profile from database
+                db = ClientDB()
+                existing_profile = db.load_profile(client_name)
 
                 # Use existing values as defaults
                 default_business_type = (
@@ -205,54 +196,57 @@ def start_menu():
                     else ""
                 )
                 default_categories = (
-                    ", ".join(existing_profile.get("custom_categories", []))
+                    existing_profile.get("custom_categories", [])
                     if existing_profile
-                    else ""
+                    else []
                 )
 
-                # Get updated values, using defaults
+                # Get new values
                 business_type = questionary.text(
-                    "Enter business type (e.g., 'Restaurant', 'Consulting'):",
-                    default=default_business_type,
+                    "Business Type:", default=default_business_type
                 ).ask()
-
                 business_description = questionary.text(
-                    "Enter detailed business description:", default=default_description
+                    "Business Description:", default=default_description
                 ).ask()
 
-                custom_categories = questionary.text(
-                    "Enter custom expense categories (comma-separated):",
-                    default=default_categories,
-                ).ask()
+                # Handle categories
+                categories = []
+                if default_categories:
+                    click.echo("\nExisting Categories:")
+                    for cat in default_categories:
+                        click.echo(f"- {cat}")
+                    keep_categories = questionary.confirm(
+                        "Keep existing categories?"
+                    ).ask()
+                    if keep_categories:
+                        categories = default_categories
 
-                # Clean up custom categories
-                if custom_categories:
-                    # Split by comma, clean each category, and filter out empty strings
-                    cleaned_categories = [
-                        cat.strip().title()  # Clean up formatting
-                        for cat in custom_categories.split(",")
-                        if cat.strip()  # Remove empty strings
-                    ]
-                else:
-                    cleaned_categories = None
+                while questionary.confirm("Add a category?").ask():
+                    category = questionary.text("Enter category:").ask()
+                    if category:
+                        categories.append(category)
 
-                # Update profile with new values
-                profile = profile_manager.create_or_update_profile(
-                    business_type=business_type,
-                    business_description=business_description,
-                    custom_categories=cleaned_categories,
-                )
-                click.echo(f"Profile created/updated:\n{json.dumps(profile, indent=2)}")
+                # Create profile
+                profile = {
+                    "business_type": business_type,
+                    "business_description": business_description,
+                    "custom_categories": categories,
+                }
+
+                # Save to database
+                db.save_profile(client_name, profile)
+                click.echo("Business profile saved successfully.")
+
             except Exception as e:
-                click.echo(f"Error: {e}")
+                click.echo(f"Error updating business profile: {e}")
 
         elif action == "Run Parsers":
             try:
+                # Get client configuration
                 config = get_client_config(client_name)
                 run_all_parsers(client_name, config)
-                click.echo(f"Successfully ran parsers for client: {client_name}")
             except Exception as e:
-                click.echo(f"Error: {e}")
+                click.echo(f"Error running parsers: {e}")
 
         elif action == "Normalize Transactions":
             try:
@@ -260,126 +254,77 @@ def start_menu():
                 transactions_df = normalizer.normalize_transactions()
                 if not transactions_df.empty:
                     click.echo(
-                        f"Successfully normalized transactions for client: {client_name}"
-                    )
-                else:
-                    click.echo(
-                        f"No transactions found to normalize for client: {client_name}"
+                        f"Successfully normalized {len(transactions_df)} transactions"
                     )
             except Exception as e:
-                click.echo(f"Error: {e}")
+                click.echo(f"Error normalizing transactions: {e}")
+
+        elif action.startswith("Pass ") or action.startswith("Process "):
+            try:
+                # Get transactions from database
+                db = ClientDB()
+                transactions_df = db.load_normalized_transactions(client_name)
+
+                if transactions_df.empty:
+                    click.echo(
+                        "No transactions found. Please normalize transactions first."
+                    )
+                    continue
+
+                # Get business profile
+                profile = db.load_profile(client_name)
+                if not profile:
+                    click.echo("No business profile found. Please create one first.")
+                    continue
+
+                # Initialize classifier
+                classifier = TransactionClassifier(
+                    client_name=client_name,
+                    model_type=(
+                        OPENAI_MODEL_PRECISE
+                        if "Precise" in action
+                        else OPENAI_MODEL_FAST
+                    ),
+                )
+
+                # Process transactions
+                if "Row Range" in action:
+                    start_row = questionary.text(
+                        "Start row (1-based):", default="1"
+                    ).ask()
+                    end_row = questionary.text(
+                        f"End row (1-{len(transactions_df)}):",
+                        default=str(len(transactions_df)),
+                    ).ask()
+                    try:
+                        start_row = max(1, int(start_row))
+                        end_row = min(len(transactions_df), int(end_row))
+                        transactions_df = transactions_df.iloc[
+                            start_row - 1 : end_row
+                        ].copy()
+                    except ValueError:
+                        click.echo("Invalid row numbers")
+                        continue
+
+                if "Pass 1" in action or "Process All" in action:
+                    transactions_df = classifier.identify_payees(transactions_df)
+                if "Pass 2" in action or "Process All" in action:
+                    transactions_df = classifier.assign_categories(transactions_df)
+                if "Pass 3" in action or "Process All" in action:
+                    transactions_df = classifier.classify_transactions(transactions_df)
+
+                # Save results back to database
+                db.save_normalized_transactions(client_name, transactions_df)
+                click.echo("Successfully processed transactions")
+
+            except Exception as e:
+                click.echo(f"Error processing transactions: {e}")
 
         elif action == "Export to Excel Report":
             handle_excel_export(client_name)
+
         elif action == "Upload to Google Sheets":
             handle_sheets_menu(client_name)
-
-        elif action in [
-            "Pass 1: Identify Payees (Fast Mode)",
-            "Pass 1: Identify Payees (Precise Mode)",
-            "Pass 2: Assign Categories (Fast Mode)",
-            "Pass 2: Assign Categories (Precise Mode)",
-            "Pass 3: Classify Transactions (Fast Mode)",
-            "Pass 3: Classify Transactions (Precise Mode)",
-            "Process All Passes (Fast Mode)",
-            "Process All Passes (Precise Mode)",
-            "Process Row Range (Fast Mode)",
-            "Process Row Range (Precise Mode)",
-            "Resume Processing from Pass",
-        ]:
-            try:
-                # Set LLM mode
-                llm_mode = "fast" if "Fast Mode" in action else "precise"
-                os.environ["OPENAI_MODEL_FAST"] = OPENAI_MODEL_FAST
-                os.environ["OPENAI_MODEL_PRECISE"] = OPENAI_MODEL_PRECISE
-
-                # Get paths
-                config = get_client_config(client_name)
-                paths = get_current_paths(config)
-
-                # Read normalized transactions
-                normalized_file = os.path.join(
-                    paths["output_paths"]["consolidated_core"]["csv"].replace(
-                        "consolidated_core_output.csv",
-                        f"{client_name.replace(' ', '_')}_normalized_transactions.csv",
-                    )
-                )
-
-                if not os.path.exists(normalized_file):
-                    click.echo(
-                        f"No normalized transactions found for client: {client_name}"
-                    )
-                    continue
-
-                # Read transactions
-                transactions_df = pd.read_csv(normalized_file)
-                if transactions_df.empty:
-                    click.echo(f"No transactions found in {normalized_file}")
-                    continue
-
-                # Get row range if needed
-                start_row = None
-                end_row = None
-                if "Row Range" in action:
-                    start_row = int(
-                        questionary.text("Enter starting row (0-based):").ask()
-                    )
-                    end_row = int(
-                        questionary.text("Enter ending row (exclusive):").ask()
-                    )
-
-                # Get resume pass if needed
-                resume_from_pass = None
-                if action == "Resume Processing from Pass":
-                    resume_from_pass = int(
-                        questionary.select(
-                            "Select pass to resume from:",
-                            choices=[
-                                "1 - Payee Identification",
-                                "2 - Category Assignment",
-                                "3 - Classification",
-                            ],
-                        )
-                        .ask()
-                        .split(" - ")[0]
-                    )
-                elif "Pass 1" in action:
-                    resume_from_pass = 1
-                elif "Pass 2" in action:
-                    resume_from_pass = 2
-                elif "Pass 3" in action:
-                    resume_from_pass = 3
-
-                # Classify transactions
-                classifier = TransactionClassifier(
-                    client_name=client_name,
-                    model_type=llm_mode,
-                )
-                classified_df = classifier.process_transactions(
-                    transactions_df,
-                    start_row=start_row,
-                    end_row=end_row,
-                    resume_from_pass=resume_from_pass,
-                )
-
-                if not classified_df.empty:
-                    # Save classified transactions
-                    output_file = os.path.join(
-                        paths["output_paths"]["consolidated_core"]["csv"].replace(
-                            "consolidated_core_output.csv",
-                            f"{client_name.replace(' ', '_')}_classified_transactions.csv",
-                        )
-                    )
-                    classified_df.to_csv(output_file, index=False)
-                    click.echo(
-                        f"Successfully classified transactions for client: {client_name}"
-                    )
-                else:
-                    click.echo(
-                        f"No transactions were classified for client: {client_name}"
-                    )
-            except Exception as e:
-                click.echo(f"Error: {e}")
 
 
 if __name__ == "__main__":
