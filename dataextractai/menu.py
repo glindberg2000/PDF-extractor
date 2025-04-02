@@ -323,14 +323,14 @@ def start_menu():
                 # Initialize classifier
                 classifier = TransactionClassifier(
                     client_name=client_name,
-                    model_type=(
-                        OPENAI_MODEL_PRECISE
-                        if "Precise" in action
-                        else OPENAI_MODEL_FAST
-                    ),
+                    model_type="precise" if "Precise" in action else "fast",
                 )
 
-                # Process transactions
+                # Determine processing parameters
+                start_row = None
+                end_row = None
+                resume_from_pass = None
+
                 if "Row Range" in action:
                     start_row = questionary.text(
                         "Start row (1-based):", default="1"
@@ -340,24 +340,33 @@ def start_menu():
                         default=str(len(transactions_df)),
                     ).ask()
                     try:
-                        start_row = max(1, int(start_row))
+                        start_row = max(0, int(start_row) - 1)  # Convert to 0-based
                         end_row = min(len(transactions_df), int(end_row))
-                        transactions_df = transactions_df.iloc[
-                            start_row - 1 : end_row
-                        ].copy()
                     except ValueError:
                         click.echo("Invalid row numbers")
                         continue
 
-                if "Pass 1" in action or "Process All" in action:
-                    transactions_df = classifier.identify_payees(transactions_df)
-                if "Pass 2" in action or "Process All" in action:
-                    transactions_df = classifier.assign_categories(transactions_df)
-                if "Pass 3" in action or "Process All" in action:
-                    transactions_df = classifier.classify_transactions(transactions_df)
+                # Process transactions based on action
+                if "Process All" in action:
+                    # Process all passes
+                    result_df = classifier.process_transactions(
+                        transactions_df, start_row=start_row, end_row=end_row
+                    )
+                elif action.startswith("Pass "):
+                    # Extract pass number and process specific pass
+                    pass_num = int(action[5:6])  # "Pass 1", "Pass 2", "Pass 3"
 
-                # Save results back to database
-                db.save_normalized_transactions(client_name, transactions_df)
+                    # For individual passes, we'll use resume_from_pass to control execution
+                    # Pass 1: resume_from_pass=1 (only payee identification)
+                    # Pass 2: resume_from_pass=2 (only category assignment)
+                    # Pass 3: resume_from_pass=3 (only classification)
+                    result_df = classifier.process_transactions(
+                        transactions_df,
+                        start_row=start_row,
+                        end_row=end_row,
+                        resume_from_pass=pass_num,
+                    )
+
                 click.echo("Successfully processed transactions")
 
             except Exception as e:
