@@ -11,6 +11,8 @@ from .utils.transaction_normalizer import TransactionNormalizer
 from .agents.client_profile_manager import ClientProfileManager
 from .agents.transaction_classifier import TransactionClassifier
 from .utils.config import get_client_config, get_current_paths
+from .sheets.sheet_manager import GoogleSheetManager
+from .sheets.config import get_sheets_config, save_sheets_config
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -44,6 +46,102 @@ def list_clients():
     click.echo()
 
 
+def handle_sheets_menu(client_name: str):
+    """Handle Google Sheets operations."""
+    try:
+        # Get credentials path from environment
+        credentials_path = os.getenv("GOOGLE_SHEETS_CREDENTIALS_PATH")
+        if not credentials_path:
+            click.echo(
+                "Error: GOOGLE_SHEETS_CREDENTIALS_PATH environment variable not set."
+            )
+            return
+
+        sheet_manager = GoogleSheetManager(credentials_path)
+
+        # Get client's sheet configuration
+        config = get_sheets_config(client_name)
+
+        # Find final files in client's output directory
+        output_dir = os.path.join("data", "clients", client_name, "output")
+        if not os.path.exists(output_dir):
+            click.echo(f"No output directory found for client: {client_name}")
+            return
+
+        final_files = [f for f in os.listdir(output_dir) if "final" in f.lower()]
+        if not final_files:
+            click.echo("No final files found in output directory")
+            return
+
+        # Select file to upload
+        file_choice = questionary.select(
+            "Select file to upload:", choices=final_files + ["Cancel"]
+        ).ask()
+
+        if file_choice == "Cancel":
+            return
+
+        # Upload file
+        file_path = os.path.join(output_dir, file_choice)
+        sheet_id = sheet_manager.update_client_sheet(
+            client_name=client_name,
+            data_file=file_path,
+            sheet_id=config.get("sheet_id"),
+        )
+
+        # Update configuration with new sheet ID
+        config["sheet_id"] = sheet_id
+        save_sheets_config(client_name, config)
+
+        click.echo(f"Successfully uploaded {file_choice} to Google Sheets")
+
+    except Exception as e:
+        click.echo(f"Error with Google Sheets operation: {e}")
+
+
+def handle_excel_export(client_name: str):
+    """Handle Excel report generation."""
+    try:
+        # Find final files in client's output directory
+        output_dir = os.path.join("data", "clients", client_name, "output")
+        if not os.path.exists(output_dir):
+            click.echo(f"No output directory found for client: {client_name}")
+            return
+
+        final_files = [f for f in os.listdir(output_dir) if "final" in f.lower()]
+        if not final_files:
+            click.echo("No final files found in output directory")
+            return
+
+        # Select file to process
+        file_choice = questionary.select(
+            "Select file to create Excel report from:", choices=final_files + ["Cancel"]
+        ).ask()
+
+        if file_choice == "Cancel":
+            return
+
+        # Create Excel report
+        file_path = os.path.join(output_dir, file_choice)
+        excel_output = os.path.join(output_dir, f"{client_name}_report.xlsx")
+
+        # Read the CSV data
+        df = pd.read_csv(file_path)
+
+        # Create Excel report
+        from .sheets.excel_formatter import ExcelReportFormatter
+
+        formatter = ExcelReportFormatter()
+        formatter.create_report(
+            data=df, output_path=excel_output, client_name=client_name
+        )
+
+        click.echo(f"Successfully created Excel report at: {excel_output}")
+
+    except Exception as e:
+        click.echo(f"Error creating Excel report: {e}")
+
+
 def start_menu():
     """Start the interactive menu system."""
     while True:
@@ -67,6 +165,9 @@ def start_menu():
                 "Process Row Range (Fast Mode)",
                 "Process Row Range (Precise Mode)",
                 "Resume Processing from Pass",
+                "\nData Export:",
+                "Export to Excel Report",
+                "Upload to Google Sheets",
                 "Exit",
             ],
         ).ask()
@@ -78,7 +179,7 @@ def start_menu():
             list_clients()
             continue
 
-        # Get client selection
+        # Get client selection for other actions
         clients = get_client_list()
         if not clients:
             click.echo("No clients found. Please create a client first.")
@@ -167,6 +268,11 @@ def start_menu():
                     )
             except Exception as e:
                 click.echo(f"Error: {e}")
+
+        elif action == "Export to Excel Report":
+            handle_excel_export(client_name)
+        elif action == "Upload to Google Sheets":
+            handle_sheets_menu(client_name)
 
         elif action in [
             "Pass 1: Identify Payees (Fast Mode)",
