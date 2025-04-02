@@ -133,6 +133,48 @@ def handle_excel_export(client_name: str):
         click.echo(f"Error creating Excel report: {e}")
 
 
+def sync_transactions_to_db(client_name: str):
+    """Sync normalized transactions from CSV to SQLite database."""
+    try:
+        # Get paths
+        config = get_client_config(client_name)
+        paths = get_current_paths(config)
+        csv_path = os.path.join(
+            "data",
+            "clients",
+            client_name,
+            "output",
+            f"{client_name}_normalized_transactions.csv",
+        )
+
+        if not os.path.exists(csv_path):
+            click.echo(f"No normalized transactions file found at: {csv_path}")
+            return
+
+        # Read CSV file
+        df = pd.read_csv(csv_path)
+        if df.empty:
+            click.echo("No transactions found in CSV file")
+            return
+
+        # Initialize database
+        db = ClientDB()
+
+        # Confirm with user
+        click.echo(f"\nFound {len(df)} transactions in CSV file.")
+        if questionary.confirm(
+            "This will replace all existing transactions in the database. Continue?"
+        ).ask():
+            # Save to database
+            db.save_normalized_transactions(client_name, df)
+            click.echo(f"Successfully synced {len(df)} transactions to database")
+        else:
+            click.echo("Operation cancelled")
+
+    except Exception as e:
+        click.echo(f"Error syncing transactions to database: {e}")
+
+
 def start_menu():
     """Start the interactive menu system."""
     while True:
@@ -156,7 +198,8 @@ def start_menu():
                 "Process Row Range (Fast Mode)",
                 "Process Row Range (Precise Mode)",
                 "Resume Processing from Pass",
-                "\nData Export:",
+                "\nData Management:",
+                "Sync Transactions to Database",
                 "Export to Excel Report",
                 "Upload to Google Sheets",
                 "Exit",
@@ -319,6 +362,12 @@ def start_menu():
 
             except Exception as e:
                 click.echo(f"Error processing transactions: {e}")
+
+        elif action == "Sync Transactions to Database":
+            try:
+                sync_transactions_to_db(client_name)
+            except Exception as e:
+                click.echo(f"Error syncing transactions: {e}")
 
         elif action == "Export to Excel Report":
             handle_excel_export(client_name)
