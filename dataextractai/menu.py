@@ -198,8 +198,13 @@ def start_menu():
                 "Process Row Range (Fast Mode)",
                 "Process Row Range (Precise Mode)",
                 "Resume Processing from Pass",
+                "\nTransaction Management:",
+                "View Transaction Status",
+                "Force Process Transaction",
+                "Reset Transaction Status",
                 "\nData Management:",
                 "Sync Transactions to Database",
+                "Purge Classification Cache",
                 "Export to Excel Report",
                 "Upload to Google Sheets",
                 "Exit",
@@ -302,6 +307,30 @@ def start_menu():
             except Exception as e:
                 click.echo(f"Error normalizing transactions: {e}")
 
+        elif action == "Purge Classification Cache":
+            try:
+                db = ClientDB()
+                client_id = db.get_client_id(client_name)
+
+                # Ask for confirmation
+                if questionary.confirm(
+                    "Are you sure you want to purge the classification cache? This will force re-processing of all transactions, but won't delete existing classification results."
+                ).ask():
+                    with sqlite3.connect(db.db_path) as conn:
+                        # Delete all cache entries for this client
+                        conn.execute(
+                            "DELETE FROM transaction_cache WHERE client_id = ?",
+                            (client_id,),
+                        )
+                        click.echo(
+                            "Cache purged successfully! You can now re-run classification to get fresh results."
+                        )
+                else:
+                    click.echo("Cache purge cancelled.")
+
+            except Exception as e:
+                click.echo(f"Error purging cache: {e}")
+
         elif action.startswith("Pass ") or action.startswith("Process "):
             try:
                 # Get transactions from database
@@ -356,6 +385,55 @@ def start_menu():
                     # Extract pass number and process specific pass
                     pass_num = int(action[5:6])  # "Pass 1", "Pass 2", "Pass 3"
 
+                    # Check dependencies before running passes
+                    if pass_num > 1:
+                        # Check if Pass 1 has been completed
+                        with sqlite3.connect(db.db_path) as conn:
+                            cursor = conn.execute(
+                                """
+                                SELECT COUNT(*) 
+                                FROM normalized_transactions t
+                                LEFT JOIN transaction_classifications c 
+                                    ON t.transaction_id = c.transaction_id 
+                                    AND t.client_id = c.client_id
+                                WHERE t.client_id = ? 
+                                AND (c.payee IS NULL OR c.payee = '' OR c.payee = 'Unknown Payee')
+                                """,
+                                (db.get_client_id(client_name),),
+                            )
+                            missing_payees = cursor.fetchone()[0]
+
+                            if missing_payees > 0:
+                                click.echo(
+                                    f"Error: {missing_payees} transactions are missing valid payees. Please run Pass 1 first."
+                                )
+                                continue
+
+                    if pass_num > 2:
+                        # Check if Pass 2 has been completed
+                        with sqlite3.connect(db.db_path) as conn:
+                            cursor = conn.execute(
+                                """
+                                SELECT COUNT(*) 
+                                FROM normalized_transactions t
+                                LEFT JOIN transaction_classifications c 
+                                    ON t.transaction_id = c.transaction_id 
+                                    AND t.client_id = c.client_id
+                                WHERE t.client_id = ? 
+                                AND c.payee IS NOT NULL 
+                                AND c.payee != 'Unknown Payee'
+                                AND (c.category IS NULL OR c.category = '' OR c.category = 'Unclassified')
+                                """,
+                                (db.get_client_id(client_name),),
+                            )
+                            missing_categories = cursor.fetchone()[0]
+
+                            if missing_categories > 0:
+                                click.echo(
+                                    f"Error: {missing_categories} transactions with valid payees are missing categories. Please run Pass 2 first."
+                                )
+                                continue
+
                     # For individual passes, we'll use resume_from_pass to control execution
                     # Pass 1: resume_from_pass=1 (only payee identification)
                     # Pass 2: resume_from_pass=2 (only category assignment)
@@ -383,6 +461,299 @@ def start_menu():
 
         elif action == "Upload to Google Sheets":
             handle_sheets_menu(client_name)
+
+        elif action == "View Transaction Status":
+            try:
+                # Get transactions from database
+                db = ClientDB()
+                transactions_df = db.load_normalized_transactions(client_name)
+
+                if transactions_df.empty:
+                    click.echo("No transactions found.")
+                    continue
+
+                # Show transaction summary
+                with sqlite3.connect(db.db_path) as conn:
+                    # Define status colors
+                    status_colors = {
+                        "completed": "green",
+                        "processing": "yellow",
+                        "pending": "blue",
+                        "error": "red",
+                        "skipped": "magenta",
+                        "force_required": "bright_red",
+                    }
+
+                    # Function to format status with color
+                    def format_status(status, count):
+                        color = status_colors.get(status, "white")
+                        return click.style(
+                            f"  {status}: {count} transactions", fg=color
+                        )
+
+                    # Pass 1 Status
+                    cursor = conn.execute(
+                        """
+                        SELECT 
+                            pass_1_status, COUNT(*) as count
+                        FROM transaction_status
+                        WHERE client_id = ?
+                        GROUP BY pass_1_status
+                        ORDER BY 
+                            CASE pass_1_status
+                                WHEN 'completed' THEN 1
+                                WHEN 'processing' THEN 2
+                                WHEN 'pending' THEN 3
+                                WHEN 'error' THEN 4
+                                WHEN 'skipped' THEN 5
+                                WHEN 'force_required' THEN 6
+                            END
+                        """,
+                        (db.get_client_id(client_name),),
+                    )
+                    click.echo("\nPass 1 (Payee Identification) Status:")
+                    for status, count in cursor:
+                        click.echo(format_status(status, count))
+
+                    # Pass 2 Status
+                    cursor = conn.execute(
+                        """
+                        SELECT 
+                            pass_2_status, COUNT(*) as count
+                        FROM transaction_status
+                        WHERE client_id = ?
+                        GROUP BY pass_2_status
+                        ORDER BY 
+                            CASE pass_2_status
+                                WHEN 'completed' THEN 1
+                                WHEN 'processing' THEN 2
+                                WHEN 'pending' THEN 3
+                                WHEN 'error' THEN 4
+                                WHEN 'skipped' THEN 5
+                                WHEN 'force_required' THEN 6
+                            END
+                        """,
+                        (db.get_client_id(client_name),),
+                    )
+                    click.echo("\nPass 2 (Category Assignment) Status:")
+                    for status, count in cursor:
+                        click.echo(format_status(status, count))
+
+                    # Pass 3 Status
+                    cursor = conn.execute(
+                        """
+                        SELECT 
+                            pass_3_status, COUNT(*) as count
+                        FROM transaction_status
+                        WHERE client_id = ?
+                        GROUP BY pass_3_status
+                        ORDER BY 
+                            CASE pass_3_status
+                                WHEN 'completed' THEN 1
+                                WHEN 'processing' THEN 2
+                                WHEN 'pending' THEN 3
+                                WHEN 'error' THEN 4
+                                WHEN 'skipped' THEN 5
+                                WHEN 'force_required' THEN 6
+                            END
+                        """,
+                        (db.get_client_id(client_name),),
+                    )
+                    click.echo("\nPass 3 (Classification) Status:")
+                    for status, count in cursor:
+                        click.echo(format_status(status, count))
+
+                    # Show legend
+                    click.echo("\nStatus Legend:")
+                    for status, color in status_colors.items():
+                        click.echo(click.style(f"  {status}", fg=color))
+
+                # Allow viewing details of specific transactions
+                while questionary.confirm("\nView specific transaction details?").ask():
+                    transaction_id = questionary.text("Enter transaction ID:").ask()
+                    status = db.get_transaction_status(client_name, transaction_id)
+                    if status:
+                        click.echo("\nTransaction Status:")
+                        for pass_num, details in status.items():
+                            click.echo(f"\n{pass_num.upper()}:")
+                            status_color = status_colors.get(details["status"], "white")
+                            click.echo(
+                                click.style(
+                                    f"  Status: {details['status']}", fg=status_color
+                                )
+                            )
+                            if details["error"]:
+                                click.echo(
+                                    click.style(
+                                        f"  Error: {details['error']}", fg="red"
+                                    )
+                                )
+                            if details["processed_at"]:
+                                click.echo(
+                                    f"  Last Processed: {details['processed_at']}"
+                                )
+                    else:
+                        click.echo("Transaction not found.")
+
+            except Exception as e:
+                click.echo(f"Error viewing transaction status: {e}")
+
+        elif action == "Force Process Transaction":
+            try:
+                # Get transactions from database
+                db = ClientDB()
+                transactions_df = db.load_normalized_transactions(client_name)
+
+                if transactions_df.empty:
+                    click.echo("No transactions found.")
+                    continue
+
+                # Get transaction ID
+                transaction_id = questionary.text(
+                    "Enter transaction ID to process:"
+                ).ask()
+
+                # Get current status
+                status = db.get_transaction_status(client_name, transaction_id)
+                if not status:
+                    click.echo("Transaction not found.")
+                    continue
+
+                # Show current status
+                click.echo("\nCurrent Status:")
+                for pass_num, details in status.items():
+                    click.echo(f"{pass_num.upper()}: {details['status']}")
+
+                # Select pass to force
+                pass_to_force = questionary.select(
+                    "Which pass would you like to force?",
+                    choices=[
+                        "Pass 1: Payee Identification",
+                        "Pass 2: Category Assignment",
+                        "Pass 3: Classification",
+                        "All Passes",
+                    ],
+                ).ask()
+
+                # Get model type
+                model_type = questionary.select(
+                    "Select processing mode:",
+                    choices=["fast", "precise"],
+                ).ask()
+
+                # Initialize classifier
+                classifier = TransactionClassifier(
+                    client_name=client_name,
+                    model_type=model_type,
+                )
+
+                # Process the transaction
+                if "Pass 1" in pass_to_force:
+                    result_df = classifier.process_transactions(
+                        transactions_df[
+                            transactions_df["transaction_id"] == transaction_id
+                        ],
+                        resume_from_pass=1,
+                        force_process=True,
+                    )
+                elif "Pass 2" in pass_to_force:
+                    result_df = classifier.process_transactions(
+                        transactions_df[
+                            transactions_df["transaction_id"] == transaction_id
+                        ],
+                        resume_from_pass=2,
+                        force_process=True,
+                    )
+                elif "Pass 3" in pass_to_force:
+                    result_df = classifier.process_transactions(
+                        transactions_df[
+                            transactions_df["transaction_id"] == transaction_id
+                        ],
+                        resume_from_pass=3,
+                        force_process=True,
+                    )
+                else:  # All Passes
+                    result_df = classifier.process_transactions(
+                        transactions_df[
+                            transactions_df["transaction_id"] == transaction_id
+                        ],
+                        force_process=True,
+                    )
+
+                click.echo("Successfully processed transaction")
+
+            except Exception as e:
+                click.echo(f"Error processing transaction: {e}")
+
+        elif action == "Reset Transaction Status":
+            try:
+                # Get transactions from database
+                db = ClientDB()
+                transactions_df = db.load_normalized_transactions(client_name)
+
+                if transactions_df.empty:
+                    click.echo("No transactions found.")
+                    continue
+
+                # Get transaction ID
+                transaction_id = questionary.text(
+                    "Enter transaction ID to reset:"
+                ).ask()
+
+                # Get current status
+                status = db.get_transaction_status(client_name, transaction_id)
+                if not status:
+                    click.echo("Transaction not found.")
+                    continue
+
+                # Show current status
+                click.echo("\nCurrent Status:")
+                for pass_num, details in status.items():
+                    click.echo(f"{pass_num.upper()}: {details['status']}")
+
+                # Select passes to reset
+                passes_to_reset = questionary.checkbox(
+                    "Select passes to reset:",
+                    choices=[
+                        "Pass 1: Payee Identification",
+                        "Pass 2: Category Assignment",
+                        "Pass 3: Classification",
+                    ],
+                ).ask()
+
+                if not passes_to_reset:
+                    click.echo("No passes selected.")
+                    continue
+
+                # Confirm reset
+                if questionary.confirm(
+                    "This will reset the selected passes to 'pending' status. Continue?"
+                ).ask():
+                    with sqlite3.connect(db.db_path) as conn:
+                        updates = []
+                        params = []
+                        for pass_choice in passes_to_reset:
+                            pass_num = pass_choice[5:6]  # Extract number from "Pass X:"
+                            updates.append(f"pass_{pass_num}_status = ?")
+                            updates.append(f"pass_{pass_num}_error = ?")
+                            updates.append(f"pass_{pass_num}_processed_at = ?")
+                            params.extend(["pending", None, None])
+
+                        query = f"""
+                        UPDATE transaction_status 
+                        SET {", ".join(updates)},
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE client_id = ? AND transaction_id = ?
+                        """
+                        params.extend([db.get_client_id(client_name), transaction_id])
+
+                        conn.execute(query, params)
+                        click.echo("Successfully reset transaction status")
+                else:
+                    click.echo("Reset cancelled")
+
+            except Exception as e:
+                click.echo(f"Error resetting transaction status: {e}")
 
 
 if __name__ == "__main__":

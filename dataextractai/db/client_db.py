@@ -113,6 +113,44 @@ class ClientDB:
             """
             )
 
+            # Transaction processing status
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS transaction_status (
+                    id INTEGER PRIMARY KEY,
+                    client_id INTEGER NOT NULL,
+                    transaction_id TEXT NOT NULL,
+                    -- Status for each pass
+                    pass_1_status TEXT CHECK(pass_1_status IN ('pending', 'processing', 'completed', 'error', 'skipped', 'force_required')),
+                    pass_1_error TEXT,
+                    pass_1_processed_at TIMESTAMP,
+                    pass_2_status TEXT CHECK(pass_2_status IN ('pending', 'processing', 'completed', 'error', 'skipped', 'force_required')),
+                    pass_2_error TEXT,
+                    pass_2_processed_at TIMESTAMP,
+                    pass_3_status TEXT CHECK(pass_3_status IN ('pending', 'processing', 'completed', 'error', 'skipped', 'force_required')),
+                    pass_3_error TEXT,
+                    pass_3_processed_at TIMESTAMP,
+                    -- Metadata
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY(client_id) REFERENCES clients(id),
+                    FOREIGN KEY(client_id, transaction_id) REFERENCES normalized_transactions(client_id, transaction_id),
+                    UNIQUE(client_id, transaction_id)
+                )
+            """
+            )
+
+            # Initialize status for new transactions
+            conn.execute(
+                """
+                INSERT INTO transaction_status (client_id, transaction_id, pass_1_status, pass_2_status, pass_3_status)
+                SELECT t.client_id, t.transaction_id, 'pending', 'pending', 'pending'
+                FROM normalized_transactions t
+                LEFT JOIN transaction_status s ON t.client_id = s.client_id AND t.transaction_id = s.transaction_id
+                WHERE s.id IS NULL
+                """
+            )
+
             # Transaction classification cache
             conn.execute(
                 """
@@ -466,3 +504,77 @@ class ClientDB:
         logger.info(
             f"Saved {pass_type} classification for transaction {transaction_id}"
         )
+
+    def update_transaction_status(
+        self,
+        client_name: str,
+        transaction_id: str,
+        pass_num: int,
+        status: str,
+        error: Optional[str] = None,
+    ) -> None:
+        """Update the processing status for a transaction pass."""
+        client_id = self.get_client_id(client_name)
+        with sqlite3.connect(self.db_path) as conn:
+            # First ensure the status record exists
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO transaction_status 
+                (client_id, transaction_id, pass_1_status, pass_2_status, pass_3_status)
+                VALUES (?, ?, 'pending', 'pending', 'pending')
+                """,
+                (client_id, transaction_id),
+            )
+
+            # Update the status
+            conn.execute(
+                f"""
+                UPDATE transaction_status 
+                SET pass_{pass_num}_status = ?,
+                    pass_{pass_num}_error = ?,
+                    pass_{pass_num}_processed_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE client_id = ? AND transaction_id = ?
+                """,
+                (status, error, client_id, transaction_id),
+            )
+
+    def get_transaction_status(
+        self,
+        client_name: str,
+        transaction_id: str,
+    ) -> Dict:
+        """Get the current processing status for a transaction."""
+        client_id = self.get_client_id(client_name)
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                """
+                SELECT 
+                    pass_1_status, pass_1_error, pass_1_processed_at,
+                    pass_2_status, pass_2_error, pass_2_processed_at,
+                    pass_3_status, pass_3_error, pass_3_processed_at
+                FROM transaction_status
+                WHERE client_id = ? AND transaction_id = ?
+                """,
+                (client_id, transaction_id),
+            )
+            result = cursor.fetchone()
+            if result:
+                return {
+                    "pass_1": {
+                        "status": result[0],
+                        "error": result[1],
+                        "processed_at": result[2],
+                    },
+                    "pass_2": {
+                        "status": result[3],
+                        "error": result[4],
+                        "processed_at": result[5],
+                    },
+                    "pass_3": {
+                        "status": result[6],
+                        "error": result[7],
+                        "processed_at": result[8],
+                    },
+                }
+            return None

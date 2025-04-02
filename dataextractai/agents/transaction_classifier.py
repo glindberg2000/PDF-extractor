@@ -124,17 +124,19 @@ class TransactionClassifier:
         start_row: Optional[int] = None,
         end_row: Optional[int] = None,
         resume_from_pass: Optional[int] = None,
+        force_process: bool = False,
     ) -> pd.DataFrame:
         """Process transactions one at a time through three passes:
         1. Payee identification
-        2. Category assignment
-        3. Classification
+        2. Category assignment (requires Pass 1)
+        3. Classification (requires Pass 2)
 
         Args:
             transactions_df: DataFrame containing transactions
             start_row: Optional starting row index (inclusive)
             end_row: Optional ending row index (exclusive)
             resume_from_pass: Optional pass number to resume from (1=payee, 2=category, 3=classification)
+            force_process: Whether to force processing regardless of dependencies
 
         Returns:
             DataFrame with added classification columns
@@ -154,9 +156,14 @@ class TransactionClassifier:
                 print(f"\nProcessing transaction {row_idx + 1}/{end_row}...")
                 description = transactions_df.iloc[row_idx]["description"]
                 transaction_id = transactions_df.iloc[row_idx]["transaction_id"]
-                cache_key = self._get_cache_key(description)
+
+                # Update status to processing
+                self.db.update_transaction_status(
+                    self.client_name, transaction_id, 1, "processing"
+                )
 
                 try:
+                    cache_key = self._get_cache_key(description)
                     # Check cache first
                     cached_result = self._get_cached_result(cache_key, "payee")
                     if cached_result:
@@ -187,43 +194,82 @@ class TransactionClassifier:
                         "payee",
                     )
 
+                    # Update status to completed
+                    self.db.update_transaction_status(
+                        self.client_name, transaction_id, 1, "completed"
+                    )
+
                 except Exception as e:
-                    print(f"Error processing payee for transaction {row_idx}: {str(e)}")
+                    error_msg = str(e)
+                    print(
+                        f"Error processing payee for transaction {row_idx}: {error_msg}"
+                    )
                     self.db.save_transaction_classification(
                         self.client_name,
                         transaction_id,
                         {
                             "payee": "Unknown Payee",
                             "payee_confidence": "low",
-                            "payee_reasoning": f"Error during processing: {str(e)}",
+                            "payee_reasoning": f"Error during processing: {error_msg}",
                         },
                         "payee",
                     )
+                    # Update status to error
+                    self.db.update_transaction_status(
+                        self.client_name, transaction_id, 1, "error", error_msg
+                    )
 
-        # Pass 2: Process all categories
-        if resume_from_pass is None or resume_from_pass <= 2:
+        # Pass 2: Process categories (only for transactions with payees)
+        if resume_from_pass is None or resume_from_pass == 2:
             print(f"\nPass 2: Processing categories for rows {start_row}-{end_row}...")
             for row_idx in range(start_row, end_row):
                 print(f"\nProcessing transaction {row_idx + 1}/{end_row}...")
                 description = transactions_df.iloc[row_idx]["description"]
                 transaction_id = transactions_df.iloc[row_idx]["transaction_id"]
 
-                # Get payee from database
-                with sqlite3.connect(self.db.db_path) as conn:
-                    cursor = conn.execute(
-                        """
-                        SELECT payee
-                        FROM transaction_classifications
-                        WHERE client_id = ? AND transaction_id = ?
-                        """,
-                        (client_id, transaction_id),
+                # Check if Pass 1 has been completed for this transaction
+                if not force_process:
+                    status = self.db.get_transaction_status(
+                        self.client_name, transaction_id
                     )
-                    result = cursor.fetchone()
-                    payee = result[0] if result else "Unknown Payee"
+                    if not status or status["pass_1"]["status"] != "completed":
+                        print(
+                            f"Skipping transaction {row_idx + 1} - Pass 1 not completed"
+                        )
+                        # Mark as force required
+                        self.db.update_transaction_status(
+                            self.client_name, transaction_id, 2, "force_required"
+                        )
+                        continue
 
-                cache_key = self._get_cache_key(description, payee)
+                # Update status to processing
+                self.db.update_transaction_status(
+                    self.client_name, transaction_id, 2, "processing"
+                )
 
                 try:
+                    # Get payee from database
+                    with sqlite3.connect(self.db.db_path) as conn:
+                        cursor = conn.execute(
+                            """
+                            SELECT payee
+                            FROM transaction_classifications
+                            WHERE client_id = ? AND transaction_id = ?
+                            """,
+                            (client_id, transaction_id),
+                        )
+                        result = cursor.fetchone()
+                        payee = result[0] if result else None
+
+                    if not payee:
+                        print(f"Skipping transaction {row_idx + 1} - no payee found")
+                        self.db.update_transaction_status(
+                            self.client_name, transaction_id, 2, "skipped"
+                        )
+                        continue
+
+                    cache_key = self._get_cache_key(description, payee)
+
                     # Check cache first
                     cached_result = self._get_cached_result(cache_key, "category")
                     if cached_result:
@@ -258,9 +304,15 @@ class TransactionClassifier:
                         "category",
                     )
 
+                    # Update status to completed
+                    self.db.update_transaction_status(
+                        self.client_name, transaction_id, 2, "completed"
+                    )
+
                 except Exception as e:
+                    error_msg = str(e)
                     print(
-                        f"Error processing category for transaction {row_idx}: {str(e)}"
+                        f"Error processing category for transaction {row_idx}: {error_msg}"
                     )
                     self.db.save_transaction_classification(
                         self.client_name,
@@ -268,15 +320,19 @@ class TransactionClassifier:
                         {
                             "category": "Unclassified",
                             "category_confidence": "low",
-                            "category_reasoning": f"Error during processing: {str(e)}",
+                            "category_reasoning": f"Error during processing: {error_msg}",
                             "suggested_new_category": None,
                             "new_category_reasoning": None,
                         },
                         "category",
                     )
+                    # Update status to error
+                    self.db.update_transaction_status(
+                        self.client_name, transaction_id, 2, "error", error_msg
+                    )
 
-        # Pass 3: Process all classifications
-        if resume_from_pass is None or resume_from_pass <= 3:
+        # Pass 3: Process classifications (only for transactions with categories)
+        if resume_from_pass is None or resume_from_pass == 3:
             print(
                 f"\nPass 3: Processing classifications for rows {start_row}-{end_row}..."
             )
@@ -285,23 +341,52 @@ class TransactionClassifier:
                 description = transactions_df.iloc[row_idx]["description"]
                 transaction_id = transactions_df.iloc[row_idx]["transaction_id"]
 
-                # Get payee and category from database
-                with sqlite3.connect(self.db.db_path) as conn:
-                    cursor = conn.execute(
-                        """
-                        SELECT payee, category
-                        FROM transaction_classifications
-                        WHERE client_id = ? AND transaction_id = ?
-                        """,
-                        (client_id, transaction_id),
+                # Check if Pass 2 has been completed for this transaction
+                if not force_process:
+                    status = self.db.get_transaction_status(
+                        self.client_name, transaction_id
                     )
-                    result = cursor.fetchone()
-                    payee = result[0] if result else "Unknown Payee"
-                    category = result[1] if result else "Unclassified"
+                    if not status or status["pass_2"]["status"] != "completed":
+                        print(
+                            f"Skipping transaction {row_idx + 1} - Pass 2 not completed"
+                        )
+                        # Mark as force required
+                        self.db.update_transaction_status(
+                            self.client_name, transaction_id, 3, "force_required"
+                        )
+                        continue
 
-                cache_key = self._get_cache_key(description, payee, category)
+                # Update status to processing
+                self.db.update_transaction_status(
+                    self.client_name, transaction_id, 3, "processing"
+                )
 
                 try:
+                    # Get payee and category from database
+                    with sqlite3.connect(self.db.db_path) as conn:
+                        cursor = conn.execute(
+                            """
+                            SELECT payee, category
+                            FROM transaction_classifications
+                            WHERE client_id = ? AND transaction_id = ?
+                            """,
+                            (client_id, transaction_id),
+                        )
+                        result = cursor.fetchone()
+                        payee = result[0] if result else None
+                        category = result[1] if result else None
+
+                    if not payee or not category:
+                        print(
+                            f"Skipping transaction {row_idx + 1} - missing payee or category"
+                        )
+                        self.db.update_transaction_status(
+                            self.client_name, transaction_id, 3, "skipped"
+                        )
+                        continue
+
+                    cache_key = self._get_cache_key(description, payee, category)
+
                     # Check cache first
                     cached_result = self._get_cached_result(cache_key, "classification")
                     if cached_result:
@@ -339,9 +424,15 @@ class TransactionClassifier:
                         "classification",
                     )
 
+                    # Update status to completed
+                    self.db.update_transaction_status(
+                        self.client_name, transaction_id, 3, "completed"
+                    )
+
                 except Exception as e:
+                    error_msg = str(e)
                     print(
-                        f"Error processing classification for transaction {row_idx}: {str(e)}"
+                        f"Error processing classification for transaction {row_idx}: {error_msg}"
                     )
                     self.db.save_transaction_classification(
                         self.client_name,
@@ -349,10 +440,14 @@ class TransactionClassifier:
                         {
                             "classification": "Unclassified",
                             "classification_confidence": "low",
-                            "classification_reasoning": f"Error during processing: {str(e)}",
+                            "classification_reasoning": f"Error during processing: {error_msg}",
                             "tax_implications": "Error during processing",
                         },
                         "classification",
+                    )
+                    # Update status to error
+                    self.db.update_transaction_status(
+                        self.client_name, transaction_id, 3, "error", error_msg
                     )
 
         # Load final results from database
@@ -362,6 +457,26 @@ class TransactionClassifier:
 
     def _get_payee(self, description: str) -> PayeeResponse:
         """Process a single description to identify payee."""
+        cache_key = self._get_cache_key(description)
+
+        # Check cache first
+        cached_result = self._get_cached_result(cache_key, "payee")
+        if cached_result:
+            # Parse the cached result
+            result = PayeeResponse(**cached_result)
+
+            # Only use cache if:
+            # 1. It's a high confidence result, OR
+            # 2. It's been enriched with Brave Search before (indicated by enrichment info in reasoning)
+            if (
+                result.confidence == "high"
+                or "Enriched with business information:" in result.reasoning
+            ):
+                print("Using cached payee result")
+                return result
+            # Otherwise, we'll try to improve it with Brave Search
+
+        # Get initial AI identification
         prompt = (
             PROMPTS["get_payee"]
             + f"\n\nBusiness Context:\n{self.business_context}\n\n"
@@ -450,6 +565,18 @@ class TransactionClassifier:
                 except Exception as e:
                     # Log the error but don't fail the classification
                     logger.warning(f"Error enriching payee with Brave Search: {str(e)}")
+
+            # Cache the result regardless of confidence
+            # This way we know if we've tried Brave Search before
+            self._cache_result(
+                cache_key,
+                "payee",
+                {
+                    "payee": initial_response.payee,
+                    "confidence": initial_response.confidence,
+                    "reasoning": initial_response.reasoning,
+                },
+            )
 
             return initial_response
 
