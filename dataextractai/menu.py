@@ -234,7 +234,17 @@ def start_menu():
                 # Check if profile needs migration
                 db = ClientDB()
                 existing_profile = db.load_profile(client_name)
-                if existing_profile and "ai_generated_categories" in existing_profile:
+                needs_migration = existing_profile and (
+                    "ai_generated_categories" in existing_profile
+                    or "category_hierarchy" in existing_profile
+                    or "supplementary_categories" in existing_profile
+                    or any(
+                        v != "Other expenses"
+                        for k, v in existing_profile.get("category_mapping", {}).items()
+                        if k != "Computer and Internet"
+                    )  # Any custom categories not mapped to Other expenses
+                )
+                if needs_migration:
                     if questionary.confirm(
                         "Your profile is using an old format. Would you like to migrate it to the new 6A worksheet format?"
                     ).ask():
