@@ -231,5 +231,43 @@ def process_all(
         raise click.Abort()
 
 
+@cli.command()
+@click.argument("client_name")
+@click.option("--business-type", "-t", help="Type of business", required=True)
+@click.option("--description", "-d", help="Business description", required=True)
+@click.option(
+    "--categories",
+    "-c",
+    help="Custom categories (comma-separated)",
+    default="",
+)
+def update_profile(
+    client_name: str, business_type: str, description: str, categories: str
+):
+    """Create or update a client's business profile."""
+    try:
+        # Parse categories
+        custom_categories = (
+            [cat.strip() for cat in categories.split(",")] if categories else []
+        )
+
+        # Initialize profile manager
+        manager = ClientProfileManager(client_name)
+
+        # Create or update profile
+        profile = manager.create_or_update_profile(
+            business_type=business_type,
+            business_description=description,
+            custom_categories=custom_categories,
+        )
+
+        logger.info(f"Successfully updated business profile for {client_name}")
+        logger.info(f"Profile saved to: {manager.profile_file}")
+
+    except Exception as e:
+        logger.error(f"Error updating business profile: {str(e)}")
+        raise click.Abort()
+
+
 if __name__ == "__main__":
     cli()
