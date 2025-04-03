@@ -235,3 +235,85 @@ Return the response as a JSON object with the following structure:
 }}"""
 
         return prompt
+
+    def _migrate_profile_to_6a(self, profile: Dict) -> Dict:
+        """Migrate an existing profile to the 6A-focused format."""
+        # Define fixed 6A categories
+        SCHEDULE_6A_CATEGORIES = [
+            "Advertising",
+            "Car and truck expenses",
+            "Commissions and fees",
+            "Contract labor",
+            "Depletion",
+            "Employee benefit programs",
+            "Insurance (other than health)",
+            "Interest (mortgage/other)",
+            "Legal and professional services",
+            "Office expenses",
+            "Pension and profit-sharing plans",
+            "Rent or lease (vehicles/equipment/other)",
+            "Repairs and maintenance",
+            "Supplies",
+            "Taxes and licenses",
+            "Travel, meals, and entertainment",
+            "Utilities",
+            "Wages",
+            "Other expenses",
+        ]
+
+        # Start with basic profile info
+        migrated = {
+            "business_type": profile["business_type"],
+            "business_description": profile["business_description"],
+            "custom_categories": profile["custom_categories"],
+            "schedule_6a_categories": SCHEDULE_6A_CATEGORIES,
+            "industry_insights": profile["industry_insights"],
+            "business_context": profile["business_context"],
+            "last_updated": datetime.utcnow().isoformat() + "Z",
+        }
+
+        # Map custom categories to 6A categories
+        category_mapping = {
+            "Dues and Subscriptions": "Other expenses",
+            "MLS Dues": "Other expenses",
+            "Open House Expenses": "Other expenses",
+            "Staging": "Other expenses",
+            "Computer and Internet": "Office expenses",
+        }
+        migrated["category_mapping"] = category_mapping
+
+        # Keep only the patterns for 6A categories and mapped custom categories
+        category_patterns = {}
+        if "category_patterns" in profile:
+            # First, add all 6A category patterns
+            for cat in SCHEDULE_6A_CATEGORIES:
+                if cat in profile["category_patterns"]:
+                    category_patterns[cat] = profile["category_patterns"][cat]
+
+            # Then add patterns for custom categories
+            for cat in profile["custom_categories"]:
+                if cat in profile["category_patterns"]:
+                    category_patterns[cat] = profile["category_patterns"][cat]
+
+        migrated["category_patterns"] = category_patterns
+
+        return migrated
+
+    def migrate_existing_profile(self) -> None:
+        """Migrate an existing profile to the new 6A-focused format."""
+        try:
+            # Load existing profile
+            profile = self._load_profile()
+            if not profile:
+                logger.error("No profile found to migrate")
+                return
+
+            # Migrate to new format
+            migrated = self._migrate_profile_to_6a(profile)
+
+            # Save migrated profile
+            self._save_profile(migrated)
+            logger.info(f"Successfully migrated profile for {self.client_name}")
+
+        except Exception as e:
+            logger.error(f"Error migrating profile: {e}")

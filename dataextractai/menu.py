@@ -228,8 +228,21 @@ def start_menu():
 
         if action == "Create/Update Business Profile":
             try:
-                # Try to load existing profile from database
+                # Initialize profile manager
+                profile_manager = ClientProfileManager(client_name)
+
+                # Check if profile needs migration
                 db = ClientDB()
+                existing_profile = db.load_profile(client_name)
+                if existing_profile and "ai_generated_categories" in existing_profile:
+                    if questionary.confirm(
+                        "Your profile is using an old format. Would you like to migrate it to the new 6A worksheet format?"
+                    ).ask():
+                        profile_manager.migrate_existing_profile()
+                        click.echo("Profile successfully migrated to 6A format.")
+                        continue
+
+                # Try to load existing profile from database
                 existing_profile = db.load_profile(client_name)
 
                 # Use existing values as defaults
@@ -273,9 +286,6 @@ def start_menu():
                     category = questionary.text("Enter category:").ask()
                     if category:
                         categories.append(category)
-
-                # Initialize profile manager
-                profile_manager = ClientProfileManager(client_name)
 
                 # Create or update profile with AI enhancement
                 profile = profile_manager.create_or_update_profile(
