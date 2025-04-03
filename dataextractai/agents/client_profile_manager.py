@@ -238,7 +238,7 @@ Return the response as a JSON object with the following structure:
 
     def _migrate_profile_to_6a(self, profile: Dict) -> Dict:
         """Migrate an existing profile to the 6A-focused format."""
-        # Define fixed 6A categories
+        # Define fixed 6A categories - these are immutable
         SCHEDULE_6A_CATEGORIES = [
             "Advertising",
             "Car and truck expenses",
@@ -272,140 +272,89 @@ Return the response as a JSON object with the following structure:
             "last_updated": datetime.utcnow().isoformat() + "Z",
         }
 
-        # Map custom categories to most appropriate 6A categories
-        category_mapping = {
-            "Computer and Internet": "Office expenses",
-            "Staging": "Contract labor",  # Staging is contracted work
-            "Open House Expenses": "Advertising",  # Open houses are marketing
-            "Dues and Subscriptions": "Other expenses",
-            "MLS Dues": "Other expenses",
-        }
+        # All custom categories go under "Other expenses"
+        # We'll tag some as ai_suggested for internal tracking
+        category_mapping = {}
+        for cat in profile["custom_categories"]:
+            category_mapping[cat] = "Other expenses"
+
+        # Add any AI-suggested categories that don't fit in 6A
+        # These will also go under "Other expenses" but be tagged
+        ai_suggested = [
+            "Professional Development",  # For continuing education that doesn't fit elsewhere
+            "Industry Memberships",  # For specialized memberships not covered by licenses
+        ]
+        migrated["ai_suggested_categories"] = ai_suggested  # Internal tracking only
+
         migrated["category_mapping"] = category_mapping
 
-        # Create patterns for each 6A category, focused on real estate
+        # Create patterns for strict 6A categories
         category_patterns = {
             "Advertising": [
-                "online ads for property listings",
-                "printed brochures and flyers",
-                "listing signs and direct mail",
-                "newspaper or magazine ad placements",
-                "open house expenses and materials",
-                "social media marketing costs",
-                "property photography services",
+                "property listings",
+                "marketing materials",
+                "signs",
+                "online advertising",
+                "print advertising",
             ],
             "Car and truck expenses": [
-                "mileage for property showings",
-                "fuel expenses for client visits",
-                "vehicle maintenance and repairs",
-                "parking fees during property tours",
-                "auto insurance (business portion)",
-                "vehicle registration (business portion)",
+                "vehicle mileage",
+                "fuel",
+                "maintenance",
+                "parking",
+                "vehicle insurance",
             ],
             "Commissions and fees": [
-                "brokerage commission splits",
-                "referral fees to other agents",
-                "transaction coordination fees",
-                "commission reimbursements",
-                "listing service fees",
+                "commission splits",
+                "referral fees",
+                "transaction fees",
             ],
             "Contract labor": [
-                "staging services and contractors",
-                "property preparation services",
-                "temporary support staff",
-                "photography and videography services",
-                "virtual tour creation",
-                "cleaning services for listings",
-            ],
-            "Depletion": ["not typically applicable to real estate sales"],
-            "Employee benefit programs": [
-                "health insurance contributions",
-                "retirement plan contributions",
-                "employee benefit administration",
+                "temporary help",
+                "independent contractors",
+                "service providers",
             ],
             "Insurance (other than health)": [
-                "errors and omissions insurance",
-                "professional liability insurance",
-                "business property insurance",
-                "event insurance for open houses",
-            ],
-            "Interest (mortgage/other)": [
-                "business loan interest",
-                "credit card interest (business portion)",
-                "equipment financing interest",
+                "liability insurance",
+                "errors and omissions",
+                "business insurance",
             ],
             "Legal and professional services": [
-                "attorney fees for contract review",
-                "accounting and tax preparation",
-                "legal document preparation",
-                "professional consulting fees",
-                "business formation services",
+                "legal fees",
+                "accounting fees",
+                "professional services",
             ],
             "Office expenses": [
-                "computer equipment and software",
-                "internet and phone service",
-                "office supplies and stationery",
-                "printing and copying costs",
-                "office furniture and equipment",
-                "technology subscriptions",
+                "supplies",
+                "equipment",
+                "software",
+                "phone",
+                "internet",
             ],
-            "Pension and profit-sharing plans": [
-                "retirement plan contributions",
-                "profit-sharing distributions",
-                "plan administration fees",
-            ],
-            "Rent or lease": [
-                "office space rental",
-                "equipment leases",
-                "furniture rentals",
-                "temporary space for events",
-                "storage unit rentals",
-            ],
+            "Rent or lease": ["office rent", "equipment rental", "space rental"],
             "Repairs and maintenance": [
-                "office equipment repairs",
-                "computer maintenance",
-                "property repairs (business space)",
-                "general maintenance costs",
+                "equipment repairs",
+                "office maintenance",
+                "general repairs",
             ],
-            "Supplies": [
-                "general office supplies",
-                "marketing materials",
-                "business cards",
-                "presentation materials",
-                "property showing supplies",
-            ],
-            "Taxes and licenses": [
-                "real estate license fees",
-                "business licenses",
-                "local permits",
-                "regulatory fees",
-                "business property taxes",
-            ],
+            "Supplies": ["office supplies", "business supplies", "general supplies"],
+            "Taxes and licenses": ["business licenses", "permits", "regulatory fees"],
             "Travel, meals, and entertainment": [
-                "client meals and entertainment",
-                "business travel expenses",
-                "conference and seminar costs",
-                "lodging for business trips",
-                "client appreciation events",
+                "business travel",
+                "meals with clients",
+                "entertainment expenses",
             ],
-            "Utilities": [
-                "electricity and gas",
-                "water and sewer",
-                "phone service",
-                "internet service",
-                "mobile phone plans",
-            ],
-            "Wages": [
-                "employee salaries",
-                "payroll taxes",
-                "staff bonuses",
-                "administrative staff wages",
-            ],
+            "Utilities": ["electricity", "water", "phone service", "internet service"],
+            "Wages": ["employee wages", "payroll", "salary expenses"],
             "Other expenses": [
-                "MLS dues and subscriptions",
-                "professional association fees",
-                "continuing education costs",
-                "professional certifications",
-                "bank and merchant fees",
+                # User-defined categories
+                "mls dues",
+                "professional dues",
+                "open house expenses",
+                "staging costs",
+                # AI-suggested categories
+                "professional development costs",
+                "industry membership fees",
             ],
         }
 
