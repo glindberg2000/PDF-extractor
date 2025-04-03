@@ -241,12 +241,11 @@ def start_menu():
                     or any(
                         v != "Other expenses"
                         for k, v in existing_profile.get("category_mapping", {}).items()
-                        if k != "Computer and Internet"
-                    )  # Any custom categories not mapped to Other expenses
+                    )  # ALL custom categories must go to Other expenses
                 )
                 if needs_migration:
                     if questionary.confirm(
-                        "Your profile is using an old format. Would you like to migrate it to the new 6A worksheet format?"
+                        "Your profile is using an old format. Would you like to migrate it to the new 6A worksheet format? This will put all custom categories under Other expenses."
                     ).ask():
                         profile_manager.migrate_existing_profile()
                         click.echo("Profile successfully migrated to 6A format.")
