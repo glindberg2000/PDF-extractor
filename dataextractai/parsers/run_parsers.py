@@ -173,6 +173,59 @@ def run_all_parsers(client_name: str, config: dict) -> int:
                 progress.advance(task)
                 continue
 
+            # Special handling for Wells Fargo Bank CSV files
+            if parser_name == "wellsfargo_bank_csv":
+                try:
+                    # Look for actual CSV files
+                    csv_files = glob.glob(os.path.join(input_dir, "*.csv"))
+                    if not csv_files:
+                        progress.print(f"No CSV files found in {input_dir}")
+                        progress.advance(task)
+                        continue
+
+                    progress.print(
+                        f"Found {len(csv_files)} CSV files in {parser_name} directory"
+                    )
+
+                    # Import and modify the module
+                    import dataextractai.parsers.wellsfargo_bank_csv_parser as wfbc_parser
+
+                    # Save original values
+                    original_source_dir = wfbc_parser.SOURCE_DIR
+                    original_output_csv = wfbc_parser.OUTPUT_PATH_CSV
+                    original_output_xlsx = wfbc_parser.OUTPUT_PATH_XLSX
+
+                    # Set new values
+                    wfbc_parser.SOURCE_DIR = input_dir
+                    wfbc_parser.OUTPUT_PATH_CSV = output_paths[parser_name]["csv"]
+                    wfbc_parser.OUTPUT_PATH_XLSX = output_paths[parser_name]["xlsx"]
+
+                    # Run parser
+                    df = parser_func(write_to_file=True)  # Let it write directly
+
+                    # Restore original values
+                    wfbc_parser.SOURCE_DIR = original_source_dir
+                    wfbc_parser.OUTPUT_PATH_CSV = original_output_csv
+                    wfbc_parser.OUTPUT_PATH_XLSX = original_output_xlsx
+
+                    if df is not None and not df.empty:
+                        total_processed += len(df)
+                        progress.print(
+                            f"Successfully processed {parser_name} directory with {len(df)} transactions"
+                        )
+                    else:
+                        progress.print(
+                            f"No data extracted from {parser_name} directory"
+                        )
+
+                except Exception as e:
+                    progress.print(
+                        f"Error processing {parser_name} directory: {str(e)}"
+                    )
+
+                progress.advance(task)
+                continue
+
             # Get PDF files directly using glob
             pdf_files = glob.glob(os.path.join(input_dir, "*.pdf"))
             if not pdf_files:
@@ -190,7 +243,6 @@ def run_all_parsers(client_name: str, config: dict) -> int:
                 "wellsfargo_visa",
                 "wellsfargo_bank",
                 "first_republic_bank",
-                "wellsfargo_bank_csv",
             ]
 
             # Process directory-based parsers all at once
@@ -241,20 +293,6 @@ def run_all_parsers(client_name: str, config: dict) -> int:
 
                         # Restore the original value
                         wfv_parser.SOURCE_DIR = original_source_dir
-                    elif parser_name == "wellsfargo_bank_csv":
-                        # Wells Fargo Bank CSV parser needs to have its SOURCE_DIR monkey-patched
-                        import dataextractai.parsers.wellsfargo_bank_csv_parser as wfbc_parser
-
-                        # Save the original value to restore later
-                        original_source_dir = wfbc_parser.SOURCE_DIR
-                        # Set the new value to our client-specific input directory
-                        wfbc_parser.SOURCE_DIR = input_dir
-
-                        # Now run the parser
-                        df = parser_func(write_to_file=False)
-
-                        # Restore the original value
-                        wfbc_parser.SOURCE_DIR = original_source_dir
                     else:
                         # For other directory-based parsers, we need a different approach
                         # Patch the source directory in the config
@@ -282,59 +320,6 @@ def run_all_parsers(client_name: str, config: dict) -> int:
                             df.to_excel(xlsx_path, index=False)
                             progress.print(f"Saved Excel output to {xlsx_path}")
 
-                        total_processed += len(df)
-                        progress.print(
-                            f"Successfully processed {parser_name} directory with {len(df)} transactions"
-                        )
-                    else:
-                        progress.print(
-                            f"No data extracted from {parser_name} directory"
-                        )
-
-                except Exception as e:
-                    progress.print(
-                        f"Error processing {parser_name} directory: {str(e)}"
-                    )
-
-                progress.advance(task)
-                continue
-
-            # Special handling for Wells Fargo Bank CSV files
-            elif parser_name == "wellsfargo_bank_csv":
-                try:
-                    # Look for actual CSV files, not just PDFs
-                    csv_files = glob.glob(os.path.join(input_dir, "*.csv"))
-                    if not csv_files:
-                        progress.print(f"No CSV files found in {input_dir}")
-                        progress.advance(task)
-                        continue
-
-                    progress.print(
-                        f"Found {len(csv_files)} CSV files in {parser_name} directory"
-                    )
-
-                    # Import and modify the module
-                    import dataextractai.parsers.wellsfargo_bank_csv_parser as wfbc_parser
-
-                    # Save original values
-                    original_source_dir = wfbc_parser.SOURCE_DIR
-                    original_output_csv = wfbc_parser.OUTPUT_PATH_CSV
-                    original_output_xlsx = wfbc_parser.OUTPUT_PATH_XLSX
-
-                    # Set new values
-                    wfbc_parser.SOURCE_DIR = input_dir
-                    wfbc_parser.OUTPUT_PATH_CSV = output_paths[parser_name]["csv"]
-                    wfbc_parser.OUTPUT_PATH_XLSX = output_paths[parser_name]["xlsx"]
-
-                    # Run parser
-                    df = parser_func(write_to_file=True)  # Let it write directly
-
-                    # Restore original values
-                    wfbc_parser.SOURCE_DIR = original_source_dir
-                    wfbc_parser.OUTPUT_PATH_CSV = original_output_csv
-                    wfbc_parser.OUTPUT_PATH_XLSX = original_output_xlsx
-
-                    if df is not None and not df.empty:
                         total_processed += len(df)
                         progress.print(
                             f"Successfully processed {parser_name} directory with {len(df)} transactions"
