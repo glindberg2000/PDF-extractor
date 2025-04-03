@@ -37,49 +37,166 @@ The application uses a standardized data structure located in the root `/data` d
    - `/data/profiles/` is no longer used (moved to client folders)
    - `/data/transactions/` is legacy (moved to client folders)
 
-### Data Organization
+## Usage Instructions
 
-1. **Client Data**
-   - Each client has their own directory under `/data/clients/{client_name}/`
-   - Input files are organized by bank in `input/{bank_name}/`
-   - Business profile is stored as `business_profile.json` in the client root
+### 1. Initial Setup
 
-2. **Transaction Processing**
-   - Raw parsed transactions go in `transactions/raw/`
-   - Classified transactions go in `transactions/classified/`
-   - Final processed transactions go in `transactions/processed/`
-   - Aggregated output files go directly in `output/`
-
-3. **File Naming Conventions**
-   - Raw transactions: `{bank_name}_raw.csv`
-   - Classified transactions: `{bank_name}_classified.csv`
-   - Processed transactions: `{bank_name}_processed.csv`
-   - Final outputs: `{bank_name}_final.csv`
-
-### Setting Up New Clients
-
-1. **Using Template Directory**:
+1. **Create Client Profile**:
    ```bash
-   # Copy the template directory structure
-   cp -r /data/clients/_template /data/clients/{new_client_name}
+   # Start the interactive menu
+   python main.py
    
-   # Or use the example as a starting point
-   cp -r /data/clients/_examples/example_client /data/clients/{new_client_name}
+   # Select "Create/Update Business Profile"
+   # Follow prompts to enter client information
    ```
 
-2. **Manual Setup** (if needed):
+2. **Add Input Files**:
+   - Place bank statements in appropriate input directories:
+     - `/data/clients/{client_name}/input/{bank_name}/`
+   - Supported formats:
+     - Wells Fargo: PDF or CSV
+     - First Republic Bank: PDF
+     - Bank of America: PDF
+     - Chase: PDF
+
+### 2. Processing Workflow
+
+1. **Run Parsers**:
    ```bash
-   mkdir -p /data/clients/{client_name}/{input/{bank1,bank2},transactions/{raw,classified,processed},output}
+   # From the interactive menu:
+   # Select "Run Parsers"
+   # Choose the client
+   # Select banks to parse
    ```
+   - This extracts transactions from bank statements
+   - Results saved to `transactions/raw/`
 
-### Migration Notes
+2. **Normalize Transactions**:
+   ```bash
+   # From the menu:
+   # Select "Normalize Transactions"
+   # Choose the client
+   ```
+   - Standardizes transaction formats
+   - Combines transactions from different banks
+   - Removes duplicates
+   - Results saved to `transactions/normalized/`
 
-If you have data in legacy locations:
-1. Move client data to `/data/clients/{client_name}/`
-2. Create the new directory structure (preferably using the template)
-3. Move transaction files to appropriate subdirectories
-4. Move business profiles to client root
-5. Archive or delete legacy directories
+3. **Sync to Database**:
+   ```bash
+   # From the menu:
+   # Select "Sync Transactions to Database"
+   # Choose the client
+   ```
+   - **Important**: This operation:
+     - Preserves existing classification data
+     - Only updates/adds new transactions
+     - Never deletes existing classifications
+     - Uses transaction_id for matching
+
+### 3. Transaction Classification
+
+The system uses a three-pass approach for classification:
+
+1. **Pass 1: Identify Payees**
+   ```bash
+   # From the menu:
+   # Select "Pass 1: Identify Payees"
+   # Choose Fast or Precise mode
+   ```
+   - Identifies merchant/payee from transaction
+   - Uses AI and Brave Search for enrichment
+   - Required before Pass 2
+
+2. **Pass 2: Assign Categories**
+   ```bash
+   # From the menu:
+   # Select "Pass 2: Assign Categories"
+   # Choose Fast or Precise mode
+   ```
+   - Requires Pass 1 completion
+   - Assigns transaction categories
+   - Uses business context for better accuracy
+
+3. **Pass 3: Classify Transactions**
+   ```bash
+   # From the menu:
+   # Select "Pass 3: Classify Transactions"
+   # Choose Fast or Precise mode
+   ```
+   - Requires Pass 2 completion
+   - Determines business vs personal
+   - Adds tax implications
+
+4. **Process All Passes**
+   ```bash
+   # From the menu:
+   # Select "Process All Passes"
+   # Choose Fast or Precise mode
+   ```
+   - Runs all three passes in sequence
+   - Respects dependencies between passes
+   - Most efficient for full processing
+
+### 4. Transaction Management
+
+The new transaction management system provides detailed tracking and control:
+
+1. **View Transaction Status**:
+   ```bash
+   # From the menu:
+   # Select "View Transaction Status"
+   ```
+   - Shows progress of each pass
+   - Color-coded status display:
+     - Green: Completed
+     - Yellow: Processing
+     - Blue: Pending
+     - Red: Error
+     - Magenta: Skipped
+     - Bright Red: Force Required
+
+2. **Force Process Transaction**:
+   ```bash
+   # From the menu:
+   # Select "Force Process Transaction"
+   # Enter transaction ID
+   # Select pass to force
+   ```
+   - Bypasses normal dependencies
+   - Useful for fixing specific transactions
+   - Can force any pass individually
+
+3. **Reset Transaction Status**:
+   ```bash
+   # From the menu:
+   # Select "Reset Transaction Status"
+   # Enter transaction ID
+   # Select passes to reset
+   ```
+   - Resets selected passes to 'pending'
+   - Allows reprocessing specific passes
+   - Preserves existing classification data
+
+### 5. Data Export
+
+1. **Export to Excel**:
+   ```bash
+   # From the menu:
+   # Select "Export to Excel Report"
+   ```
+   - Creates formatted Excel report
+   - Includes all classification data
+   - Saves to client's output directory
+
+2. **Upload to Google Sheets**:
+   ```bash
+   # From the menu:
+   # Select "Upload to Google Sheets"
+   ```
+   - Uploads to configured Google Sheet
+   - Adds data validation
+   - Creates category dropdowns
 
 ## Development Setup
 
