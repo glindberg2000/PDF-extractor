@@ -234,19 +234,51 @@ def start_menu():
                 # Check if profile needs migration
                 db = ClientDB()
                 existing_profile = db.load_profile(client_name)
-                needs_migration = existing_profile and (
-                    "ai_generated_categories" in existing_profile
-                    or "category_hierarchy" in existing_profile
-                    or "supplementary_categories" in existing_profile
-                    or any(
-                        v != "Other expenses"
-                        for k, v in existing_profile.get("category_mapping", {}).items()
-                    )  # ALL custom categories must go to Other expenses
-                )
-                if needs_migration:
-                    if questionary.confirm(
-                        "Your profile is using an old format. Would you like to migrate it to the new 6A worksheet format? This will put all custom categories under Other expenses."
-                    ).ask():
+
+                # Force migration of old profiles
+                if existing_profile:
+                    needs_migration = False
+
+                    # Check category mappings
+                    category_mapping = existing_profile.get("category_mapping", {})
+                    for category, mapped_to in category_mapping.items():
+                        if mapped_to != "Other expenses":
+                            needs_migration = True
+                            break
+
+                    # Check for old format indicators
+                    if (
+                        "ai_generated_categories" in existing_profile
+                        or "category_hierarchy" in existing_profile
+                        or "supplementary_categories" in existing_profile
+                        or any(
+                            len(patterns) > 3
+                            for patterns in existing_profile.get(
+                                "category_patterns", {}
+                            ).values()
+                        )  # Too many specific patterns
+                    ):
+                        needs_migration = True
+
+                    if needs_migration:
+                        click.echo(
+                            "\nYour profile needs to be migrated to strictly follow 6A worksheet categories."
+                        )
+                        click.echo("This will:")
+                        click.echo("1. Move ALL custom categories under Other expenses")
+                        click.echo(
+                            "2. Simplify category patterns to match 6A structure"
+                        )
+                        click.echo("3. Remove any non-6A structures\n")
+
+                        if not questionary.confirm(
+                            "Would you like to migrate now?"
+                        ).ask():
+                            click.echo(
+                                "Profile must be migrated before continuing. Operation cancelled."
+                            )
+                            continue
+
                         profile_manager.migrate_existing_profile()
                         click.echo("Profile successfully migrated to 6A format.")
                         continue
