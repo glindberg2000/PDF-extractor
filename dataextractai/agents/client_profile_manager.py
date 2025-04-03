@@ -60,33 +60,49 @@ class ClientProfileManager:
 
     def _enhance_profile_with_ai(self, profile_data: Dict) -> Dict:
         """Use AI to enhance the business profile with categories and context."""
-        prompt = f"""As a business analysis expert, please enhance this business profile:
+        prompt = f"""As a business analysis expert, please enhance this business profile while respecting the fixed IRS Schedule 6A worksheet categories and user-defined categories.
 
 Business Type: {profile_data['business_type']}
 Description: {profile_data['business_description']}
 Custom Categories: {', '.join(profile_data['custom_categories']) if profile_data['custom_categories'] else 'None'}
 
-Please provide:
-1. A comprehensive list of typical expense categories for this business type
-2. Common transaction patterns and descriptions to expect
-3. Industry-specific insights and considerations
-4. Suggested category hierarchy
-5. Any additional business context that would help with transaction categorization
+Fixed IRS Schedule 6A Categories:
+- Advertising
+- Car and truck expenses
+- Commissions and fees
+- Contract labor
+- Depletion
+- Employee benefit programs
+- Insurance (other than health)
+- Interest (mortgage/other)
+- Legal and professional services
+- Office expenses
+- Pension and profit-sharing plans
+- Rent or lease (vehicles/equipment/other)
+- Repairs and maintenance
+- Supplies
+- Taxes and licenses
+- Travel, meals, and entertainment
+- Utilities
+- Wages
+- Other expenses (user-defined)
+
+Please analyze this business profile and provide:
+1. Common transaction patterns and descriptions to expect for each relevant 6A category
+2. Additional categories ONLY for transactions that don't clearly fit into 6A or user-defined categories
+3. Industry-specific insights for expense tracking and categorization
+4. Business context to help with transaction classification
 
 Return the response as a JSON object with the following structure:
 {{
     "business_type": "string",
     "business_description": "string",
     "custom_categories": ["string"],
-    "ai_generated_categories": ["string"],
-    "common_patterns": ["string"],
-    "industry_insights": "string",
-    "category_hierarchy": {{
-        "main_categories": ["string"],
-        "subcategories": {{
-            "category_name": ["string"]
-        }}
+    "supplementary_categories": ["string"],  // Only for transactions not fitting 6A/custom categories
+    "category_patterns": {{  // Patterns for each relevant 6A and custom category
+        "category_name": ["pattern1", "pattern2", ...]
     }},
+    "industry_insights": "string",
     "business_context": "string",
     "last_updated": "timestamp"
 }}"""
@@ -96,7 +112,7 @@ Return the response as a JSON object with the following structure:
             messages=[
                 {
                     "role": "system",
-                    "content": "You are a business analysis expert specializing in expense categorization and transaction analysis.",
+                    "content": "You are a business analysis expert specializing in IRS Schedule 6A expense categorization and transaction analysis.",
                 },
                 {"role": "user", "content": prompt},
             ],
@@ -125,13 +141,12 @@ Return the response as a JSON object with the following structure:
             {
                 "business_type": enhanced["business_type"],
                 "business_description": enhanced["business_description"],
-                "custom_categories": enhanced[
-                    "custom_categories"
-                ],  # Use the new custom categories
-                "ai_generated_categories": enhanced["ai_generated_categories"],
-                "common_patterns": enhanced["common_patterns"],
+                "custom_categories": enhanced["custom_categories"],
+                "supplementary_categories": enhanced.get(
+                    "supplementary_categories", []
+                ),
+                "category_patterns": enhanced.get("category_patterns", {}),
                 "industry_insights": enhanced["industry_insights"],
-                "category_hierarchy": enhanced["category_hierarchy"],
                 "business_context": enhanced["business_context"],
                 "last_updated": enhanced["last_updated"],
             }
