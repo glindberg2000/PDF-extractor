@@ -265,37 +265,120 @@ Return the response as a JSON object with the following structure:
         migrated = {
             "business_type": profile["business_type"],
             "business_description": profile["business_description"],
-            "custom_categories": profile["custom_categories"],
             "schedule_6a_categories": SCHEDULE_6A_CATEGORIES,
-            "industry_insights": profile["industry_insights"],
-            "business_context": profile["business_context"],
+            "custom_categories": profile["custom_categories"],
+            "industry_insights": profile.get("industry_insights", ""),
+            "business_context": profile.get("business_context", ""),
             "last_updated": datetime.utcnow().isoformat() + "Z",
         }
 
         # Map custom categories to 6A categories
-        category_mapping = {
-            "Dues and Subscriptions": "Other expenses",
-            "MLS Dues": "Other expenses",
-            "Open House Expenses": "Other expenses",
-            "Staging": "Other expenses",
-            "Computer and Internet": "Office expenses",
-        }
+        # For real estate, we'll map them appropriately
+        category_mapping = {}
+        for cat in profile["custom_categories"]:
+            if cat == "Computer and Internet":
+                category_mapping[cat] = "Office expenses"
+            elif cat == "Staging":
+                category_mapping[cat] = (
+                    "Contract labor"  # Staging is typically contract work
+                )
+            elif cat == "Open House Expenses":
+                category_mapping[cat] = (
+                    "Advertising"  # Open houses are a form of advertising
+                )
+            elif cat in ["Dues and Subscriptions", "MLS Dues"]:
+                category_mapping[cat] = (
+                    "Other expenses"  # Professional dues go to other expenses
+                )
+
         migrated["category_mapping"] = category_mapping
 
-        # Keep only the patterns for 6A categories and mapped custom categories
-        category_patterns = {}
-        if "category_patterns" in profile:
-            # First, add all 6A category patterns
-            for cat in SCHEDULE_6A_CATEGORIES:
-                if cat in profile["category_patterns"]:
-                    category_patterns[cat] = profile["category_patterns"][cat]
+        # Create patterns for each 6A category
+        category_patterns = {
+            "Advertising": [
+                "online ads",
+                "print ads",
+                "marketing materials",
+                "signage",
+                "open house expenses",
+                "property marketing",
+            ],
+            "Car and truck expenses": [
+                "fuel",
+                "vehicle maintenance",
+                "mileage reimbursement",
+                "parking fees",
+                "auto insurance",
+                "vehicle registration",
+            ],
+            "Commissions and fees": [
+                "agent commissions",
+                "referral fees",
+                "broker fees",
+                "transaction fees",
+            ],
+            "Contract labor": [
+                "staging services",
+                "photography services",
+                "virtual tour creation",
+                "temporary assistance",
+                "independent contractors",
+            ],
+            "Insurance (other than health)": [
+                "errors and omissions insurance",
+                "liability insurance",
+                "business insurance",
+            ],
+            "Legal and professional services": [
+                "attorney fees",
+                "accounting services",
+                "legal document preparation",
+                "tax preparation",
+            ],
+            "Office expenses": [
+                "computer hardware",
+                "software subscriptions",
+                "internet service",
+                "office supplies",
+                "printing costs",
+            ],
+            "Rent or lease": [
+                "office rent",
+                "equipment leases",
+                "temporary space rental",
+            ],
+            "Supplies": [
+                "office supplies",
+                "marketing materials",
+                "business cards",
+                "general supplies",
+            ],
+            "Taxes and licenses": [
+                "real estate license fees",
+                "business licenses",
+                "local permits",
+            ],
+            "Travel, meals, and entertainment": [
+                "client meals",
+                "business travel",
+                "conference expenses",
+                "client entertainment",
+            ],
+            "Utilities": ["phone service", "internet service", "office utilities"],
+            "Other expenses": [
+                "mls dues",
+                "professional dues",
+                "association fees",
+                "subscriptions",
+            ],
+        }
 
-            # Then add patterns for custom categories
-            for cat in profile["custom_categories"]:
-                if cat in profile["category_patterns"]:
-                    category_patterns[cat] = profile["category_patterns"][cat]
-
-        migrated["category_patterns"] = category_patterns
+        # Only include patterns for categories that are relevant to this business
+        migrated["category_patterns"] = {
+            cat: patterns
+            for cat, patterns in category_patterns.items()
+            if cat in SCHEDULE_6A_CATEGORIES
+        }
 
         return migrated
 
