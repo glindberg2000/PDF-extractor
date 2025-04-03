@@ -3,7 +3,7 @@
 import sqlite3
 import json
 from datetime import datetime
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Any
 import logging
 import os
 import pandas as pd
@@ -164,6 +164,72 @@ class ClientDB:
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY(client_id) REFERENCES clients(id),
                     UNIQUE(client_id, cache_key, pass_type)
+                )
+            """
+            )
+
+            # Client-specific expense categories
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS client_expense_categories (
+                    id INTEGER PRIMARY KEY,
+                    client_id INTEGER NOT NULL,
+                    category_name TEXT NOT NULL,
+                    category_type TEXT CHECK(category_type IN ('other_expense', 'custom_category')) NOT NULL,
+                    description TEXT,
+                    tax_year INTEGER NOT NULL,
+                    worksheet TEXT CHECK(worksheet IN ('6A', 'Vehicle', 'HomeOffice')) NOT NULL,
+                    parent_category TEXT,  -- Links to standard category if this is a subcategory
+                    line_number TEXT,      -- For custom line items in Other Expenses
+                    is_active BOOLEAN DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY(client_id) REFERENCES clients(id),
+                    UNIQUE(client_id, category_name, tax_year)
+                )
+            """
+            )
+
+            # Modify transaction_classifications table - add columns one at a time
+            for column_def in [
+                "base_category TEXT",
+                "base_category_confidence TEXT CHECK(base_category_confidence IN ('high', 'medium', 'low'))",
+                "worksheet TEXT CHECK(worksheet IN ('6A', 'Vehicle', 'HomeOffice'))",
+                "tax_category TEXT",
+                "tax_subcategory TEXT",
+                "tax_year INTEGER",
+                "tax_worksheet_line_number TEXT",
+                "split_amount DECIMAL",
+                "previous_year_comparison TEXT",
+                "is_reviewed BOOLEAN DEFAULT 0",
+                "review_notes TEXT",
+                "last_reviewed_at TIMESTAMP",
+            ]:
+                try:
+                    conn.execute(
+                        f"ALTER TABLE transaction_classifications ADD COLUMN {column_def}"
+                    )
+                except sqlite3.OperationalError as e:
+                    # Ignore error if column already exists
+                    if "duplicate column name" not in str(e).lower():
+                        raise
+
+            # Table for tracking tax worksheet totals
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS tax_worksheet_totals (
+                    id INTEGER PRIMARY KEY,
+                    client_id INTEGER NOT NULL,
+                    tax_year INTEGER NOT NULL,
+                    worksheet TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    total_amount DECIMAL NOT NULL,
+                    previous_year_amount DECIMAL,
+                    variance_percentage DECIMAL,
+                    variance_notes TEXT,
+                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY(client_id) REFERENCES clients(id),
+                    UNIQUE(client_id, tax_year, worksheet, category)
                 )
             """
             )
@@ -578,3 +644,257 @@ class ClientDB:
                     },
                 }
             return None
+
+    def add_client_category(
+        self,
+        client_name: str,
+        category_name: str,
+        category_type: str,
+        description: str,
+        tax_year: int,
+        worksheet: str = "6A",
+        parent_category: Optional[str] = None,
+        line_number: Optional[str] = None,
+    ) -> None:
+        """Add a new client-specific expense category."""
+        client_id = self.get_client_id(client_name)
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO client_expense_categories (
+                    client_id,
+                    category_name,
+                    category_type,
+                    description,
+                    tax_year,
+                    worksheet,
+                    parent_category,
+                    line_number,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT (client_id, category_name, tax_year)
+                DO UPDATE SET
+                    category_type = excluded.category_type,
+                    description = excluded.description,
+                    worksheet = excluded.worksheet,
+                    parent_category = excluded.parent_category,
+                    line_number = excluded.line_number,
+                    is_active = 1,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (
+                    client_id,
+                    category_name,
+                    category_type,
+                    description,
+                    tax_year,
+                    worksheet,
+                    parent_category,
+                    line_number,
+                ),
+            )
+
+    def get_client_categories(
+        self,
+        client_name: str,
+        tax_year: Optional[int] = None,
+        include_inactive: bool = False,
+    ) -> List[Dict]:
+        """Get all categories for a client, optionally filtered by tax year."""
+        client_id = self.get_client_id(client_name)
+
+        query = """
+            SELECT 
+                category_name,
+                category_type,
+                description,
+                tax_year,
+                worksheet,
+                parent_category,
+                line_number,
+                is_active,
+                created_at,
+                updated_at
+            FROM client_expense_categories
+            WHERE client_id = ?
+        """
+        params = [client_id]
+
+        if tax_year:
+            query += " AND tax_year = ?"
+            params.append(tax_year)
+
+        if not include_inactive:
+            query += " AND is_active = 1"
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(query, params)
+            return [dict(row) for row in cursor.fetchall()]
+
+    def deactivate_client_category(
+        self, client_name: str, category_name: str, tax_year: int
+    ) -> None:
+        """Deactivate a client category instead of deleting it."""
+        client_id = self.get_client_id(client_name)
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """
+                UPDATE client_expense_categories
+                SET is_active = 0,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE client_id = ?
+                AND category_name = ?
+                AND tax_year = ?
+                """,
+                (client_id, category_name, tax_year),
+            )
+
+    def create_transaction_status_table(self):
+        """Create the transaction_status table if it doesn't exist."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS transaction_status (
+                    transaction_id TEXT PRIMARY KEY,
+                    pass_1_complete BOOLEAN DEFAULT 0,
+                    pass_1_error TEXT,
+                    pass_1_completed_at TIMESTAMP,
+                    pass_2_complete BOOLEAN DEFAULT 0,
+                    pass_2_error TEXT,
+                    pass_2_completed_at TIMESTAMP,
+                    pass_3_complete BOOLEAN DEFAULT 0,
+                    pass_3_error TEXT,
+                    pass_3_completed_at TIMESTAMP,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (transaction_id) REFERENCES normalized_transactions(transaction_id)
+                )
+            """
+            )
+            conn.commit()
+
+    def get_transaction_status(self, transaction_id: str) -> Optional[Dict[str, Any]]:
+        """Get the status of a transaction's processing."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                """
+                SELECT * FROM transaction_status WHERE transaction_id = ?
+            """,
+                (transaction_id,),
+            )
+            row = cursor.fetchone()
+            if row:
+                return dict(row)
+            return None
+
+    def update_transaction_status(
+        self, transaction_id: str, status_data: Dict[str, Any]
+    ) -> None:
+        """Update the status of a transaction's processing."""
+        # First check if status exists
+        current_status = self.get_transaction_status(transaction_id)
+
+        if current_status:
+            # Update existing status
+            set_clause = ", ".join([f"{k} = ?" for k in status_data.keys()])
+            set_clause += ", updated_at = CURRENT_TIMESTAMP"
+            query = f"""
+                UPDATE transaction_status
+                SET {set_clause}
+                WHERE transaction_id = ?
+            """
+            values = list(status_data.values()) + [transaction_id]
+        else:
+            # Insert new status
+            columns = ["transaction_id"] + list(status_data.keys())
+            placeholders = ["?"] * (len(columns))
+            query = f"""
+                INSERT INTO transaction_status ({", ".join(columns)})
+                VALUES ({", ".join(placeholders)})
+            """
+            values = [transaction_id] + list(status_data.values())
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(query, values)
+            conn.commit()
+
+    def get_transactions_by_status(
+        self, pass_number: int, complete: bool = True, limit: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """Get transactions based on their processing status for a specific pass."""
+        query = f"""
+            SELECT t.*, s.*
+            FROM normalized_transactions t
+            LEFT JOIN transaction_status s ON t.transaction_id = s.transaction_id
+            WHERE s.pass_{pass_number}_complete = ?
+        """
+        if limit:
+            query += f" LIMIT {limit}"
+
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(query, (1 if complete else 0,))
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    def get_processing_summary(self) -> Dict[str, Any]:
+        """Get a summary of transaction processing status."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                """
+                SELECT 
+                    COUNT(*) as total_transactions,
+                    SUM(CASE WHEN s.pass_1_complete = 1 THEN 1 ELSE 0 END) as pass_1_complete,
+                    SUM(CASE WHEN s.pass_2_complete = 1 THEN 1 ELSE 0 END) as pass_2_complete,
+                    SUM(CASE WHEN s.pass_3_complete = 1 THEN 1 ELSE 0 END) as pass_3_complete,
+                    SUM(CASE WHEN s.pass_1_error IS NOT NULL THEN 1 ELSE 0 END) as pass_1_errors,
+                    SUM(CASE WHEN s.pass_2_error IS NOT NULL THEN 1 ELSE 0 END) as pass_2_errors,
+                    SUM(CASE WHEN s.pass_3_error IS NOT NULL THEN 1 ELSE 0 END) as pass_3_errors
+                FROM normalized_transactions t
+                LEFT JOIN transaction_status s ON t.transaction_id = s.transaction_id
+            """
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def reset_transaction_status(
+        self, transaction_id: str, pass_number: Optional[int] = None
+    ) -> None:
+        """Reset the processing status for a transaction.
+
+        If pass_number is provided, only reset that pass and subsequent passes.
+        If pass_number is None, reset all passes.
+        """
+        if pass_number is None:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute(
+                    """
+                    DELETE FROM transaction_status
+                    WHERE transaction_id = ?
+                """,
+                    (transaction_id,),
+                )
+        else:
+            # Build update query based on pass number
+            updates = []
+            for p in range(
+                pass_number, 4
+            ):  # Update current pass and all subsequent passes
+                updates.extend(
+                    [
+                        f"pass_{p}_complete = 0",
+                        f"pass_{p}_error = NULL",
+                        f"pass_{p}_completed_at = NULL",
+                    ]
+                )
+
+            query = f"""
+                UPDATE transaction_status
+                SET {", ".join(updates)}, updated_at = CURRENT_TIMESTAMP
+                WHERE transaction_id = ?
+            """
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute(query, (transaction_id,))
+                conn.commit()
