@@ -272,89 +272,85 @@ Return the response as a JSON object with the following structure:
             "last_updated": datetime.utcnow().isoformat() + "Z",
         }
 
-        # All custom categories go under "Other expenses"
-        # We'll tag some as ai_suggested for internal tracking
+        # ALL custom categories go under Other expenses, no exceptions
         category_mapping = {}
         for cat in profile["custom_categories"]:
             category_mapping[cat] = "Other expenses"
-
-        # Add any AI-suggested categories that don't fit in 6A
-        # These will also go under "Other expenses" but be tagged
-        ai_suggested = [
-            "Professional Development",  # For continuing education that doesn't fit elsewhere
-            "Industry Memberships",  # For specialized memberships not covered by licenses
-        ]
-        migrated["ai_suggested_categories"] = ai_suggested  # Internal tracking only
-
         migrated["category_mapping"] = category_mapping
 
-        # Create patterns for strict 6A categories
+        # Create patterns for 6A categories only
+        # Keep these generic and focused on the core 6A definitions
         category_patterns = {
             "Advertising": [
-                "property listings",
-                "marketing materials",
-                "signs",
-                "online advertising",
-                "print advertising",
+                "advertising costs",
+                "promotional materials",
+                "marketing expenses",
             ],
             "Car and truck expenses": [
-                "vehicle mileage",
-                "fuel",
-                "maintenance",
-                "parking",
-                "vehicle insurance",
+                "vehicle expenses",
+                "mileage",
+                "auto maintenance",
+                "fuel costs",
             ],
             "Commissions and fees": [
-                "commission splits",
-                "referral fees",
+                "commission payments",
+                "service fees",
                 "transaction fees",
             ],
             "Contract labor": [
-                "temporary help",
-                "independent contractors",
-                "service providers",
+                "contractor payments",
+                "temporary labor",
+                "freelance services",
+            ],
+            "Depletion": ["resource depletion", "asset depreciation"],
+            "Employee benefit programs": [
+                "employee benefits",
+                "health insurance",
+                "benefit programs",
             ],
             "Insurance (other than health)": [
-                "liability insurance",
-                "errors and omissions",
                 "business insurance",
+                "liability coverage",
+                "property insurance",
+            ],
+            "Interest (mortgage/other)": [
+                "loan interest",
+                "mortgage interest",
+                "financing costs",
             ],
             "Legal and professional services": [
                 "legal fees",
-                "accounting fees",
                 "professional services",
+                "consulting fees",
             ],
-            "Office expenses": [
-                "supplies",
-                "equipment",
-                "software",
-                "phone",
-                "internet",
+            "Office expenses": ["office supplies", "equipment", "general office costs"],
+            "Pension and profit-sharing plans": [
+                "retirement plans",
+                "pension costs",
+                "profit sharing",
             ],
-            "Rent or lease": ["office rent", "equipment rental", "space rental"],
+            "Rent or lease": ["rental payments", "lease expenses", "equipment rentals"],
             "Repairs and maintenance": [
-                "equipment repairs",
-                "office maintenance",
-                "general repairs",
+                "repairs",
+                "maintenance costs",
+                "upkeep expenses",
             ],
-            "Supplies": ["office supplies", "business supplies", "general supplies"],
-            "Taxes and licenses": ["business licenses", "permits", "regulatory fees"],
+            "Supplies": ["business supplies", "materials", "consumables"],
+            "Taxes and licenses": ["business licenses", "permit fees", "tax payments"],
             "Travel, meals, and entertainment": [
-                "business travel",
-                "meals with clients",
-                "entertainment expenses",
+                "travel expenses",
+                "business meals",
+                "entertainment costs",
             ],
-            "Utilities": ["electricity", "water", "phone service", "internet service"],
-            "Wages": ["employee wages", "payroll", "salary expenses"],
+            "Utilities": ["utility bills", "service charges", "utility expenses"],
+            "Wages": ["employee wages", "salary expenses", "payroll costs"],
             "Other expenses": [
-                # User-defined categories
-                "mls dues",
-                "professional dues",
-                "open house expenses",
-                "staging costs",
-                # AI-suggested categories
-                "professional development costs",
-                "industry membership fees",
+                # User's custom categories
+                "dues and subscriptions",
+                "professional memberships",
+                "specialized fees",
+                "industry-specific costs",
+                # Note: Each business's actual Other expenses will be their custom categories
             ],
         }
 
