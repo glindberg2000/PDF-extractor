@@ -274,16 +274,18 @@ def start_menu():
                     if category:
                         categories.append(category)
 
-                # Create profile
-                profile = {
-                    "business_type": business_type,
-                    "business_description": business_description,
-                    "custom_categories": categories,
-                }
+                # Initialize profile manager
+                profile_manager = ClientProfileManager(client_name)
 
-                # Save to database
-                db.save_profile(client_name, profile)
+                # Create or update profile with AI enhancement
+                profile = profile_manager.create_or_update_profile(
+                    business_type=business_type,
+                    business_description=business_description,
+                    custom_categories=categories,
+                )
+
                 click.echo("Business profile saved successfully.")
+                click.echo(f"Profile saved to: {profile_manager.profile_file}")
 
             except Exception as e:
                 click.echo(f"Error updating business profile: {e}")
