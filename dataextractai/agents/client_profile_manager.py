@@ -60,59 +60,66 @@ class ClientProfileManager:
 
     def _enhance_profile_with_ai(self, profile_data: Dict) -> Dict:
         """Use AI to enhance the business profile with categories and context."""
-        prompt = f"""As a business analysis expert, please enhance this business profile while respecting the fixed IRS Schedule 6A worksheet categories and user-defined categories.
+        # Define fixed 6A categories
+        SCHEDULE_6A_CATEGORIES = [
+            "Advertising",
+            "Car and truck expenses",
+            "Commissions and fees",
+            "Contract labor",
+            "Depletion",
+            "Employee benefit programs",
+            "Insurance (other than health)",
+            "Interest (mortgage/other)",
+            "Legal and professional services",
+            "Office expenses",
+            "Pension and profit-sharing plans",
+            "Rent or lease (vehicles/equipment/other)",
+            "Repairs and maintenance",
+            "Supplies",
+            "Taxes and licenses",
+            "Travel, meals, and entertainment",
+            "Utilities",
+            "Wages",
+            "Other expenses",
+        ]
+
+        prompt = f"""As a business analysis expert, analyze this business profile focusing strictly on IRS Schedule 6A expense categories.
 
 Business Type: {profile_data['business_type']}
 Description: {profile_data['business_description']}
-Custom Categories: {', '.join(profile_data['custom_categories']) if profile_data['custom_categories'] else 'None'}
+User-Defined Categories (to be classified under "Other expenses"): {', '.join(profile_data['custom_categories']) if profile_data['custom_categories'] else 'None'}
 
-Fixed IRS Schedule 6A Categories:
-- Advertising
-- Car and truck expenses
-- Commissions and fees
-- Contract labor
-- Depletion
-- Employee benefit programs
-- Insurance (other than health)
-- Interest (mortgage/other)
-- Legal and professional services
-- Office expenses
-- Pension and profit-sharing plans
-- Rent or lease (vehicles/equipment/other)
-- Repairs and maintenance
-- Supplies
-- Taxes and licenses
-- Travel, meals, and entertainment
-- Utilities
-- Wages
-- Other expenses (user-defined)
+Using ONLY the following IRS Schedule 6A categories:
+{json.dumps(SCHEDULE_6A_CATEGORIES, indent=2)}
 
-Please analyze this business profile and provide:
+Please provide:
 1. Common transaction patterns and descriptions to expect for each relevant 6A category
-2. Additional categories ONLY for transactions that don't clearly fit into 6A or user-defined categories
-3. Industry-specific insights for expense tracking and categorization
-4. Business context to help with transaction classification
+2. Industry-specific insights for expense tracking and categorization
+3. Business context to help with transaction classification
+4. Mapping of user-defined categories to appropriate 6A categories (if possible) or confirmation they belong in "Other expenses"
 
 Return the response as a JSON object with the following structure:
 {{
     "business_type": "string",
     "business_description": "string",
-    "custom_categories": ["string"],
-    "supplementary_categories": ["string"],  // Only for transactions not fitting 6A/custom categories
-    "category_patterns": {{  // Patterns for each relevant 6A and custom category
+    "custom_categories": ["string"],  // Original user-defined categories
+    "category_patterns": {{  // ONLY for Schedule 6A categories and user-defined categories under Other expenses
         "category_name": ["pattern1", "pattern2", ...]
     }},
     "industry_insights": "string",
     "business_context": "string",
+    "category_mapping": {{  // Maps user-defined categories to 6A categories where possible
+        "user_category": "6A_category"
+    }},
     "last_updated": "timestamp"
 }}"""
 
         response = self.client.chat.completions.create(
-            model=OPENAI_MODEL_PRECISE,  # Use precise model for profile enhancement
+            model=OPENAI_MODEL_PRECISE,
             messages=[
                 {
                     "role": "system",
-                    "content": "You are a business analysis expert specializing in IRS Schedule 6A expense categorization and transaction analysis.",
+                    "content": "You are a business analysis expert specializing in IRS Schedule 6A expense categorization. Strictly adhere to 6A categories and treat custom categories as subcategories of Other expenses unless they clearly map to a 6A category.",
                 },
                 {"role": "user", "content": prompt},
             ],
@@ -127,6 +134,7 @@ Return the response as a JSON object with the following structure:
                 "business_type": profile_data["business_type"],
                 "business_description": profile_data["business_description"],
                 "custom_categories": profile_data["custom_categories"],
+                "schedule_6a_categories": SCHEDULE_6A_CATEGORIES,  # Include fixed list for reference
             }
         )
 
@@ -136,18 +144,17 @@ Return the response as a JSON object with the following structure:
         """Merge existing profile with enhanced profile, preserving important custom data."""
         merged = existing.copy()
 
-        # Update with enhanced data
+        # Update with enhanced data while preserving 6A structure
         merged.update(
             {
                 "business_type": enhanced["business_type"],
                 "business_description": enhanced["business_description"],
                 "custom_categories": enhanced["custom_categories"],
-                "supplementary_categories": enhanced.get(
-                    "supplementary_categories", []
-                ),
+                "schedule_6a_categories": enhanced["schedule_6a_categories"],
                 "category_patterns": enhanced.get("category_patterns", {}),
                 "industry_insights": enhanced["industry_insights"],
                 "business_context": enhanced["business_context"],
+                "category_mapping": enhanced.get("category_mapping", {}),
                 "last_updated": enhanced["last_updated"],
             }
         )
