@@ -149,6 +149,8 @@ class TransactionClassifier:
         resume_from_pass: int = 1,
         force_process: bool = False,
         batch_size: int = 10,
+        start_row: Optional[int] = None,
+        end_row: Optional[int] = None,
     ) -> None:
         """Process transactions through multiple passes.
 
@@ -161,6 +163,8 @@ class TransactionClassifier:
             resume_from_pass: Which pass to start from (1-3)
             force_process: Whether to reprocess already processed transactions
             batch_size: Number of transactions to process at once
+            start_row: Optional starting row index (0-based)
+            end_row: Optional ending row index (exclusive)
         """
         if not isinstance(transactions, pd.DataFrame):
             raise ValueError("transactions must be a pandas DataFrame")
@@ -168,16 +172,24 @@ class TransactionClassifier:
         if resume_from_pass < 1 or resume_from_pass > 3:
             raise ValueError("resume_from_pass must be between 1 and 3")
 
-        total_transactions = len(transactions)
+        # Handle row range
+        start_row = start_row if start_row is not None else 0
+        end_row = end_row if end_row is not None else len(transactions)
+
+        if start_row < 0 or end_row > len(transactions) or start_row >= end_row:
+            raise ValueError("Invalid row range specified")
+
+        total_transactions = end_row - start_row
         logger.info(
-            f"Processing {total_transactions} transactions starting from pass {resume_from_pass}"
+            f"Processing {total_transactions} transactions (rows {start_row}-{end_row}) starting from pass {resume_from_pass}"
         )
 
         # Pass 1: Identify payees
         if resume_from_pass == 1:
             logger.info("Starting Pass 1: Payee Identification")
-            for i in range(0, total_transactions, batch_size):
-                batch = transactions.iloc[i : i + batch_size]
+            for i in range(start_row, end_row, batch_size):
+                batch_end = min(i + batch_size, end_row)
+                batch = transactions.iloc[i:batch_end]
                 for _, transaction in batch.iterrows():
                     if not force_process:
                         # Check if already processed
@@ -225,8 +237,9 @@ class TransactionClassifier:
         # Pass 2: Base category assignment
         if resume_from_pass <= 2:
             logger.info("Starting Pass 2: Base Category Assignment")
-            for i in range(0, total_transactions, batch_size):
-                batch = transactions.iloc[i : i + batch_size]
+            for i in range(start_row, end_row, batch_size):
+                batch_end = min(i + batch_size, end_row)
+                batch = transactions.iloc[i:batch_end]
                 for _, transaction in batch.iterrows():
                     if not force_process:
                         # Check if already processed and has valid payee
@@ -276,8 +289,9 @@ class TransactionClassifier:
         # Pass 3: Worksheet assignment and tax categorization
         if resume_from_pass <= 3:
             logger.info("Starting Pass 3: Worksheet Assignment")
-            for i in range(0, total_transactions, batch_size):
-                batch = transactions.iloc[i : i + batch_size]
+            for i in range(start_row, end_row, batch_size):
+                batch_end = min(i + batch_size, end_row)
+                batch = transactions.iloc[i:batch_end]
                 for _, transaction in batch.iterrows():
                     if not force_process:
                         # Check if already processed and has valid category
