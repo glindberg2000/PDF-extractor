@@ -204,6 +204,8 @@ class ClientDB:
                 "is_reviewed BOOLEAN DEFAULT 0",
                 "review_notes TEXT",
                 "last_reviewed_at TIMESTAMP",
+                "expense_type TEXT CHECK(expense_type IN ('business', 'personal', 'mixed'))",
+                "business_percentage INTEGER",
             ]:
                 try:
                     conn.execute(
@@ -621,45 +623,32 @@ class ClientDB:
             logger.error(f"Database error updating transaction status: {str(e)}")
             raise
 
-    def get_transaction_status(
-        self,
-        client_name: str,
-        transaction_id: str,
-    ) -> Dict:
-        """Get the current processing status for a transaction."""
-        client_id = self.get_client_id(client_name)
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute(
-                """
-                SELECT 
-                    pass_1_status, pass_1_error, pass_1_processed_at,
-                    pass_2_status, pass_2_error, pass_2_processed_at,
-                    pass_3_status, pass_3_error, pass_3_processed_at
-                FROM transaction_status
-                WHERE client_id = ? AND transaction_id = ?
-                """,
-                (client_id, transaction_id),
-            )
-            result = cursor.fetchone()
-            if result:
-                return {
-                    "pass_1": {
-                        "status": result[0],
-                        "error": result[1],
-                        "processed_at": result[2],
-                    },
-                    "pass_2": {
-                        "status": result[3],
-                        "error": result[4],
-                        "processed_at": result[5],
-                    },
-                    "pass_3": {
-                        "status": result[6],
-                        "error": result[7],
-                        "processed_at": result[8],
-                    },
-                }
-            return None
+    def get_transaction_status(self, transaction_id: str) -> Optional[Dict[str, Any]]:
+        """Get the status of a transaction's processing.
+
+        Args:
+            transaction_id: The transaction ID to get status for
+
+        Returns:
+            Dictionary of status data or None if not found
+        """
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.execute(
+                    """
+                    SELECT *
+                    FROM transaction_status
+                    WHERE transaction_id = ?
+                    """,
+                    (transaction_id,),
+                )
+                row = cursor.fetchone()
+                return dict(row) if row else None
+
+        except sqlite3.Error as e:
+            logger.error(f"Database error getting transaction status: {str(e)}")
+            raise
 
     def add_client_category(
         self,
