@@ -121,7 +121,7 @@ class ExcelReportFormatter:
 
         # Get column letters for validation
         try:
-            category_col = get_column_letter(all_columns.index("category") + 1)
+            category_col = get_column_letter(all_columns.index("base_category") + 1)
             class_col = get_column_letter(all_columns.index("classification") + 1)
 
             # Add validation to category column
@@ -163,7 +163,7 @@ class ExcelReportFormatter:
         # Get column letters for summary calculations
         try:
             amount_col = get_column_letter(all_columns.index("normalized_amount") + 1)
-            category_col = get_column_letter(all_columns.index("category") + 1)
+            category_col = get_column_letter(all_columns.index("base_category") + 1)
             last_row = len(data) + 1
 
             # Write category rows with formulas
@@ -233,6 +233,110 @@ class ExcelReportFormatter:
                 ):
                     sheet.column_dimensions[get_column_letter(col)].width = 15
             sheet.auto_filter.ref = f"A1:{get_column_letter(max_col)}1"
+
+        # Create tax summary sheet if tax_category exists
+        if "tax_category" in all_columns:
+            try:
+                tax_summary = wb.create_sheet("Tax Summary")
+
+                # Write summary headers
+                tax_headers = [
+                    "Tax Category",
+                    "Total Amount",
+                    "Transaction Count",
+                    "Average Amount",
+                ]
+                for col, header in enumerate(tax_headers, 1):
+                    cell = tax_summary.cell(row=1, column=col, value=header)
+                    cell.fill = self.header_fill
+                    cell.font = self.header_font
+                    cell.alignment = self.header_alignment
+
+                # Get column letters for tax summary calculations
+                amount_col = get_column_letter(
+                    all_columns.index("normalized_amount") + 1
+                )
+                tax_col = get_column_letter(all_columns.index("tax_category") + 1)
+                class_col = get_column_letter(all_columns.index("classification") + 1)
+                last_row = len(data) + 1
+
+                # Get unique tax categories
+                tax_categories = set()
+                for i in range(len(data)):
+                    tax_cat = data.iloc[i].get("tax_category")
+                    if tax_cat and str(tax_cat).lower() != "nan":
+                        tax_categories.add(tax_cat)
+
+                # Add "Other expenses" if not present
+                if not tax_categories:
+                    tax_categories = {"Other expenses"}
+
+                tax_categories = sorted(list(tax_categories))
+
+                # Write tax category rows with formulas
+                for row, category in enumerate(tax_categories, 2):
+                    # Category name
+                    tax_summary.cell(row=row, column=1, value=category)
+
+                    # Total Amount (SUMIFS - only business expenses with this tax category)
+                    total_formula = f'=SUMIFS(Transactions!{amount_col}2:{amount_col}{last_row},Transactions!{tax_col}2:{tax_col}{last_row},"{category}",Transactions!{class_col}2:{class_col}{last_row},"Business")'
+                    tax_summary.cell(
+                        row=row, column=2, value=total_formula
+                    ).number_format = '"$"#,##0.00'
+
+                    # Transaction Count (COUNTIFS)
+                    count_formula = f'=COUNTIFS(Transactions!{tax_col}2:{tax_col}{last_row},"{category}",Transactions!{class_col}2:{class_col}{last_row},"Business")'
+                    tax_summary.cell(row=row, column=3, value=count_formula)
+
+                    # Average Amount (IF to avoid div/0)
+                    avg_formula = f"=IF(C{row}>0,B{row}/C{row},0)"
+                    tax_summary.cell(
+                        row=row, column=4, value=avg_formula
+                    ).number_format = '"$"#,##0.00'
+
+                # Add totals row
+                total_row = len(tax_categories) + 2
+                tax_summary.cell(row=total_row, column=1, value="Total").font = Font(
+                    bold=True
+                )
+                tax_summary.cell(
+                    row=total_row, column=2, value=f"=SUM(B2:B{total_row-1})"
+                ).number_format = '"$"#,##0.00'
+                tax_summary.cell(
+                    row=total_row, column=3, value=f"=SUM(C2:C{total_row-1})"
+                ).font = Font(bold=True)
+                tax_summary.cell(
+                    row=total_row,
+                    column=4,
+                    value=f"=IF(C{total_row}>0,B{total_row}/C{total_row},0)",
+                ).number_format = '"$"#,##0.00'
+
+                # Create pie chart for tax categories
+                pie = PieChart()
+                pie.title = "Business Expenses by Tax Category"
+
+                # Use direct references for chart data
+                last_category_row = len(tax_categories) + 1
+                data_ref = Reference(
+                    tax_summary, min_col=2, min_row=1, max_row=last_category_row
+                )
+                labels_ref = Reference(
+                    tax_summary, min_col=1, min_row=2, max_row=last_category_row
+                )
+                pie.add_data(data_ref, titles_from_data=True)
+                pie.set_categories(labels_ref)
+
+                # Add chart to worksheet
+                tax_summary.add_chart(pie, "F2")
+
+                # Format tax summary sheet
+                max_col = len(tax_headers)
+                for col in range(1, max_col + 1):
+                    tax_summary.column_dimensions[get_column_letter(col)].width = 15
+                tax_summary.auto_filter.ref = f"A1:{get_column_letter(max_col)}1"
+
+            except Exception as e:
+                print(f"Warning: Could not create tax summary calculations - {e}")
 
         # Save workbook
         wb.save(output_path)
