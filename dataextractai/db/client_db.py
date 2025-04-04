@@ -425,15 +425,18 @@ class ClientDB:
                         c.payee,
                         c.payee_confidence,
                         c.payee_reasoning,
-                        c.category,
+                        c.base_category,
                         c.category_confidence,
                         c.category_reasoning,
                         c.suggested_new_category,
                         c.new_category_reasoning,
                         c.classification,
                         c.classification_confidence,
-                        c.classification_reasoning,
-                        c.tax_implications
+                        c.classification_reasoning, 
+                        c.tax_implications,
+                        c.expense_type,
+                        c.tax_category,
+                        c.business_percentage
                     FROM normalized_transactions t
                     LEFT JOIN transaction_classifications c 
                         ON t.client_id = c.client_id 

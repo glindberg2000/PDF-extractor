@@ -27,8 +27,11 @@ class ExcelReportFormatter:
             "description",
             "normalized_amount",
             "payee",
-            "category",
+            "base_category",
+            "expense_type",
             "classification",
+            "tax_category",
+            "business_percentage",
             "tax_implications",
         ]
 
