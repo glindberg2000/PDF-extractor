@@ -206,6 +206,9 @@ class ClientDB:
                 "last_reviewed_at TIMESTAMP",
                 "expense_type TEXT CHECK(expense_type IN ('business', 'personal', 'mixed'))",
                 "business_percentage INTEGER",
+                "business_description TEXT",
+                "general_category TEXT",
+                "business_context TEXT",
             ]:
                 try:
                     conn.execute(

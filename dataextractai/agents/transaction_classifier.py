@@ -40,6 +40,9 @@ from ..utils.tax_categories import (
 from ..models.worksheet_models import WorksheetAssignment, WorksheetPrompt
 from datetime import datetime
 from colorama import Fore, Style, init
+import difflib
+import traceback
+from dataclasses import dataclass
 
 # Initialize colorama
 init(autoreset=True)
@@ -270,15 +273,73 @@ class TransactionClassifier:
                     # Get payee info
                     payee_info = self._get_payee(transaction["description"], row_number)
 
+                    # Extract business description and general category from reasoning if available
+                    business_description = None
+                    general_category = None
+
+                    # If the response was cached and has these fields
+                    cache_key = self._get_cache_key(transaction["description"])
+                    cached_result = self._get_cached_result(cache_key, "payee")
+                    if cached_result:
+                        business_description = cached_result.get("business_description")
+                        general_category = cached_result.get("general_category")
+
+                    # If not in cache, try to extract from reasoning
+                    if (
+                        not business_description
+                        and "business description:" in payee_info.reasoning.lower()
+                    ):
+                        try:
+                            desc_lines = [
+                                line
+                                for line in payee_info.reasoning.split("\n")
+                                if "business description:" in line.lower()
+                            ]
+                            if desc_lines:
+                                business_description = (
+                                    desc_lines[0].split(":", 1)[1].strip()
+                                )
+                        except:
+                            pass
+
+                    if (
+                        not general_category
+                        and "general category:" in payee_info.reasoning.lower()
+                    ):
+                        try:
+                            cat_lines = [
+                                line
+                                for line in payee_info.reasoning.split("\n")
+                                if "general category:" in line.lower()
+                            ]
+                            if cat_lines:
+                                general_category = cat_lines[0].split(":", 1)[1].strip()
+                        except:
+                            pass
+
                     # Update transaction with payee info
+                    update_data = {
+                        "client_id": self.db.get_client_id(self.client_name),
+                        "payee": payee_info.payee,
+                        "payee_confidence": payee_info.confidence,
+                        "payee_reasoning": payee_info.reasoning,
+                    }
+
+                    # Add the new fields if available
+                    if business_description:
+                        update_data["business_description"] = business_description
+                        logger.info(
+                            f"[Row {row_number}] Business description: {business_description}"
+                        )
+
+                    if general_category:
+                        update_data["general_category"] = general_category
+                        logger.info(
+                            f"[Row {row_number}] General category: {general_category}"
+                        )
+
                     self.db.update_transaction_classification(
-                        transaction["transaction_id"],
-                        {
-                            "client_id": self.db.get_client_id(self.client_name),
-                            "payee": payee_info.payee,
-                            "payee_confidence": payee_info.confidence,
-                            "payee_reasoning": payee_info.reasoning,
-                        },
+                        transaction["transaction_id"], update_data
                     )
 
                     # Update status
@@ -335,7 +396,10 @@ class TransactionClassifier:
                             f"[Row {row_number}] 🤖 Getting category for: {existing['payee']}"
                         )
                         category_info = self._get_category(
-                            transaction["description"], existing["payee"]
+                            transaction["description"],
+                            existing["payee"],
+                            existing.get("business_description"),
+                            existing.get("general_category"),
                         )
                         logger.info(
                             f"[Row {row_number}] ✓ Category assigned: {category_info.category} (confidence: {category_info.confidence})"
@@ -343,37 +407,102 @@ class TransactionClassifier:
 
                     # Extract expense_type from reasoning
                     expense_type = "personal"  # Default to personal
+                    business_percentage = 0  # Default to 0%
+                    business_context = ""  # Default to empty
+
                     if "Expense type: business" in category_info.reasoning:
                         expense_type = "business"
+                        business_percentage = 100  # Default for business
                     elif "Expense type: mixed" in category_info.reasoning:
                         expense_type = "mixed"
+                        # Try to extract percentage
+                        try:
+                            if "Business percentage:" in category_info.reasoning:
+                                percentage_line = [
+                                    line
+                                    for line in category_info.reasoning.split("\n")
+                                    if "Business percentage:" in line
+                                ][0]
+                                percentage_str = (
+                                    percentage_line.split(":", 1)[1].strip().rstrip("%")
+                                )
+                                business_percentage = int(percentage_str)
+                            elif (
+                                "business percentage:"
+                                in category_info.reasoning.lower()
+                            ):
+                                percentage_line = [
+                                    line
+                                    for line in category_info.reasoning.split("\n")
+                                    if "business percentage:" in line.lower()
+                                ][0]
+                                percentage_str = (
+                                    percentage_line.split(":", 1)[1].strip().rstrip("%")
+                                )
+                                business_percentage = int(percentage_str)
+                        except:
+                            # If extraction fails, use 50% as default for mixed
+                            business_percentage = 50
+
+                    # Try to extract business_context if available
+                    if "Business context:" in category_info.reasoning:
+                        try:
+                            context_start = category_info.reasoning.find(
+                                "Business context:"
+                            )
+                            if context_start > 0:
+                                context_part = category_info.reasoning[
+                                    context_start + 17 :
+                                ]
+                                # Extract until next double newline or end
+                                end_pos = context_part.find("\n\n")
+                                if end_pos > 0:
+                                    business_context = context_part[:end_pos].strip()
+                                else:
+                                    business_context = context_part.strip()
+                        except:
+                            pass
 
                     logger.info(f"[Row {row_number}] • Expense type: {expense_type}")
+                    logger.info(
+                        f"[Row {row_number}] • Business percentage: {business_percentage}%"
+                    )
+                    if business_context:
+                        logger.info(
+                            f"[Row {row_number}] • Business context: {business_context[:100]}..."
+                        )
 
                     # Update transaction with category info
+                    update_data = {
+                        "client_id": self.db.get_client_id(self.client_name),
+                        "base_category": category_info.category,
+                        "category_confidence": category_info.confidence,
+                        "category_reasoning": category_info.reasoning,
+                        "expense_type": expense_type,
+                        "business_percentage": business_percentage,
+                    }
+
+                    if business_context:
+                        update_data["business_context"] = business_context
+
                     self.db.update_transaction_classification(
-                        transaction["transaction_id"],
-                        {
-                            "client_id": self.db.get_client_id(self.client_name),
-                            "base_category": category_info.category,
-                            "category_confidence": category_info.confidence,
-                            "category_reasoning": category_info.reasoning,
-                            "expense_type": expense_type,
-                        },
+                        transaction["transaction_id"], update_data
                     )
 
                     # Cache the result with expense_type
                     if not cached_category:
-                        self._cache_result(
-                            cache_key,
-                            "category",
-                            {
-                                "category": category_info.category,
-                                "confidence": category_info.confidence,
-                                "reasoning": category_info.reasoning,
-                                "expense_type": expense_type,
-                            },
-                        )
+                        cache_data = {
+                            "category": category_info.category,
+                            "confidence": category_info.confidence,
+                            "reasoning": category_info.reasoning,
+                            "expense_type": expense_type,
+                            "business_percentage": business_percentage,
+                        }
+
+                        if business_context:
+                            cache_data["business_context"] = business_context
+
+                        self._cache_result(cache_key, "category", cache_data)
 
                     # Update status
                     self.db.update_transaction_status(
@@ -395,13 +524,13 @@ class TransactionClassifier:
                     if resume_from_pass == 2:
                         continue
 
-                # Pass 3: Final classification
+                # Pass 3: Tax Classification
                 if resume_from_pass <= 3:
                     logger.info(
-                        f"{Fore.GREEN}▶ PASS 3: Final Classification & Tax Mapping{Style.RESET_ALL}"
+                        f"{Fore.GREEN}▶ PASS 3: Tax Classification{Style.RESET_ALL}"
                     )
 
-                    # Get existing info
+                    # Get existing category info
                     existing = self.db.get_transaction_classification(
                         transaction["transaction_id"]
                     )
@@ -411,108 +540,97 @@ class TransactionClassifier:
                         )
                         continue
 
-                    # Check cache for classification
-                    cache_key = self._get_cache_key(
-                        transaction["description"],
-                        existing["payee"],
-                        existing["base_category"],
-                    )
-                    cached_classification = self._get_cached_result(
-                        cache_key, "classification"
-                    )
-
-                    if cached_classification and not force_process:
+                    # Skip personal expenses from detailed tax classification
+                    if existing.get("expense_type") == "personal":
                         logger.info(
-                            f"[Row {row_number}] ✓ Using cached classification: {cached_classification['classification']} (confidence: {cached_classification['confidence']})"
+                            f"[Row {row_number}] ℹ Personal expense, setting minimal tax classification"
                         )
                         classification_info = ClassificationResponse(
-                            **cached_classification
+                            tax_category="Not Applicable",
+                            tax_subcategory="Personal Expense",
+                            worksheet="None",
+                            confidence="high",
+                            reasoning="This is a personal expense and not applicable for tax deductions.",
                         )
                         cache_hit_count[3] += 1
-
-                        # If we have a tax_category in the cache, use it
-                        tax_category = cached_classification.get(
-                            "tax_category", "Other expenses"
-                        )
-                        business_percentage = cached_classification.get(
-                            "business_percentage",
-                            (
-                                100
-                                if cached_classification.get("classification")
-                                == "Business"
-                                else 0
-                            ),
-                        )
-
-                        logger.info(
-                            f"[Row {row_number}] • Tax category: {tax_category}"
-                        )
-                        logger.info(
-                            f"[Row {row_number}] • Business percentage: {business_percentage}%"
-                        )
                     else:
-                        # Get classification info from LLM
-                        logger.info(
-                            f"[Row {row_number}] 🤖 Getting classification for {existing['base_category']}"
-                        )
-                        classification_info = self._get_classification(
+                        # Check cache for classification
+                        cache_key = self._get_cache_key(
                             transaction["description"],
                             existing["payee"],
                             existing["base_category"],
                         )
-                        logger.info(
-                            f"[Row {row_number}] ✓ Classification: {classification_info.classification} (confidence: {classification_info.confidence})"
+                        cached_classification = self._get_cached_result(
+                            cache_key, "classification"
                         )
 
-                        # Extract tax_category and business_percentage from the response or database
-                        # These might have been set in the _get_classification method
-                        updated = self.db.get_transaction_classification(
-                            transaction["transaction_id"]
-                        )
-                        tax_category = updated.get("tax_category", "Other expenses")
-                        business_percentage = updated.get(
-                            "business_percentage",
-                            (
-                                100
-                                if classification_info.classification == "Business"
-                                else 0
-                            ),
-                        )
+                        if cached_classification and not force_process:
+                            logger.info(
+                                f"[Row {row_number}] ✓ Using cached tax classification: {cached_classification.get('tax_category', 'Unknown')}"
+                            )
+                            classification_info = ClassificationResponse(
+                                **cached_classification
+                            )
+                            cache_hit_count[3] += 1
+                        else:
+                            # Get business percentage
+                            business_percentage = existing.get(
+                                "business_percentage",
+                                (
+                                    100
+                                    if existing.get("expense_type") == "business"
+                                    else 0
+                                ),
+                            )
 
-                        logger.info(
-                            f"[Row {row_number}] • Tax category: {tax_category}"
-                        )
-                        logger.info(
-                            f"[Row {row_number}] • Business percentage: {business_percentage}%"
-                        )
+                            # Get classification info from LLM
+                            logger.info(
+                                f"[Row {row_number}] 🤖 Getting tax classification for: {existing['base_category']}"
+                            )
+                            classification_info = self._get_classification(
+                                transaction["description"],
+                                existing["payee"],
+                                existing["base_category"],
+                                existing.get("expense_type", "business"),
+                                business_percentage,
+                                existing.get("business_description"),
+                                existing.get("general_category"),
+                                existing.get("business_context"),
+                            )
+                            logger.info(
+                                f"[Row {row_number}] ✓ Tax classification: {classification_info.tax_category} (confidence: {classification_info.confidence})"
+                            )
 
-                        # Cache the result with tax_category
+                    # Update transaction with classification info
+                    update_data = {
+                        "client_id": self.db.get_client_id(self.client_name),
+                        "tax_category": classification_info.tax_category,
+                        "tax_subcategory": classification_info.tax_subcategory,
+                        "worksheet": classification_info.worksheet,
+                        "classification_confidence": classification_info.confidence,
+                        "classification_reasoning": classification_info.reasoning,
+                    }
+
+                    self.db.update_transaction_classification(
+                        transaction["transaction_id"], update_data
+                    )
+
+                    # Cache the result
+                    if (
+                        not existing.get("expense_type") == "personal"
+                        and not cached_classification
+                    ):
                         self._cache_result(
                             cache_key,
                             "classification",
                             {
-                                "classification": classification_info.classification,
+                                "tax_category": classification_info.tax_category,
+                                "tax_subcategory": classification_info.tax_subcategory,
+                                "worksheet": classification_info.worksheet,
                                 "confidence": classification_info.confidence,
                                 "reasoning": classification_info.reasoning,
-                                "tax_implications": classification_info.tax_implications,
-                                "tax_category": tax_category,
-                                "business_percentage": business_percentage,
                             },
                         )
-
-                    # Update transaction with classification info
-                    self.db.update_transaction_classification(
-                        transaction["transaction_id"],
-                        {
-                            "client_id": self.db.get_client_id(self.client_name),
-                            "classification": classification_info.classification,
-                            "classification_confidence": classification_info.confidence,
-                            "classification_reasoning": classification_info.reasoning,
-                            "tax_implications": classification_info.tax_implications,
-                            "tax_category": tax_category,
-                            "business_percentage": business_percentage,
-                        },
-                    )
 
                     # Update status
                     self.db.update_transaction_status(
@@ -526,7 +644,7 @@ class TransactionClassifier:
                     )
 
                     logger.info(
-                        f"{Fore.GREEN}✓ Pass 3 complete: {classification_info.classification} → {tax_category}{Style.RESET_ALL}"
+                        f"{Fore.GREEN}✓ Pass 3 complete: {classification_info.tax_category} (worksheet: {classification_info.worksheet}){Style.RESET_ALL}"
                     )
                     processed_count[3] += 1
 
@@ -597,6 +715,8 @@ class TransactionClassifier:
                 category_result = self._get_category(
                     transaction["description"],
                     payee_info["payee"] if payee_info else None,
+                    payee_info["business_description"] if payee_info else None,
+                    payee_info["general_category"] if payee_info else None,
                 )
 
                 # Save to database
@@ -697,11 +817,46 @@ class TransactionClassifier:
 
         # Get initial AI identification
         logger.info(f"{row_info} 🤖 Getting initial identification from LLM...")
-        prompt = (
-            PROMPTS["get_payee"]
-            + f"\n\nBusiness Context:\n{self.business_context}\n\n"
-            + f"Process the following transaction:\n- {description}"
-        )
+        prompt = f"""Analyze this transaction description to identify the payee (merchant or recipient of payment).
+
+Transaction Description: {description}
+
+Business Context:
+{self.business_context}
+
+Provide the following information:
+1. The most likely payee name (merchant or recipient)
+2. A brief description of what type of business this payee is
+3. A general expense category for this transaction
+
+Format your response as a JSON object with these fields:
+- payee: The name of the payee/merchant
+- business_description: A clear, concise description of what type of business this payee is
+- general_category: A general expense category for this transaction
+- confidence: Your confidence level (high, medium, low)
+- reasoning: Your explanation for this identification
+
+Some examples of general expense categories:
+- Food and Dining
+- Office Supplies
+- Professional Services
+- Marketing and Advertising
+- Travel and Transportation
+- Software and Technology
+- Rent and Utilities
+- Insurance
+- Education and Training
+- Retail Shopping
+- Entertainment
+- Financial Services
+- Healthcare
+- Other
+
+NOTES:
+- For common merchants, identify the brand name (not the payment processor)
+- For online merchants, include what they sell if possible
+- If the payee is ambiguous, explain why in your reasoning
+"""
 
         response = self.client.responses.create(
             model=self._get_model(),
@@ -723,6 +878,14 @@ class TransactionClassifier:
                                 "type": "string",
                                 "description": "The identified payee/merchant name",
                             },
+                            "business_description": {
+                                "type": "string",
+                                "description": "A brief description of what type of business this payee is",
+                            },
+                            "general_category": {
+                                "type": "string",
+                                "description": "A general expense category for this transaction",
+                            },
                             "confidence": {
                                 "type": "string",
                                 "enum": ["high", "medium", "low"],
@@ -733,7 +896,13 @@ class TransactionClassifier:
                                 "description": "Explanation of the identification",
                             },
                         },
-                        "required": ["payee", "confidence", "reasoning"],
+                        "required": [
+                            "payee",
+                            "business_description",
+                            "general_category",
+                            "confidence",
+                            "reasoning",
+                        ],
                         "additionalProperties": False,
                     },
                     "strict": True,
@@ -755,6 +924,16 @@ class TransactionClassifier:
             logger.info(
                 f"{row_info} 🤖 LLM identified payee: {initial_response.payee} ({initial_response.confidence} confidence)"
             )
+
+            if "business_description" in result:
+                logger.info(
+                    f"{row_info} 📋 Business type: {result['business_description']}"
+                )
+
+            if "general_category" in result:
+                logger.info(
+                    f"{row_info} 🏷️ General category: {result['general_category']}"
+                )
 
             # If confidence is not high, try to enrich with Brave Search
             if initial_response.confidence != "high":
@@ -791,6 +970,31 @@ class TransactionClassifier:
 
                             # Add the business information to the reasoning
                             initial_response.reasoning += f"\n\nEnriched with business information: {best_match['description']}"
+
+                            # If we don't have a business description yet, extract one from the search result
+                            if (
+                                not result.get("business_description")
+                                or result.get("business_description") == "Unknown"
+                            ):
+                                # Try to extract a business description from the search result
+                                prompt = f"""Based on this search result, provide a VERY brief (10 words or less) description of what type of business {initial_response.payee} is:
+
+Search result: {best_match['description']}
+
+ONLY return the brief business description, nothing else."""
+
+                                description_response = self.client.responses.create(
+                                    model="claude-3-haiku-20240307",
+                                    input=[{"role": "user", "content": prompt}],
+                                )
+
+                                business_description = (
+                                    description_response.output_text.strip()
+                                )
+                                result["business_description"] = business_description
+                                logger.info(
+                                    f"{row_info} {Fore.GREEN}✓ Added business description from search: {business_description}{Style.RESET_ALL}"
+                                )
                         else:
                             logger.info(
                                 f"{row_info} {Fore.YELLOW}⚠ No good business match found (best score: {best_match['relevance_score']}){Style.RESET_ALL}"
@@ -801,16 +1005,11 @@ class TransactionClassifier:
                         f"{row_info} {Fore.YELLOW}⚠ Brave Search error: {str(e)}{Style.RESET_ALL}"
                     )
 
-            # Cache the result regardless of confidence
-            # This way we know if we've tried Brave Search before
+            # Cache the result with all fields
             self._cache_result(
                 cache_key,
                 "payee",
-                {
-                    "payee": initial_response.payee,
-                    "confidence": initial_response.confidence,
-                    "reasoning": initial_response.reasoning,
-                },
+                result,
             )
 
             logger.info(
@@ -827,11 +1026,23 @@ class TransactionClassifier:
                 reasoning=f"Error: {str(e)}",
             )
 
-    def _get_category(self, description: str, payee: str) -> CategoryResponse:
+    def _get_category(
+        self,
+        description: str,
+        payee: str,
+        business_description: str = None,
+        general_category: str = None,
+    ) -> CategoryResponse:
         """Process a single transaction to assign a base category.
 
-        This assigns an initial business or personal category, which will later be mapped to
-        Schedule 6A categories in pass 3 if applicable.
+        This assigns an initial business-friendly category, which will later be mapped to
+        Schedule 6A categories in pass 3.
+
+        Args:
+            description: Transaction description
+            payee: Identified payee name
+            business_description: Optional description of the payee business
+            general_category: Optional general expense category from Pass 1
         """
         # Get client's custom categories
         client_categories = self.db.get_client_categories(self.client_name)
@@ -871,9 +1082,6 @@ class TransactionClassifier:
             "Utilities (Personal)",
             "Transportation",
             "Education",
-            "Charity and Gifts",
-            "Personal Insurance",
-            "Personal Finance",
             "Travel (Personal)",
             "Home Improvement",
             "Subscriptions",
@@ -888,6 +1096,16 @@ class TransactionClassifier:
             base_business_categories + personal_categories + custom_categories
         )
 
+        # Build context information about the transaction
+        transaction_context = f"""Transaction Description: {description}
+Payee: {payee}"""
+
+        if business_description:
+            transaction_context += f"\nBusiness Type: {business_description}"
+
+        if general_category:
+            transaction_context += f"\nGeneral Category from Pass 1: {general_category}"
+
         # Separate categories by type for the prompt
         business_categories_str = "\n".join(
             f"- {cat}" for cat in base_business_categories
@@ -899,7 +1117,13 @@ class TransactionClassifier:
             else "None"
         )
 
-        prompt = f"""Analyze this transaction and assign it to the most appropriate category (business or personal).
+        prompt = f"""Analyze this transaction to determine if it's a business or personal expense, and assign the most appropriate category.
+
+Transaction Information:
+{transaction_context}
+
+Business Context:
+{self.business_context}
 
 Business Categories:
 {business_categories_str}
@@ -910,21 +1134,27 @@ Personal Categories:
 Client Custom Categories:
 {custom_categories_str}
 
-Business Context:
-{self.business_context}
+Please analyze this transaction and provide:
+1. Whether this is primarily a business or personal expense
+2. The most appropriate category from the lists above
+3. A clear explanation of your reasoning, including how it relates to real estate operations if business-related
+4. The percentage of business use (100% for purely business, 0% for purely personal, or a percentage for mixed use)
 
-Transaction:
-Description: {description}
-Payee: {payee}
+Response Format:
+- category: The assigned expense category
+- expense_type: "business", "personal", or "mixed"
+- business_percentage: Percentage of business use (0-100)
+- confidence: Your confidence level ("high", "medium", "low")
+- reasoning: Your explanation, including how this relates to real estate operations if business-related
+- business_context: Specific explanation of how this expense relates to the client's real estate business
 
 Rules:
-1. Choose from the available categories listed above
-2. If it's a business expense, select from the business categories section
-3. If it's a personal expense, select from the personal categories section
-4. If a custom category fits better than the standard categories, use it
-5. Focus on the nature of the expense, not just the payee
-6. Consider the business context when categorizing
-7. If completely unsure, use "Other Personal Expenses" or "Other Business Expenses" as appropriate
+1. Focus on the nature of the expense, not just the payee
+2. Consider the business context when categorizing
+3. If it's a business expense, explain how it relates to real estate operations
+4. If it's a personal expense, explain why it doesn't qualify as a business expense
+5. For mixed expenses, estimate the business percentage and explain your reasoning
+6. If a custom category fits better than the standard categories, use it
 """
 
         response = self.client.responses.create(
@@ -952,6 +1182,12 @@ Rules:
                                 "enum": ["business", "personal", "mixed"],
                                 "description": "Whether this is a business or personal expense",
                             },
+                            "business_percentage": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 100,
+                                "description": "Percentage of business use (0-100)",
+                            },
                             "confidence": {
                                 "type": "string",
                                 "enum": ["high", "medium", "low"],
@@ -961,12 +1197,18 @@ Rules:
                                 "type": "string",
                                 "description": "Explanation of why this category is appropriate",
                             },
+                            "business_context": {
+                                "type": "string",
+                                "description": "Specific explanation of how this expense relates to real estate operations",
+                            },
                         },
                         "required": [
                             "category",
                             "expense_type",
+                            "business_percentage",
                             "confidence",
                             "reasoning",
+                            "business_context",
                         ],
                         "additionalProperties": False,
                     },
@@ -998,12 +1240,14 @@ Rules:
                     "reasoning"
                 ] += "\nCategory not found in available list, defaulting to appropriate 'Other' category."
 
-            # Add expense_type to the CategoryResponse (even though it's not in the model)
-            # The DB will be updated to include this field in pass 3
+            # Add expense_type to the CategoryResponse
+            # Combine reasoning and business context
+            full_reasoning = f"{result['reasoning']}\n\nExpense type: {result['expense_type']}\nBusiness percentage: {result['business_percentage']}%\n\nBusiness context: {result['business_context']}"
+
             return CategoryResponse(
                 category=result["category"],
                 confidence=result["confidence"],
-                reasoning=f"{result['reasoning']}\n\nExpense type: {result['expense_type']}",
+                reasoning=full_reasoning,
             )
         except Exception as e:
             logger.error(f"Error parsing category response: {str(e)}")
@@ -1014,213 +1258,204 @@ Rules:
             )
 
     def _get_classification(
-        self, description: str, payee: str, category: str
+        self,
+        description: str,
+        payee: str,
+        category: str,
+        expense_type: str = "business",
+        business_percentage: int = 100,
+        business_description: str = None,
+        general_category: str = None,
+        business_context: str = None,
     ) -> ClassificationResponse:
-        """Process a transaction to determine classification and, for business expenses, map to Schedule 6A."""
-        # Get transaction details from the database
-        transaction_id = None
-        expense_type = None
+        """Process a single transaction and classify it for tax purposes.
 
-        # Try to find the transaction in the database using description and payee
-        with sqlite3.connect(self.db.db_path) as conn:
-            cursor = conn.execute(
-                """
-                SELECT tc.transaction_id, tc.expense_type 
-                FROM transaction_classifications tc
-                JOIN transactions t ON tc.transaction_id = t.transaction_id
-                WHERE t.description = ? AND tc.payee = ?
-                AND tc.client_id = ?
-                LIMIT 1
-                """,
-                (description, payee, self.db.get_client_id(self.client_name)),
-            )
-            result = cursor.fetchone()
-            if result:
-                transaction_id, expense_type = result
+        Args:
+            description: The transaction description.
+            payee: The identified payee name.
+            category: The assigned base category.
+            expense_type: The type of expense (business, personal, mixed).
+            business_percentage: The business use percentage for mixed expenses.
+            business_description: Description of the payee's business (optional).
+            general_category: General expense category identified (optional).
+            business_context: Business context for this transaction (optional).
 
-        # Get IRS Schedule 6A categories
-        schedule_6a_categories = list(
-            TAX_WORKSHEET_CATEGORIES["6A"]["main_expenses"].keys()
-        )
-        schedule_6a_mapping = "\n".join(
-            [
-                f"- {cat}: {TAX_WORKSHEET_CATEGORIES['6A']['main_expenses'][cat]['description']}"
-                for cat in schedule_6a_categories
-            ]
-        )
-
-        # Customize prompt based on expense type
-        if expense_type == "business" or expense_type == "mixed":
-            prompt = f"""Analyze this transaction to finalize its classification and map business expenses to the appropriate IRS Schedule 6A category.
-
-Transaction:
-- Description: {description}
-- Payee: {payee}
-- Initial Category: {category}
-- Initial Expense Type: {expense_type}
-
-Business Context:
-{self.business_context}
-
-First, confirm the classification as:
-- Business: Fully deductible business expense
-- Personal: Non-deductible personal expense
-- Mixed: Partially business, partially personal
-
-For business or mixed expenses, map to one of these IRS Schedule 6A categories:
-{schedule_6a_mapping}
-
-Rules:
-1. Confirm expense_type based on transaction details and business context
-2. For business expenses, select the most appropriate Schedule 6A category
-3. For mixed expenses, indicate business percentage if possible
-4. For personal expenses, keep the original category
-5. Provide tax implications appropriate for the classification
-"""
-        else:  # Personal expense
-            prompt = f"""Analyze this transaction to finalize its classification.
-
-Transaction:
-- Description: {description}
-- Payee: {payee}
-- Initial Category: {category}
-- Initial Expense Type: personal
-
-Business Context:
-{self.business_context}
-
-Confirm the classification as:
-- Business: Fully deductible business expense
-- Personal: Non-deductible personal expense
-- Mixed: Partially business, partially personal
-
-Rules:
-1. Verify this is truly a personal expense based on transaction details
-2. If it's actually business-related, explain why
-3. If personal, keep the original category and explain why it's not business-related
-4. Provide tax implications appropriate for the classification
-"""
-
-        response = self.client.responses.create(
-            model=self._get_model(),
-            input=[
-                {
-                    "role": "system",
-                    "content": ASSISTANTS_CONFIG["AmeliaAI"]["instructions"],
-                },
-                {"role": "user", "content": prompt},
-            ],
-            text={
-                "format": {
-                    "type": "json_schema",
-                    "name": "classification_response",
-                    "schema": {
-                        "type": "object",
-                        "properties": {
-                            "classification": {
-                                "type": "string",
-                                "enum": [
-                                    "Business",
-                                    "Personal",
-                                    "Mixed",
-                                    "Unclassified",
-                                ],
-                                "description": "The transaction classification (must be one of: Business, Personal, Mixed, or Unclassified)",
-                            },
-                            "confidence": {
-                                "type": "string",
-                                "enum": ["high", "medium", "low"],
-                                "description": "Confidence level in the classification",
-                            },
-                            "tax_category": {
-                                "type": "string",
-                                "description": "For business expenses, the IRS Schedule 6A category; for personal expenses, the original category",
-                            },
-                            "business_percentage": {
-                                "type": "integer",
-                                "minimum": 0,
-                                "maximum": 100,
-                                "description": "For mixed expenses, percentage that is business (0-100)",
-                            },
-                            "reasoning": {
-                                "type": "string",
-                                "description": "Explanation of the classification",
-                            },
-                            "tax_implications": {
-                                "type": "string",
-                                "description": "Tax implications of the classification",
-                            },
-                        },
-                        "required": [
-                            "classification",
-                            "confidence",
-                            "tax_category",
-                            "reasoning",
-                            "tax_implications",
-                        ],
-                        "additionalProperties": False,
-                    },
-                    "strict": True,
-                }
-            },
-        )
-
+        Returns:
+            A ClassificationResponse containing the tax information.
+        """
         try:
-            response_text = response.output_text.strip()
-            if response_text.startswith("```json"):
-                response_text = response_text[7:]
-            if response_text.endswith("```"):
-                response_text = response_text[:-3]
-            response_text = response_text.strip()
-
-            result = json.loads(response_text)
-
-            # Ensure classification is properly capitalized
-            result["classification"] = result["classification"].capitalize()
-            if result["classification"] not in ["Business", "Personal", "Mixed"]:
-                result["classification"] = "Unclassified"
-
-            # Validate tax_category for business expenses
-            if (
-                result["classification"] == "Business"
-                and result["tax_category"] not in schedule_6a_categories
-            ):
-                # Try to find the closest match
-                result["tax_category"] = "Other expenses"
-                result["confidence"] = "low"
-                result[
-                    "reasoning"
-                ] += "\nProvided tax category not found in Schedule 6A, defaulting to 'Other expenses'."
-
-            # For personal expenses, we don't need to validate against Schedule 6A
-
-            # Update the database with the final tax category if we have a transaction_id
-            if transaction_id and result["classification"] in ["Business", "Mixed"]:
-                self.db.update_transaction_classification(
-                    transaction_id,
-                    {
-                        "tax_category": result["tax_category"],
-                        "business_percentage": result.get(
-                            "business_percentage",
-                            100 if result["classification"] == "Business" else 0,
-                        ),
-                    },
+            # Get business profile if available
+            profile_data = None
+            try:
+                profile_data = self.db.get_business_profile(self.client_name)
+                if profile_data:
+                    profile_data = json.loads(profile_data["profile_data"])
+            except:
+                logger.warning(
+                    f"⚠ Failed to load business profile for {self.client_name}"
                 )
 
-            # Construct the final response
-            return ClassificationResponse(
-                classification=result["classification"],
-                confidence=result["confidence"],
-                reasoning=result["reasoning"],
-                tax_implications=result["tax_implications"],
+            # Skip personal expenses
+            if expense_type == "personal":
+                return ClassificationResponse(
+                    tax_category="Not Applicable",
+                    tax_subcategory="Personal Expense",
+                    worksheet="None",
+                    confidence="high",
+                    reasoning="This is a personal expense and not applicable for tax deductions.",
+                )
+
+            # Define context for the AI model
+            transaction_context = f"Transaction: {description}\nPayee: {payee}\nCategory: {category}\nExpense Type: {expense_type}\nBusiness Percentage: {business_percentage}%"
+
+            # Add business description if available
+            if business_description:
+                transaction_context += f"\nBusiness Description: {business_description}"
+
+            # Add general category if available
+            if general_category:
+                transaction_context += f"\nGeneral Category: {general_category}"
+
+            # Add business context if available
+            if business_context:
+                transaction_context += f"\nBusiness Context: {business_context}"
+
+            # Add business profile context if available
+            business_context_prompt = ""
+            if profile_data:
+                business_context_prompt = f"""
+Business Information:
+- Business Name: {profile_data.get('business_name', 'N/A')}
+- Business Type: {profile_data.get('business_type', 'N/A')}
+- Tax Entity Type: {profile_data.get('tax_entity_type', 'N/A')}"""
+
+                # Add Schedule 6A categories if available
+                if profile_data.get("schedule_6a_categories"):
+                    business_context_prompt += (
+                        "\n\nApplicable Schedule 6A Categories for this business:"
+                    )
+                    for sch_cat in profile_data.get("schedule_6a_categories", []):
+                        business_context_prompt += f"\n- {sch_cat}"
+                else:
+                    business_context_prompt += "\n\nAssume this is a real estate investor or property manager for classification purposes."
+
+            # Set up the initial prompt
+            prompt = f"""You are a tax classification expert specializing in real estate investing and small business expense categorization according to IRS rules. 
+
+{business_context_prompt}
+
+TASK:
+Analyze the following transaction and provide accurate tax classification according to IRS Schedule 6A for real estate investors.
+
+{transaction_context}
+
+INSTRUCTIONS:
+1. Determine the most appropriate tax category for this expense based on IRS Schedule 6A.
+2. For each expense, determine which worksheet it belongs to: "6A" (general expenses), "Vehicle" (auto expenses), or "HomeOffice" (home office expenses).
+3. If this is not a valid business expense, explain why.
+4. For business expenses, provide a confidence level and detailed reasoning.
+5. For mixed-use expenses, make sure the business percentage is appropriate based on the nature of the expense.
+
+Response must follow this JSON format:
+{{
+  "tax_category": "<primary tax category - use one of the Schedule 6A categories or 'Not Deductible' if not tax-deductible>",
+  "tax_subcategory": "<sub-category or specific expense type>",
+  "worksheet": "<'6A', 'Vehicle', or 'HomeOffice'>",
+  "confidence": "<'high', 'medium', or 'low'>",
+  "reasoning": "<detailed explanation justifying this classification, including any relevant tax rules or considerations>"
+}}
+
+Valid Schedule 6A categories include: "Advertising", "Car and truck expenses", "Commissions and fees", "Contract labor", "Depletion", "Depreciation", "Insurance", "Interest", "Legal and professional services", "Office expenses", "Pension and profit-sharing plans", "Rent or lease", "Repairs and maintenance", "Supplies", "Taxes and licenses", "Travel", "Meals", "Utilities", "Wages", "Other expenses", "Not Deductible".
+"""
+
+            # User completions API
+            result = self.client.chat.completions.create(
+                model=self._get_model(),
+                temperature=0,
+                response_format={"type": "json_object"},
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a tax classification assistant that provides JSON responses.",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
             )
-        except Exception as e:
-            logger.error(f"Error parsing classification response: {str(e)}")
+
+            response_content = result.choices[0].message.content
+            data = json.loads(response_content)
+
+            # Map to expected fields and ensure tax_category exists
+            tax_category = data.get("tax_category", "Unknown")
+            tax_subcategory = data.get("tax_subcategory", "")
+            worksheet = data.get("worksheet", "6A")
+            confidence = data.get("confidence", "medium")
+            reasoning = data.get("reasoning", "")
+
+            # Validate the tax category against Schedule 6A categories
+            valid_categories = [
+                "Advertising",
+                "Car and truck expenses",
+                "Commissions and fees",
+                "Contract labor",
+                "Depletion",
+                "Depreciation",
+                "Insurance",
+                "Interest",
+                "Legal and professional services",
+                "Office expenses",
+                "Pension and profit-sharing plans",
+                "Rent or lease",
+                "Repairs and maintenance",
+                "Supplies",
+                "Taxes and licenses",
+                "Travel",
+                "Meals",
+                "Utilities",
+                "Wages",
+                "Other expenses",
+                "Not Deductible",
+            ]
+
+            if tax_category not in valid_categories:
+                # Try to find the closest match
+                closest_match = difflib.get_close_matches(
+                    tax_category, valid_categories, n=1
+                )
+                if closest_match:
+                    logger.warning(
+                        f"⚠ Tax category '{tax_category}' not recognized, using closest match: '{closest_match[0]}'"
+                    )
+                    tax_category = closest_match[0]
+                else:
+                    logger.warning(
+                        f"⚠ Tax category '{tax_category}' not recognized, using 'Other expenses'"
+                    )
+                    tax_category = "Other expenses"
+
+            # Validate worksheet values
+            valid_worksheets = ["6A", "Vehicle", "HomeOffice"]
+            if worksheet not in valid_worksheets:
+                logger.warning(f"⚠ Worksheet '{worksheet}' not recognized, using '6A'")
+                worksheet = "6A"
+
             return ClassificationResponse(
-                classification="Unclassified",
+                tax_category=tax_category,
+                tax_subcategory=tax_subcategory,
+                worksheet=worksheet,
+                confidence=confidence,
+                reasoning=reasoning,
+            )
+
+        except Exception as e:
+            logger.error(f"❌ Error classifying transaction: {str(e)}")
+            traceback.print_exc()
+            return ClassificationResponse(
+                tax_category="Classification Failed",
+                tax_subcategory="Error",
+                worksheet="6A",
                 confidence="low",
-                reasoning=f"Error: {str(e)}",
-                tax_implications="Error during processing",
+                reasoning=f"Error occurred during classification: {str(e)}",
             )
 
     def _get_business_context(self) -> str:
@@ -1486,3 +1721,14 @@ Return a JSON object with:
                 needs_splitting=False,
                 split_details=None,
             )
+
+
+@dataclass
+class ClassificationResponse:
+    """Response from classification step."""
+
+    tax_category: str
+    tax_subcategory: str = ""
+    worksheet: str = "6A"
+    confidence: str = "medium"
+    reasoning: str = ""
