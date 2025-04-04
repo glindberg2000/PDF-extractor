@@ -152,20 +152,7 @@ class TransactionClassifier:
         start_row: Optional[int] = None,
         end_row: Optional[int] = None,
     ) -> None:
-        """Process transactions through multiple passes.
-
-        Pass 1: Identify payees and basic transaction info
-        Pass 2: Determine base category and initial classification
-        Pass 3: Assign tax worksheet, category, and handle splits
-
-        Args:
-            transactions: DataFrame of transactions to process
-            resume_from_pass: Which pass to start from (1-3)
-            force_process: Whether to reprocess already processed transactions
-            batch_size: Number of transactions to process at once
-            start_row: Optional starting row index (0-based)
-            end_row: Optional ending row index (exclusive)
-        """
+        """Process transactions through multiple passes."""
         if not isinstance(transactions, pd.DataFrame):
             raise ValueError("transactions must be a pandas DataFrame")
 
@@ -187,14 +174,46 @@ class TransactionClassifier:
         # Process transactions row by row
         for idx in range(start_row, end_row):
             transaction = transactions.iloc[idx]
+            row_number = idx + 1
 
             try:
+                # Check if transaction is already fully processed
+                if not force_process:
+                    status = self.db.get_transaction_status(
+                        transaction["transaction_id"]
+                    )
+                    if status:
+                        if (
+                            resume_from_pass == 1
+                            and status.get("pass_1_status") == "completed"
+                        ):
+                            logger.info(
+                                f"[Row {row_number}] ✓ Already processed pass 1, skipping..."
+                            )
+                            continue
+                        if (
+                            resume_from_pass <= 2
+                            and status.get("pass_2_status") == "completed"
+                        ):
+                            logger.info(
+                                f"[Row {row_number}] ✓ Already processed pass 2, skipping..."
+                            )
+                            continue
+                        if (
+                            resume_from_pass <= 3
+                            and status.get("pass_3_status") == "completed"
+                        ):
+                            logger.info(
+                                f"[Row {row_number}] ✓ Already processed pass 3, skipping..."
+                            )
+                            continue
+
                 # Pass 1: Payee identification
                 if resume_from_pass == 1:
-                    logger.info(f"Processing transaction {idx + 1} of {end_row}")
+                    logger.info(f"Processing transaction {row_number} of {end_row}")
 
                     # Get payee info
-                    payee_info = self._get_payee(transaction["description"])
+                    payee_info = self._get_payee(transaction["description"], row_number)
 
                     # Update transaction with payee info
                     self.db.update_transaction_classification(
@@ -218,6 +237,10 @@ class TransactionClassifier:
                         },
                     )
 
+                    # If we're only doing pass 1, continue to next transaction
+                    if resume_from_pass == 1:
+                        continue
+
                 # Pass 2: Category assignment
                 if resume_from_pass <= 2:
                     # Get existing payee info
@@ -227,10 +250,22 @@ class TransactionClassifier:
                     if not existing or not existing.get("payee"):
                         continue
 
-                    # Get category info
-                    category_info = self._get_category(
+                    # Check cache for category
+                    cache_key = self._get_cache_key(
                         transaction["description"], existing["payee"]
                     )
+                    cached_category = self._get_cached_result(cache_key, "category")
+
+                    if cached_category and not force_process:
+                        logger.info(
+                            f"[Row {row_number}] ✓ Using cached category: {cached_category['category']} ({cached_category['confidence']} confidence)"
+                        )
+                        category_info = CategoryResponse(**cached_category)
+                    else:
+                        # Get category info from LLM
+                        category_info = self._get_category(
+                            transaction["description"], existing["payee"]
+                        )
 
                     # Update transaction with category info
                     self.db.update_transaction_classification(
@@ -254,6 +289,10 @@ class TransactionClassifier:
                         },
                     )
 
+                    # If we're only doing up to pass 2, continue to next transaction
+                    if resume_from_pass == 2:
+                        continue
+
                 # Pass 3: Final classification
                 if resume_from_pass <= 3:
                     # Get existing info
@@ -263,12 +302,30 @@ class TransactionClassifier:
                     if not existing or not existing.get("base_category"):
                         continue
 
-                    # Get classification info
-                    classification_info = self._get_classification(
+                    # Check cache for classification
+                    cache_key = self._get_cache_key(
                         transaction["description"],
                         existing["payee"],
                         existing["base_category"],
                     )
+                    cached_classification = self._get_cached_result(
+                        cache_key, "classification"
+                    )
+
+                    if cached_classification and not force_process:
+                        logger.info(
+                            f"[Row {row_number}] ✓ Using cached classification: {cached_classification['classification']} ({cached_classification['confidence']} confidence)"
+                        )
+                        classification_info = ClassificationResponse(
+                            **cached_classification
+                        )
+                    else:
+                        # Get classification info from LLM
+                        classification_info = self._get_classification(
+                            transaction["description"],
+                            existing["payee"],
+                            existing["base_category"],
+                        )
 
                     # Update transaction with classification info
                     self.db.update_transaction_classification(
@@ -294,7 +351,7 @@ class TransactionClassifier:
                     )
 
             except Exception as e:
-                logger.error(f"Error processing transaction {idx + 1}: {str(e)}")
+                logger.error(f"Error processing transaction {row_number}: {str(e)}")
                 # Update error status for the current pass
                 error_status = {
                     "client_id": self.db.get_client_id(self.client_name),
@@ -403,8 +460,19 @@ class TransactionClassifier:
                 print(f"Error in Pass 3 for transaction {idx}: {str(e)}")
                 self._update_status(transaction["transaction_id"], 3, "error", str(e))
 
-    def _get_payee(self, description: str) -> PayeeResponse:
-        """Process a single description to identify payee."""
+    def _get_payee(
+        self, description: str, row_number: Optional[int] = None
+    ) -> PayeeResponse:
+        """Process a single description to identify payee.
+
+        Args:
+            description: The transaction description to analyze
+            row_number: Optional row number for logging context
+        """
+        row_info = f"[Row {row_number}]" if row_number is not None else ""
+        logger.info(f"\n{row_info} ----------------------------------------")
+        logger.info(f"{row_info} Transaction: {description}")
+
         cache_key = self._get_cache_key(description)
 
         # Check cache first
@@ -420,11 +488,17 @@ class TransactionClassifier:
                 result.confidence == "high"
                 or "Enriched with business information:" in result.reasoning
             ):
-                print("Using cached payee result")
+                logger.info(
+                    f"{row_info} ✓ USING CACHE: {result.payee} ({result.confidence} confidence)"
+                )
                 return result
             # Otherwise, we'll try to improve it with Brave Search
+            logger.info(
+                f"{row_info} ⚠ Low confidence cache hit, will try to improve..."
+            )
 
         # Get initial AI identification
+        logger.info(f"{row_info} 🤖 Getting initial identification from LLM...")
         prompt = (
             PROMPTS["get_payee"]
             + f"\n\nBusiness Context:\n{self.business_context}\n\n"
@@ -480,8 +554,13 @@ class TransactionClassifier:
             result = json.loads(response_text)
             initial_response = PayeeResponse(**result)
 
+            logger.info(
+                f"{row_info} 🤖 LLM Result: {initial_response.payee} ({initial_response.confidence} confidence)"
+            )
+
             # If confidence is not high, try to enrich with Brave Search
             if initial_response.confidence != "high":
+                logger.info(f"{row_info} 🔍 Enriching with Brave Search...")
                 try:
                     # Look up vendor information
                     vendor_results = lookup_vendor_info(
@@ -494,25 +573,33 @@ class TransactionClassifier:
 
                         # If we got a good business match
                         if best_match["relevance_score"] >= 5:
+                            logger.info(
+                                f"{row_info} ✓ Found good business match: {best_match['title']}"
+                            )
+
                             # Update the payee name if we found a better one
                             if best_match["title"] != initial_response.payee:
                                 initial_response.payee = best_match["title"]
+                                logger.info(
+                                    f"{row_info} ✓ Updated payee name to: {initial_response.payee}"
+                                )
 
                             # Upgrade confidence if we found a strong business match
                             if initial_response.confidence == "low":
                                 initial_response.confidence = "medium"
+                                logger.info(
+                                    f"{row_info} ✓ Upgraded confidence to medium"
+                                )
 
                             # Add the business information to the reasoning
                             initial_response.reasoning += f"\n\nEnriched with business information: {best_match['description']}"
-
-                            # Log the enrichment
+                        else:
                             logger.info(
-                                f"Enriched payee information for '{initial_response.payee}' using Brave Search"
+                                f"{row_info} ⚠ No good business match found (best score: {best_match['relevance_score']})"
                             )
 
                 except Exception as e:
-                    # Log the error but don't fail the classification
-                    logger.warning(f"Error enriching payee with Brave Search: {str(e)}")
+                    logger.warning(f"{row_info} ⚠ Brave Search error: {str(e)}")
 
             # Cache the result regardless of confidence
             # This way we know if we've tried Brave Search before
@@ -525,11 +612,15 @@ class TransactionClassifier:
                     "reasoning": initial_response.reasoning,
                 },
             )
+            logger.info(
+                f"{row_info} ✓ FINAL RESULT: {initial_response.payee} ({initial_response.confidence} confidence)"
+            )
+            logger.info(f"{row_info} ----------------------------------------\n")
 
             return initial_response
 
         except Exception as e:
-            print(f"Error parsing payee response: {str(e)}")
+            logger.error(f"{row_info} ❌ Error: {str(e)}")
             return PayeeResponse(
                 payee="Unknown Payee",
                 confidence="low",
