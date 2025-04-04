@@ -572,38 +572,54 @@ class ClientDB:
         )
 
     def update_transaction_status(
-        self,
-        client_name: str,
-        transaction_id: str,
-        pass_num: int,
-        status: str,
-        error: Optional[str] = None,
+        self, transaction_id: str, status_data: Dict[str, Any]
     ) -> None:
-        """Update the processing status for a transaction pass."""
-        client_id = self.get_client_id(client_name)
-        with sqlite3.connect(self.db_path) as conn:
-            # First ensure the status record exists
-            conn.execute(
-                """
-                INSERT OR IGNORE INTO transaction_status 
-                (client_id, transaction_id, pass_1_status, pass_2_status, pass_3_status)
-                VALUES (?, ?, 'pending', 'pending', 'pending')
-                """,
-                (client_id, transaction_id),
-            )
+        """Update transaction status data.
 
-            # Update the status
-            conn.execute(
-                f"""
-                UPDATE transaction_status 
-                SET pass_{pass_num}_status = ?,
-                    pass_{pass_num}_error = ?,
-                    pass_{pass_num}_processed_at = CURRENT_TIMESTAMP,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE client_id = ? AND transaction_id = ?
-                """,
-                (status, error, client_id, transaction_id),
-            )
+        Args:
+            transaction_id: The transaction ID to update
+            status_data: Dictionary of status data to update
+        """
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                # Convert status data to column updates
+                updates = []
+                values = []
+                for key, value in status_data.items():
+                    updates.append(f"{key} = ?")
+                    values.append(value)
+
+                # Add updated_at timestamp
+                updates.append("updated_at = CURRENT_TIMESTAMP")
+
+                # Build and execute update query
+                query = f"""
+                    UPDATE transaction_status 
+                    SET {', '.join(updates)}
+                    WHERE transaction_id = ?
+                """
+                values.append(transaction_id)
+
+                conn.execute(query, values)
+
+                # If no row was updated, we need to insert
+                if conn.total_changes == 0:
+                    # Prepare columns and values for insert
+                    columns = list(status_data.keys()) + ["transaction_id"]
+                    placeholders = ["?"] * len(columns)
+                    values = list(status_data.values()) + [transaction_id]
+
+                    # Build and execute insert query
+                    query = f"""
+                        INSERT INTO transaction_status 
+                        ({', '.join(columns)})
+                        VALUES ({', '.join(placeholders)})
+                    """
+                    conn.execute(query, values)
+
+        except sqlite3.Error as e:
+            logger.error(f"Database error updating transaction status: {str(e)}")
+            raise
 
     def get_transaction_status(
         self,
@@ -776,51 +792,6 @@ class ClientDB:
             )
             conn.commit()
 
-    def get_transaction_status(self, transaction_id: str) -> Optional[Dict[str, Any]]:
-        """Get the status of a transaction's processing."""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute(
-                """
-                SELECT * FROM transaction_status WHERE transaction_id = ?
-            """,
-                (transaction_id,),
-            )
-            row = cursor.fetchone()
-            if row:
-                return dict(row)
-            return None
-
-    def update_transaction_status(
-        self, transaction_id: str, status_data: Dict[str, Any]
-    ) -> None:
-        """Update the status of a transaction's processing."""
-        # First check if status exists
-        current_status = self.get_transaction_status(transaction_id)
-
-        if current_status:
-            # Update existing status
-            set_clause = ", ".join([f"{k} = ?" for k in status_data.keys()])
-            set_clause += ", updated_at = CURRENT_TIMESTAMP"
-            query = f"""
-                UPDATE transaction_status
-                SET {set_clause}
-                WHERE transaction_id = ?
-            """
-            values = list(status_data.values()) + [transaction_id]
-        else:
-            # Insert new status
-            columns = ["transaction_id"] + list(status_data.keys())
-            placeholders = ["?"] * (len(columns))
-            query = f"""
-                INSERT INTO transaction_status ({", ".join(columns)})
-                VALUES ({", ".join(placeholders)})
-            """
-            values = [transaction_id] + list(status_data.values())
-
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute(query, values)
-            conn.commit()
-
     def get_transactions_by_status(
         self, pass_number: int, complete: bool = True, limit: Optional[int] = None
     ) -> List[Dict[str, Any]]:
@@ -898,3 +869,84 @@ class ClientDB:
             with sqlite3.connect(self.db_path) as conn:
                 conn.execute(query, (transaction_id,))
                 conn.commit()
+
+    def update_transaction_classification(
+        self, transaction_id: str, classification_data: Dict[str, Any]
+    ) -> None:
+        """Update transaction classification data.
+
+        Args:
+            transaction_id: The transaction ID to update
+            classification_data: Dictionary of classification data to update
+        """
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                # Convert classification data to column updates
+                updates = []
+                values = []
+                for key, value in classification_data.items():
+                    updates.append(f"{key} = ?")
+                    values.append(value)
+
+                # Add updated_at timestamp
+                updates.append("updated_at = CURRENT_TIMESTAMP")
+
+                # Build and execute update query
+                query = f"""
+                    UPDATE transaction_classifications 
+                    SET {', '.join(updates)}
+                    WHERE transaction_id = ?
+                """
+                values.append(transaction_id)
+
+                conn.execute(query, values)
+
+                # If no row was updated, we need to insert
+                if conn.total_changes == 0:
+                    # Prepare columns and values for insert
+                    columns = list(classification_data.keys()) + ["transaction_id"]
+                    placeholders = ["?"] * len(columns)
+                    values = list(classification_data.values()) + [transaction_id]
+
+                    # Build and execute insert query
+                    query = f"""
+                        INSERT INTO transaction_classifications 
+                        ({', '.join(columns)})
+                        VALUES ({', '.join(placeholders)})
+                    """
+                    conn.execute(query, values)
+
+        except sqlite3.Error as e:
+            logger.error(
+                f"Database error updating transaction classification: {str(e)}"
+            )
+            raise
+
+    def get_transaction_classification(
+        self, transaction_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Get classification data for a transaction.
+
+        Args:
+            transaction_id: The transaction ID to get classification for
+
+        Returns:
+            Dictionary of classification data or None if not found
+        """
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.execute(
+                    """
+                    SELECT *
+                    FROM transaction_classifications
+                    WHERE transaction_id = ?
+                    """,
+                    (transaction_id,),
+                )
+                row = cursor.fetchone()
+                return dict(row) if row else None
+
+        except sqlite3.Error as e:
+            logger.error(f"Database error getting transaction classification: {str(e)}")
+            raise

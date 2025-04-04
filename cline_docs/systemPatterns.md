@@ -297,68 +297,142 @@ ASSISTANTS_CONFIG = {
    - Update config paths
    - Implement transformation 
 
-## Transaction Processing System
+## Transaction Processing
 
-### Three-Pass Approach
-1. Payee Identification
-   - Normalizes transaction descriptions
-   - Identifies unique payees
-   - Assigns confidence levels
-   - Provides reasoning for decisions
+### Three-Pass Classification
+1. Pass 1: Payee Identification
+   - AI-based payee extraction
+   - Brave Search enrichment
+   - Confidence scoring
 
-2. Category Assignment
-   - Uses payee information
-   - Considers transaction context
-   - Suggests new categories when needed
-   - Maintains category consistency
+2. Pass 2: Category Assignment
+   - Requires valid payee from Pass 1
+   - Uses business context
+   - Suggests new categories
 
-3. Classification
-   - Determines business vs personal nature
-   - Considers tax implications
-   - Provides detailed reasoning
-   - Ensures proper capitalization
+3. Pass 3: Classification
+   - Requires valid category from Pass 2
+   - Business vs Personal determination
+   - Tax implications
+
+### Status Tracking
+1. Status Values
+   - `pending`: Not yet processed
+   - `processing`: Currently being processed
+   - `completed`: Successfully processed
+   - `error`: Failed with error
+   - `skipped`: Skipped due to missing dependency
+   - `force_required`: Needs force processing
+
+2. Status Management
+   - Each pass tracked independently
+   - Error messages preserved
+   - Processing timestamps recorded
+   - Force processing available
+
+3. Dependencies
+   - Pass 2 requires Pass 1 completion
+   - Pass 3 requires Pass 2 completion
+   - Dependencies can be bypassed with force
 
 ### Caching System
 1. Cache Storage
-   - JSON file in client output directory
-   - Persistent between program runs
-   - Separate entries for each pass
-   - Normalized cache keys
+   - Per-client caching
+   - Pass-specific results
+   - JSON result storage
+   - Cache key generation
 
-2. Cache Key Structure
-   - Description (normalized)
-   - Payee (for category/classification)
-   - Category (for classification)
-   - Pipe-separated format
-
-3. Cache Operations
-   - Load on startup
-   - Save after each new result
-   - Clear logging of hits/misses
-   - Error handling for file operations
+2. Cache Management
+   - Cache hit logging
+   - Cache invalidation
+   - Cache cleanup
+   - Cache size monitoring
 
 ### Error Handling
 1. Transaction Level
-   - Individual transaction failures
-   - Default values for errors
-   - Detailed error messages
-   - Progress preservation
+   - Individual transaction isolation
+   - Error status tracking
+   - Error message preservation
+   - Recovery options
 
 2. System Level
-   - Cache file operations
-   - API call failures
-   - Data validation
+   - Database connection handling
+   - API rate limiting
+   - Resource cleanup
+   - State consistency
+
+## Database Structure
+
+### Core Tables
+1. `clients`
+   - Client identification
+   - Business profile link
+   - Metadata
+
+2. `normalized_transactions`
+   - Core transaction data
+   - Client association
+   - Unique constraints
+
+3. `transaction_classifications`
+   - Classification results
+   - Multi-pass data
+   - Confidence levels
+   - Reasoning storage
+
+4. `transaction_status`
+   - Processing status
+   - Error tracking
+   - Timestamps
+   - Dependencies
+
+5. `transaction_cache`
+   - Cached results
+   - Pass-specific data
+   - Cache invalidation
+   - Performance optimization
+
+### Table Relationships
+1. Client Relationships
+   - One-to-many with transactions
+   - One-to-one with profile
+   - Cascade operations
+
+2. Transaction Relationships
+   - One-to-one with status
+   - One-to-one with classifications
+   - Many-to-one with cache
+
+## User Interface
+
+### Menu System
+1. Transaction Processing
+   - Individual pass options
+   - Batch processing
    - Progress tracking
+   - Status display
 
-### Progress Management
-1. Save Points
-   - After each pass
-   - After each transaction
-   - After cache updates
-   - Before program exit
+2. Status Management
+   - Color-coded display
+   - Detailed transaction view
+   - Force processing
+   - Status reset
 
-2. Resume Capability
-   - Start from any pass
-   - Skip cached transactions
-   - Maintain consistency
-   - Clear progress logging 
+3. Data Management
+   - Cache management
+   - Export options
+   - Database operations
+   - Profile management
+
+### Progress Tracking
+1. Visual Indicators
+   - Color coding
+   - Status counts
+   - Error highlighting
+   - Progress updates
+
+2. User Feedback
+   - Operation status
+   - Error messages
+   - Success confirmation
+   - Processing updates 

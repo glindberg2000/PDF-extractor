@@ -31,6 +31,24 @@
    - Consistent output file organization
    - Better error isolation
 
+4. Added new transaction status tracking system:
+   - Created `transaction_status` table in database
+   - Added status tracking for each pass (payee, category, classification)
+   - Implemented status management methods in `ClientDB`
+   - Updated `TransactionClassifier` to use status tracking
+   - Added color-coded status display to menu
+
+5. Added new menu options:
+   - "View Transaction Status" - Shows progress with color coding
+   - "Force Process Transaction" - Allows bypassing dependencies
+   - "Reset Transaction Status" - Enables retrying specific passes
+
+6. Improved dependency management:
+   - Pass 2 requires Pass 1 completion
+   - Pass 3 requires Pass 2 completion
+   - Added force processing option
+   - Clear status indicators for dependencies
+
 ## Current CLI Structure
 1. Legacy System (scripts/grok.py):
    - Two-pass AI classification approach
@@ -50,6 +68,19 @@
 3. Consider adding cache statistics reporting
 4. Evaluate performance improvements from caching
 5. Consider adding cache cleanup/management features
+
+6. Testing Tasks:
+   - Test status tracking for each pass
+   - Verify dependency enforcement
+   - Test force processing functionality
+   - Check status reset capabilities
+   - Validate color-coded status display
+
+7. Potential Improvements:
+   - Add progress bars for batch processing
+   - Add filtering options for status view
+   - Add batch operations for status management
+   - Enhance error reporting
 
 ### 1. Port Legacy Features
 1. AI Processing:
@@ -201,4 +232,9 @@ python -m dataextractai.cli.main categories generate <client_name>
 - Transaction normalization
 - Client profile management
 - CLI and menu interfaces
-- AI classifier system (in progress) 
+- AI classifier system (in progress)
+
+## Current Branch
+- Working on `feature/db-transaction-tracking`
+- Changes committed and pushed to GitHub
+- Ready for testing 

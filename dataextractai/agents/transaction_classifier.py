@@ -184,181 +184,127 @@ class TransactionClassifier:
             f"Processing {total_transactions} transactions (rows {start_row}-{end_row}) starting from pass {resume_from_pass}"
         )
 
-        # Pass 1: Identify payees
-        if resume_from_pass == 1:
-            logger.info("Starting Pass 1: Payee Identification")
-            for i in range(start_row, end_row, batch_size):
-                batch_end = min(i + batch_size, end_row)
-                batch = transactions.iloc[i:batch_end]
-                for _, transaction in batch.iterrows():
-                    if not force_process:
-                        # Check if already processed
-                        status = self.db.get_transaction_status(
-                            transaction["transaction_id"]
-                        )
-                        if status and status["pass_1_complete"]:
-                            continue
+        # Process transactions row by row
+        for idx in range(start_row, end_row):
+            transaction = transactions.iloc[idx]
 
-                    try:
-                        # Get payee info
-                        payee_info = self._get_payee(transaction)
+            try:
+                # Pass 1: Payee identification
+                if resume_from_pass == 1:
+                    logger.info(f"Processing transaction {idx + 1} of {end_row}")
 
-                        # Update transaction classifications
-                        self.db.update_transaction_classification(
-                            transaction["transaction_id"],
-                            {
-                                "payee": payee_info["payee"],
-                                "payee_confidence": payee_info["confidence"],
-                            },
-                        )
+                    # Get payee info
+                    payee_info = self._get_payee(transaction["description"])
 
-                        # Update status
-                        self.db.update_transaction_status(
-                            transaction["transaction_id"],
-                            {
-                                "pass_1_complete": True,
-                                "pass_1_error": None,
-                                "pass_1_completed_at": datetime.now(),
-                            },
-                        )
-                    except Exception as e:
-                        logger.error(
-                            f"Error in Pass 1 for transaction {transaction['transaction_id']}: {str(e)}"
-                        )
-                        self.db.update_transaction_status(
-                            transaction["transaction_id"],
-                            {
-                                "pass_1_complete": False,
-                                "pass_1_error": str(e),
-                                "pass_1_completed_at": datetime.now(),
-                            },
-                        )
+                    # Update transaction with payee info
+                    self.db.update_transaction_classification(
+                        transaction["transaction_id"],
+                        {
+                            "client_id": self.db.get_client_id(self.client_name),
+                            "payee": payee_info.payee,
+                            "payee_confidence": payee_info.confidence,
+                            "payee_reasoning": payee_info.reasoning,
+                        },
+                    )
 
-        # Pass 2: Base category assignment
-        if resume_from_pass <= 2:
-            logger.info("Starting Pass 2: Base Category Assignment")
-            for i in range(start_row, end_row, batch_size):
-                batch_end = min(i + batch_size, end_row)
-                batch = transactions.iloc[i:batch_end]
-                for _, transaction in batch.iterrows():
-                    if not force_process:
-                        # Check if already processed and has valid payee
-                        status = self.db.get_transaction_status(
-                            transaction["transaction_id"]
-                        )
-                        if not status or not status["pass_1_complete"]:
-                            continue
-                        if status["pass_2_complete"]:
-                            continue
+                    # Update status
+                    self.db.update_transaction_status(
+                        transaction["transaction_id"],
+                        {
+                            "client_id": self.db.get_client_id(self.client_name),
+                            "pass_1_status": "completed",
+                            "pass_1_error": None,
+                            "pass_1_processed_at": datetime.now(),
+                        },
+                    )
 
-                    try:
-                        # Get base category
-                        category_info = self._get_base_category(transaction)
+                # Pass 2: Category assignment
+                if resume_from_pass <= 2:
+                    # Get existing payee info
+                    existing = self.db.get_transaction_classification(
+                        transaction["transaction_id"]
+                    )
+                    if not existing or not existing.get("payee"):
+                        continue
 
-                        # Update transaction classifications
-                        self.db.update_transaction_classification(
-                            transaction["transaction_id"],
-                            {
-                                "base_category": category_info["category"],
-                                "base_category_confidence": category_info["confidence"],
-                            },
-                        )
+                    # Get category info
+                    category_info = self._get_category(
+                        transaction["description"], existing["payee"]
+                    )
 
-                        # Update status
-                        self.db.update_transaction_status(
-                            transaction["transaction_id"],
-                            {
-                                "pass_2_complete": True,
-                                "pass_2_error": None,
-                                "pass_2_completed_at": datetime.now(),
-                            },
-                        )
-                    except Exception as e:
-                        logger.error(
-                            f"Error in Pass 2 for transaction {transaction['transaction_id']}: {str(e)}"
-                        )
-                        self.db.update_transaction_status(
-                            transaction["transaction_id"],
-                            {
-                                "pass_2_complete": False,
-                                "pass_2_error": str(e),
-                                "pass_2_completed_at": datetime.now(),
-                            },
-                        )
+                    # Update transaction with category info
+                    self.db.update_transaction_classification(
+                        transaction["transaction_id"],
+                        {
+                            "client_id": self.db.get_client_id(self.client_name),
+                            "base_category": category_info.category,
+                            "category_confidence": category_info.confidence,
+                            "category_reasoning": category_info.reasoning,
+                        },
+                    )
 
-        # Pass 3: Worksheet assignment and tax categorization
-        if resume_from_pass <= 3:
-            logger.info("Starting Pass 3: Worksheet Assignment")
-            for i in range(start_row, end_row, batch_size):
-                batch_end = min(i + batch_size, end_row)
-                batch = transactions.iloc[i:batch_end]
-                for _, transaction in batch.iterrows():
-                    if not force_process:
-                        # Check if already processed and has valid category
-                        status = self.db.get_transaction_status(
-                            transaction["transaction_id"]
-                        )
-                        if not status or not status["pass_2_complete"]:
-                            continue
-                        if status["pass_3_complete"]:
-                            continue
+                    # Update status
+                    self.db.update_transaction_status(
+                        transaction["transaction_id"],
+                        {
+                            "client_id": self.db.get_client_id(self.client_name),
+                            "pass_2_status": "completed",
+                            "pass_2_error": None,
+                            "pass_2_processed_at": datetime.now(),
+                        },
+                    )
 
-                    try:
-                        # Get existing classification
-                        classification = self.db.get_transaction_classification(
-                            transaction["transaction_id"]
-                        )
-                        if not classification or not classification["base_category"]:
-                            raise ValueError("No base category found for transaction")
+                # Pass 3: Final classification
+                if resume_from_pass <= 3:
+                    # Get existing info
+                    existing = self.db.get_transaction_classification(
+                        transaction["transaction_id"]
+                    )
+                    if not existing or not existing.get("base_category"):
+                        continue
 
-                        # Determine worksheet and tax category
-                        worksheet_info = self._determine_worksheet(
-                            transaction, classification["base_category"]
-                        )
+                    # Get classification info
+                    classification_info = self._get_classification(
+                        transaction["description"],
+                        existing["payee"],
+                        existing["base_category"],
+                    )
 
-                        # Update transaction classifications
-                        update_data = {
-                            "worksheet": worksheet_info.worksheet,
-                            "tax_category": worksheet_info.tax_category,
-                            "tax_subcategory": worksheet_info.tax_subcategory,
-                            "tax_worksheet_line_number": worksheet_info.line_number,
-                            "needs_splitting": worksheet_info.needs_splitting,
-                        }
+                    # Update transaction with classification info
+                    self.db.update_transaction_classification(
+                        transaction["transaction_id"],
+                        {
+                            "client_id": self.db.get_client_id(self.client_name),
+                            "classification": classification_info.classification,
+                            "classification_confidence": classification_info.confidence,
+                            "classification_reasoning": classification_info.reasoning,
+                            "tax_implications": classification_info.tax_implications,
+                        },
+                    )
 
-                        if (
-                            worksheet_info.needs_splitting
-                            and worksheet_info.split_details
-                        ):
-                            # Handle split transactions here
-                            # This would involve creating new split transactions
-                            # and linking them to the original
-                            pass
+                    # Update status
+                    self.db.update_transaction_status(
+                        transaction["transaction_id"],
+                        {
+                            "client_id": self.db.get_client_id(self.client_name),
+                            "pass_3_status": "completed",
+                            "pass_3_error": None,
+                            "pass_3_processed_at": datetime.now(),
+                        },
+                    )
 
-                        self.db.update_transaction_classification(
-                            transaction["transaction_id"], update_data
-                        )
-
-                        # Update status
-                        self.db.update_transaction_status(
-                            transaction["transaction_id"],
-                            {
-                                "pass_3_complete": True,
-                                "pass_3_error": None,
-                                "pass_3_completed_at": datetime.now(),
-                            },
-                        )
-                    except Exception as e:
-                        logger.error(
-                            f"Error in Pass 3 for transaction {transaction['transaction_id']}: {str(e)}"
-                        )
-                        self.db.update_transaction_status(
-                            transaction["transaction_id"],
-                            {
-                                "pass_3_complete": False,
-                                "pass_3_error": str(e),
-                                "pass_3_completed_at": datetime.now(),
-                            },
-                        )
+            except Exception as e:
+                logger.error(f"Error processing transaction {idx + 1}: {str(e)}")
+                # Update error status for the current pass
+                error_status = {
+                    "client_id": self.db.get_client_id(self.client_name),
+                    f"pass_{resume_from_pass}_status": "error",
+                    f"pass_{resume_from_pass}_error": str(e),
+                    f"pass_{resume_from_pass}_processed_at": datetime.now(),
+                }
+                self.db.update_transaction_status(
+                    transaction["transaction_id"], error_status
+                )
 
         logger.info("Transaction processing complete")
 
@@ -592,11 +538,27 @@ class TransactionClassifier:
 
     def _get_category(self, description: str, payee: str) -> CategoryResponse:
         """Process a single transaction to assign category."""
-        prompt = (
-            PROMPTS["get_category"]
-            + f"\n\nBusiness Context:\n{self.business_context}\n\n"
-            + f"Process the following transaction:\n- {description} (Payee: {payee})"
-        )
+        # Get 6A categories
+        categories = list(TAX_WORKSHEET_CATEGORIES["6A"]["main_expenses"].keys())
+        categories_str = "\n".join(f"- {cat}" for cat in categories)
+
+        prompt = f"""Analyze this transaction and assign it to one of the following IRS Schedule 6A categories:
+
+{categories_str}
+
+Business Context:
+{self.business_context}
+
+Transaction:
+Description: {description}
+Payee: {payee}
+
+Rules:
+1. ONLY use categories from the list above
+2. If unsure, use "Other expenses"
+3. Focus on the nature of the expense, not just the payee
+4. Consider the business context when categorizing
+"""
 
         response = self.client.responses.create(
             model=self._get_model(),
@@ -616,7 +578,7 @@ class TransactionClassifier:
                         "properties": {
                             "category": {
                                 "type": "string",
-                                "description": "The assigned category",
+                                "description": "The assigned 6A category",
                             },
                             "confidence": {
                                 "type": "string",
@@ -625,24 +587,10 @@ class TransactionClassifier:
                             },
                             "reasoning": {
                                 "type": "string",
-                                "description": "Explanation of the assignment",
-                            },
-                            "suggested_new_category": {
-                                "type": "string",
-                                "description": "Suggested new category if needed",
-                            },
-                            "new_category_reasoning": {
-                                "type": "string",
-                                "description": "Explanation for the new category",
+                                "description": "Explanation of why this 6A category is appropriate",
                             },
                         },
-                        "required": [
-                            "category",
-                            "confidence",
-                            "reasoning",
-                            "suggested_new_category",
-                            "new_category_reasoning",
-                        ],
+                        "required": ["category", "confidence", "reasoning"],
                         "additionalProperties": False,
                     },
                     "strict": True,
@@ -659,15 +607,22 @@ class TransactionClassifier:
             response_text = response_text.strip()
 
             result = json.loads(response_text)
+
+            # Validate the category is a valid 6A category
+            if result["category"] not in categories:
+                result["category"] = "Other expenses"
+                result["confidence"] = "low"
+                result[
+                    "reasoning"
+                ] += "\nCategory not found in 6A list, defaulting to Other expenses."
+
             return CategoryResponse(**result)
         except Exception as e:
-            print(f"Error parsing category response: {str(e)}")
+            logger.error(f"Error parsing category response: {str(e)}")
             return CategoryResponse(
-                category="Unclassified",
+                category="Other expenses",
                 confidence="low",
-                reasoning=f"Error: {str(e)}",
-                suggested_new_category=None,
-                new_category_reasoning=None,
+                reasoning=f"Error during processing: {str(e)}",
             )
 
     def _get_classification(

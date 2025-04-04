@@ -402,4 +402,101 @@ pytest tests/parsers/test_wellsfargo.py
    - Efficient CSV writing
    - Database indexing
    - File organization
-   - Cleanup procedures 
+   - Cleanup procedures
+
+## Database Schema
+
+### Core Tables
+
+1. `clients`
+   - Primary key: id
+   - Name, created_at, updated_at
+   - Business profile association
+
+2. `normalized_transactions`
+   - Primary key: (client_id, transaction_id)
+   - Core transaction data
+   - Foreign key to clients
+
+3. `transaction_classifications`
+   - Primary key: id
+   - Foreign key: (client_id, transaction_id)
+   - Payee, category, classification data
+   - Confidence levels and reasoning
+   - Timestamps
+
+4. `transaction_status`
+   - Primary key: id
+   - Foreign key: (client_id, transaction_id)
+   - Status per pass (pending, processing, completed, error, skipped, force_required)
+   - Error messages
+   - Processing timestamps
+
+5. `transaction_cache`
+   - Primary key: id
+   - Foreign key: client_id
+   - Cache key and pass type
+   - JSON result storage
+   - Timestamps
+
+## Technologies Used
+
+### Core Stack
+- Python 3.8+
+- SQLite3 for database
+- OpenAI API for AI processing
+- Brave Search API for enrichment
+
+### Key Libraries
+- pandas: Data processing
+- click: CLI interface
+- questionary: Interactive menus
+- sqlite3: Database operations
+- openai: AI integration
+- requests: API calls
+
+### Development Tools
+- Git for version control
+- GitHub for repository
+- VS Code for development
+- SQLite Browser for DB inspection
+
+## Technical Constraints
+
+### Database
+- SQLite limitations
+- Transaction isolation
+- Concurrent access
+- Cache size management
+
+### API Integration
+- Rate limiting
+- Token usage
+- Error handling
+- Response parsing
+
+### Processing
+- Memory usage
+- Processing time
+- Cache effectiveness
+- Status tracking overhead
+
+## Development Setup
+
+### Environment
+1. Python virtual environment
+2. Required packages
+3. Database initialization
+4. API key configuration
+
+### Configuration
+1. OpenAI API settings
+2. Brave Search API settings
+3. Database path
+4. Cache settings
+
+### Development Flow
+1. Feature branches
+2. Local testing
+3. Status verification
+4. Pull requests 
