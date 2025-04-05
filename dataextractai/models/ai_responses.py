@@ -14,6 +14,12 @@ class PayeeResponse(BaseModel):
         ..., description="Confidence level in the identification"
     )
     reasoning: str = Field(..., description="Explanation of the identification")
+    business_description: Optional[str] = Field(
+        None, description="Description of what type of business this payee is"
+    )
+    general_category: Optional[str] = Field(
+        None, description="General expense category for this transaction"
+    )
 
 
 class CategoryResponse(BaseModel):

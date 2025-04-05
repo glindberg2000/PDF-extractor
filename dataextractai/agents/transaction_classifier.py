@@ -43,6 +43,7 @@ from colorama import Fore, Style, init
 import difflib
 import traceback
 from dataclasses import dataclass
+from thefuzz import fuzz
 
 # Initialize colorama
 init(autoreset=True)
@@ -271,51 +272,9 @@ class TransactionClassifier:
                     )
 
                     # Get payee info
-                    payee_info = self._get_payee(transaction["description"], row_number)
-
-                    # Extract business description and general category from reasoning if available
-                    business_description = None
-                    general_category = None
-
-                    # If the response was cached and has these fields
-                    cache_key = self._get_cache_key(transaction["description"])
-                    cached_result = self._get_cached_result(cache_key, "payee")
-                    if cached_result:
-                        business_description = cached_result.get("business_description")
-                        general_category = cached_result.get("general_category")
-
-                    # If not in cache, try to extract from reasoning
-                    if (
-                        not business_description
-                        and "business description:" in payee_info.reasoning.lower()
-                    ):
-                        try:
-                            desc_lines = [
-                                line
-                                for line in payee_info.reasoning.split("\n")
-                                if "business description:" in line.lower()
-                            ]
-                            if desc_lines:
-                                business_description = (
-                                    desc_lines[0].split(":", 1)[1].strip()
-                                )
-                        except:
-                            pass
-
-                    if (
-                        not general_category
-                        and "general category:" in payee_info.reasoning.lower()
-                    ):
-                        try:
-                            cat_lines = [
-                                line
-                                for line in payee_info.reasoning.split("\n")
-                                if "general category:" in line.lower()
-                            ]
-                            if cat_lines:
-                                general_category = cat_lines[0].split(":", 1)[1].strip()
-                        except:
-                            pass
+                    payee_info = self._get_payee(
+                        transaction["description"], row_number, force_process
+                    )
 
                     # Update transaction with payee info
                     update_data = {
@@ -323,24 +282,29 @@ class TransactionClassifier:
                         "payee": payee_info.payee,
                         "payee_confidence": payee_info.confidence,
                         "payee_reasoning": payee_info.reasoning,
+                        "business_description": payee_info.business_description,
+                        "general_category": payee_info.general_category,
                     }
-
-                    # Add the new fields if available
-                    if business_description:
-                        update_data["business_description"] = business_description
-                        logger.info(
-                            f"[Row {row_number}] Business description: {business_description}"
-                        )
-
-                    if general_category:
-                        update_data["general_category"] = general_category
-                        logger.info(
-                            f"[Row {row_number}] General category: {general_category}"
-                        )
 
                     self.db.update_transaction_classification(
                         transaction["transaction_id"], update_data
                     )
+
+                    # Cache the result with all fields
+                    cache_key = self._get_cache_key(transaction["description"])
+                    cached_payee = self._get_cached_result(cache_key, "payee")
+                    if not cached_payee:
+                        self._cache_result(
+                            cache_key,
+                            "payee",
+                            {
+                                "payee": payee_info.payee,
+                                "confidence": payee_info.confidence,
+                                "reasoning": payee_info.reasoning,
+                                "business_description": payee_info.business_description,
+                                "general_category": payee_info.general_category,
+                            },
+                        )
 
                     # Update status
                     self.db.update_transaction_status(
@@ -354,8 +318,15 @@ class TransactionClassifier:
                     )
 
                     logger.info(
-                        f"{Fore.GREEN}✓ Pass 1 complete: {payee_info.payee} ({payee_info.confidence} confidence){Style.RESET_ALL}"
+                        f"{Fore.GREEN}✓ Pass 1 complete: {payee_info.payee} ({payee_info.confidence}){Style.RESET_ALL}"
                     )
+                    if payee_info.business_description:
+                        logger.info(
+                            f"  • Business Description: {payee_info.business_description}"
+                        )
+                        logger.info(
+                            f"  • General Category: {payee_info.general_category}"
+                        )
                     processed_count[1] += 1
 
                     # If we're only doing pass 1, continue to next transaction
@@ -400,6 +371,7 @@ class TransactionClassifier:
                             existing["payee"],
                             existing.get("business_description"),
                             existing.get("general_category"),
+                            force_process,
                         )
                         logger.info(
                             f"[Row {row_number}] ✓ Category assigned: {category_info.category} (confidence: {category_info.confidence})"
@@ -596,6 +568,7 @@ class TransactionClassifier:
                                 existing.get("business_description"),
                                 existing.get("general_category"),
                                 existing.get("business_context"),
+                                force_process,
                             )
                             logger.info(
                                 f"[Row {row_number}] ✓ Tax classification: {classification_info.tax_category} (confidence: {classification_info.confidence})"
@@ -776,13 +749,17 @@ class TransactionClassifier:
                 self._update_status(transaction["transaction_id"], 3, "error", str(e))
 
     def _get_payee(
-        self, description: str, row_number: Optional[int] = None
+        self,
+        description: str,
+        row_number: Optional[int] = None,
+        force_process: bool = False,
     ) -> PayeeResponse:
         """Process a single description to identify payee.
 
         Args:
             description: The transaction description to analyze
             row_number: Optional row number for logging context
+            force_process: Whether to do fresh lookups for missing fields
         """
         row_info = f"[Row {row_number}]" if row_number is not None else ""
 
@@ -792,17 +769,14 @@ class TransactionClassifier:
         )
 
         cache_key = self._get_cache_key(description)
-
-        # Check cache first
         cached_result = self._get_cached_result(cache_key, "payee")
+
+        # Check if we have a valid cache hit
         if cached_result:
-            # Parse the cached result
             result = PayeeResponse(**cached_result)
 
-            # Only use cache if:
-            # 1. It's a high confidence result, OR
-            # 2. It's been enriched with Brave Search before (indicated by enrichment info in reasoning)
-            if (
+            # If not forcing process and we have high confidence or enriched data, use cache as is
+            if not force_process and (
                 result.confidence == "high"
                 or "Enriched with business information:" in result.reasoning
             ):
@@ -810,13 +784,33 @@ class TransactionClassifier:
                     f"{row_info} {Fore.CYAN}✓ Using cached payee: {result.payee} ({result.confidence} confidence){Style.RESET_ALL}"
                 )
                 return result
-            # Otherwise, we'll try to improve it with Brave Search
-            logger.info(
-                f"{row_info} {Fore.YELLOW}⚠ Low confidence cache hit ({result.confidence}), will try to improve...{Style.RESET_ALL}"
-            )
+
+            # If forcing process or low confidence, check for missing fields
+            missing_fields = []
+            if not result.business_description:
+                missing_fields.append("business_description")
+            if not result.general_category:
+                missing_fields.append("general_category")
+
+            # If we have all fields and high confidence, use cache
+            if not missing_fields and result.confidence == "high":
+                logger.info(
+                    f"{row_info} {Fore.CYAN}✓ Using complete cached payee: {result.payee} ({result.confidence} confidence){Style.RESET_ALL}"
+                )
+                return result
+
+            # If only missing some fields, log what we're updating
+            if missing_fields:
+                logger.info(
+                    f"{row_info} {Fore.YELLOW}⚠ Cache hit but missing fields: {', '.join(missing_fields)}. Will update...{Style.RESET_ALL}"
+                )
+            else:
+                logger.info(
+                    f"{row_info} {Fore.YELLOW}⚠ Low confidence cache hit ({result.confidence}), will try to improve...{Style.RESET_ALL}"
+                )
 
         # Get initial AI identification
-        logger.info(f"{row_info} 🤖 Getting initial identification from LLM...")
+        logger.info(f"{row_info} 🤖 Getting identification from LLM...")
         prompt = f"""Analyze this transaction description to identify the payee (merchant or recipient of payment).
 
 Transaction Description: {description}
@@ -919,10 +913,27 @@ NOTES:
             response_text = response_text.strip()
 
             result = json.loads(response_text)
-            initial_response = PayeeResponse(**result)
+            new_response = PayeeResponse(**result)
+
+            # If we had a cached result, merge the new fields with existing data
+            if cached_result:
+                cached = PayeeResponse(**cached_result)
+                # Keep the cached payee and confidence if they were high confidence
+                if cached.confidence == "high":
+                    result["payee"] = cached.payee
+                    result["confidence"] = cached.confidence
+                # Update only the missing or low confidence fields
+                if not cached.business_description:
+                    result["business_description"] = new_response.business_description
+                if not cached.general_category:
+                    result["general_category"] = new_response.general_category
+                # Combine reasoning
+                result["reasoning"] = (
+                    f"Original identification: {cached.reasoning}\nUpdated with: {new_response.reasoning}"
+                )
 
             logger.info(
-                f"{row_info} 🤖 LLM identified payee: {initial_response.payee} ({initial_response.confidence} confidence)"
+                f"{row_info} 🤖 {'Updated' if cached_result else 'New'} payee: {result['payee']} ({result['confidence']} confidence)"
             )
 
             if "business_description" in result:
@@ -935,76 +946,6 @@ NOTES:
                     f"{row_info} 🏷️ General category: {result['general_category']}"
                 )
 
-            # If confidence is not high, try to enrich with Brave Search
-            if initial_response.confidence != "high":
-                logger.info(f"{row_info} 🔍 Enriching with Brave Search...")
-                try:
-                    # Look up vendor information
-                    vendor_results = lookup_vendor_info(
-                        initial_response.payee, max_results=3
-                    )
-
-                    if vendor_results:
-                        # Get the most relevant result
-                        best_match = vendor_results[0]
-
-                        # If we got a good business match
-                        if best_match["relevance_score"] >= 5:
-                            logger.info(
-                                f"{row_info} {Fore.GREEN}✓ Found business match: {best_match['title']} (score: {best_match['relevance_score']}){Style.RESET_ALL}"
-                            )
-
-                            # Update the payee name if we found a better one
-                            if best_match["title"] != initial_response.payee:
-                                initial_response.payee = best_match["title"]
-                                logger.info(
-                                    f"{row_info} {Fore.GREEN}✓ Updated payee name to: {initial_response.payee}{Style.RESET_ALL}"
-                                )
-
-                            # Upgrade confidence if we found a strong business match
-                            if initial_response.confidence == "low":
-                                initial_response.confidence = "medium"
-                                logger.info(
-                                    f"{row_info} {Fore.GREEN}✓ Upgraded confidence to medium{Style.RESET_ALL}"
-                                )
-
-                            # Add the business information to the reasoning
-                            initial_response.reasoning += f"\n\nEnriched with business information: {best_match['description']}"
-
-                            # If we don't have a business description yet, extract one from the search result
-                            if (
-                                not result.get("business_description")
-                                or result.get("business_description") == "Unknown"
-                            ):
-                                # Try to extract a business description from the search result
-                                prompt = f"""Based on this search result, provide a VERY brief (10 words or less) description of what type of business {initial_response.payee} is:
-
-Search result: {best_match['description']}
-
-ONLY return the brief business description, nothing else."""
-
-                                description_response = self.client.responses.create(
-                                    model="claude-3-haiku-20240307",
-                                    input=[{"role": "user", "content": prompt}],
-                                )
-
-                                business_description = (
-                                    description_response.output_text.strip()
-                                )
-                                result["business_description"] = business_description
-                                logger.info(
-                                    f"{row_info} {Fore.GREEN}✓ Added business description from search: {business_description}{Style.RESET_ALL}"
-                                )
-                        else:
-                            logger.info(
-                                f"{row_info} {Fore.YELLOW}⚠ No good business match found (best score: {best_match['relevance_score']}){Style.RESET_ALL}"
-                            )
-
-                except Exception as e:
-                    logger.warning(
-                        f"{row_info} {Fore.YELLOW}⚠ Brave Search error: {str(e)}{Style.RESET_ALL}"
-                    )
-
             # Cache the result with all fields
             self._cache_result(
                 cache_key,
@@ -1013,10 +954,10 @@ ONLY return the brief business description, nothing else."""
             )
 
             logger.info(
-                f"{row_info} {Fore.GREEN}✓ FINAL PAYEE: {initial_response.payee} ({initial_response.confidence} confidence){Style.RESET_ALL}"
+                f"{row_info} {Fore.GREEN}✓ FINAL PAYEE: {result['payee']} ({result['confidence']} confidence){Style.RESET_ALL}"
             )
 
-            return initial_response
+            return PayeeResponse(**result)
 
         except Exception as e:
             logger.error(f"{row_info} {Fore.RED}❌ Error: {str(e)}{Style.RESET_ALL}")
@@ -1024,6 +965,8 @@ ONLY return the brief business description, nothing else."""
                 payee="Unknown Payee",
                 confidence="low",
                 reasoning=f"Error: {str(e)}",
+                business_description="",
+                general_category="",
             )
 
     def _get_category(
@@ -1032,6 +975,7 @@ ONLY return the brief business description, nothing else."""
         payee: str,
         business_description: str = None,
         general_category: str = None,
+        force_process: bool = False,
     ) -> CategoryResponse:
         """Process a single transaction to assign a base category.
 
@@ -1043,6 +987,7 @@ ONLY return the brief business description, nothing else."""
             payee: Identified payee name
             business_description: Optional description of the payee business
             general_category: Optional general expense category from Pass 1
+            force_process: Whether to do fresh lookups for missing fields
         """
         # Get client's custom categories
         client_categories = self.db.get_client_categories(self.client_name)
@@ -1096,6 +1041,50 @@ ONLY return the brief business description, nothing else."""
             base_business_categories + personal_categories + custom_categories
         )
 
+        # Check cache for category
+        cache_key = self._get_cache_key(description, payee)
+        cached_result = self._get_cached_result(cache_key, "category")
+
+        # Check if we have a valid cache hit
+        if cached_result:
+            result = CategoryResponse(**cached_result)
+
+            # If not forcing process and we have high confidence, use cache as is
+            if not force_process and result.confidence == "high":
+                logger.info(
+                    f"✓ Using cached category: {result.category} (confidence: {result.confidence})"
+                )
+                return result
+
+            # If forcing process or low confidence, check for missing fields
+            missing_fields = []
+            if not result.category:
+                missing_fields.append("category")
+            if not result.reasoning or "expense_type" not in result.reasoning.lower():
+                missing_fields.append("expense_type")
+            if (
+                not result.reasoning
+                or "business_percentage" not in result.reasoning.lower()
+            ):
+                missing_fields.append("business_percentage")
+
+            # If we have all fields and high confidence, use cache
+            if not missing_fields and result.confidence == "high":
+                logger.info(
+                    f"✓ Using complete cached category: {result.category} (confidence: {result.confidence})"
+                )
+                return result
+
+            # If only missing some fields, log what we're updating
+            if missing_fields:
+                logger.info(
+                    f"⚠ Cache hit but missing fields: {', '.join(missing_fields)}. Will update..."
+                )
+            else:
+                logger.info(
+                    f"⚠ Low confidence cache hit ({result.confidence}), will try to improve..."
+                )
+
         # Build context information about the transaction
         transaction_context = f"""Transaction Description: {description}
 Payee: {payee}"""
@@ -1106,56 +1095,38 @@ Payee: {payee}"""
         if general_category:
             transaction_context += f"\nGeneral Category from Pass 1: {general_category}"
 
-        # Separate categories by type for the prompt
-        business_categories_str = "\n".join(
-            f"- {cat}" for cat in base_business_categories
-        )
-        personal_categories_str = "\n".join(f"- {cat}" for cat in personal_categories)
-        custom_categories_str = (
-            "\n".join(f"- {cat}" for cat in custom_categories)
-            if custom_categories
-            else "None"
-        )
+        # Create the prompt for the AI model
+        prompt = f"""Analyze this transaction and determine the most appropriate expense category.
 
-        prompt = f"""Analyze this transaction to determine if it's a business or personal expense, and assign the most appropriate category.
-
-Transaction Information:
 {transaction_context}
 
 Business Context:
 {self.business_context}
 
-Business Categories:
-{business_categories_str}
+Available Categories:
+{', '.join(available_categories)}
 
-Personal Categories:
-{personal_categories_str}
+Determine:
+1. The most appropriate category from the list above
+2. Whether this is a business, personal, or mixed expense
+3. For mixed expenses, estimate the business use percentage
 
-Client Custom Categories:
-{custom_categories_str}
+Format your response as a JSON object with:
+- category: The selected category from the list
+- confidence: Your confidence level (high, medium, low)
+- reasoning: Your explanation including:
+  - Why you chose this category
+  - Expense type: business, personal, or mixed
+  - Business percentage (if mixed)
+  - Any relevant business context
 
-Please analyze this transaction and provide:
-1. Whether this is primarily a business or personal expense
-2. The most appropriate category from the lists above
-3. A clear explanation of your reasoning, including how it relates to real estate operations if business-related
-4. The percentage of business use (100% for purely business, 0% for purely personal, or a percentage for mixed use)
+Example reasoning format:
+"This appears to be a business expense for office supplies.
+Expense type: business
+Business percentage: 100%
+This is clearly for business use based on..."
 
-Response Format:
-- category: The assigned expense category
-- expense_type: "business", "personal", or "mixed"
-- business_percentage: Percentage of business use (0-100)
-- confidence: Your confidence level ("high", "medium", "low")
-- reasoning: Your explanation, including how this relates to real estate operations if business-related
-- business_context: Specific explanation of how this expense relates to the client's real estate business
-
-Rules:
-1. Focus on the nature of the expense, not just the payee
-2. Consider the business context when categorizing
-3. If it's a business expense, explain how it relates to real estate operations
-4. If it's a personal expense, explain why it doesn't qualify as a business expense
-5. For mixed expenses, estimate the business percentage and explain your reasoning
-6. If a custom category fits better than the standard categories, use it
-"""
+NOTE: Focus on the nature of the expense itself, not just the business type."""
 
         response = self.client.responses.create(
             model=self._get_model(),
@@ -1175,41 +1146,19 @@ Rules:
                         "properties": {
                             "category": {
                                 "type": "string",
-                                "description": "The assigned expense category",
-                            },
-                            "expense_type": {
-                                "type": "string",
-                                "enum": ["business", "personal", "mixed"],
-                                "description": "Whether this is a business or personal expense",
-                            },
-                            "business_percentage": {
-                                "type": "integer",
-                                "minimum": 0,
-                                "maximum": 100,
-                                "description": "Percentage of business use (0-100)",
+                                "description": "The selected category",
                             },
                             "confidence": {
                                 "type": "string",
                                 "enum": ["high", "medium", "low"],
-                                "description": "Confidence level in the assignment",
+                                "description": "Confidence level in the categorization",
                             },
                             "reasoning": {
                                 "type": "string",
-                                "description": "Explanation of why this category is appropriate",
-                            },
-                            "business_context": {
-                                "type": "string",
-                                "description": "Specific explanation of how this expense relates to real estate operations",
+                                "description": "Explanation including expense type and business context",
                             },
                         },
-                        "required": [
-                            "category",
-                            "expense_type",
-                            "business_percentage",
-                            "confidence",
-                            "reasoning",
-                            "business_context",
-                        ],
+                        "required": ["category", "confidence", "reasoning"],
                         "additionalProperties": False,
                     },
                     "strict": True,
@@ -1226,29 +1175,55 @@ Rules:
             response_text = response_text.strip()
 
             result = json.loads(response_text)
+            new_response = CategoryResponse(**result)
 
-            # Validate the category exists in our available categories
+            # If we had a cached result, merge the new fields with existing data
+            if cached_result:
+                cached = CategoryResponse(**cached_result)
+                # Keep the cached category and confidence if they were high confidence
+                if cached.confidence == "high":
+                    result["category"] = cached.category
+                    result["confidence"] = cached.confidence
+                # Combine reasoning, keeping expense type and business percentage info
+                result["reasoning"] = (
+                    f"Original categorization: {cached.reasoning}\nUpdated with: {new_response.reasoning}"
+                )
+
+            # Validate the category against available categories
             if result["category"] not in available_categories:
-                # Default to appropriate "Other" category based on expense_type
-                if result["expense_type"] == "business":
-                    result["category"] = "Other Business Expenses"
+                # Try to find the closest match
+                closest_match = None
+                highest_ratio = 0
+                for category in available_categories:
+                    ratio = fuzz.ratio(result["category"].lower(), category.lower())
+                    if ratio > highest_ratio:
+                        highest_ratio = ratio
+                        closest_match = category
+
+                if highest_ratio >= 80:  # If we found a close match
+                    logger.info(
+                        f"Category '{result['category']}' not in available categories. Using closest match: {closest_match}"
+                    )
+                    result["category"] = closest_match
                 else:
-                    result["category"] = "Other Personal Expenses"
+                    # Default to Other categories based on expense type
+                    if "personal" in result["reasoning"].lower():
+                        result["category"] = "Other Personal Expenses"
+                    else:
+                        result["category"] = "Other Business Expenses"
+                    logger.info(
+                        f"Category '{result['category']}' not in available categories. Defaulting to: {result['category']}"
+                    )
 
-                result["confidence"] = "low"
-                result[
-                    "reasoning"
-                ] += "\nCategory not found in available list, defaulting to appropriate 'Other' category."
-
-            # Add expense_type to the CategoryResponse
-            # Combine reasoning and business context
-            full_reasoning = f"{result['reasoning']}\n\nExpense type: {result['expense_type']}\nBusiness percentage: {result['business_percentage']}%\n\nBusiness context: {result['business_context']}"
-
-            return CategoryResponse(
-                category=result["category"],
-                confidence=result["confidence"],
-                reasoning=full_reasoning,
+            # Cache the result
+            self._cache_result(
+                cache_key,
+                "category",
+                result,
             )
+
+            return CategoryResponse(**result)
+
         except Exception as e:
             logger.error(f"Error parsing category response: {str(e)}")
             return CategoryResponse(
@@ -1267,6 +1242,7 @@ Rules:
         business_description: str = None,
         general_category: str = None,
         business_context: str = None,
+        force_process: bool = False,
     ) -> ClassificationResponse:
         """Process a single transaction and classify it for tax purposes.
 
@@ -1279,6 +1255,7 @@ Rules:
             business_description: Description of the payee's business (optional).
             general_category: General expense category identified (optional).
             business_context: Business context for this transaction (optional).
+            force_process: Whether to bypass cache and force processing.
 
         Returns:
             A ClassificationResponse containing the tax information.
@@ -1304,6 +1281,16 @@ Rules:
                     confidence="high",
                     reasoning="This is a personal expense and not applicable for tax deductions.",
                 )
+
+            # Check cache for classification if not forcing process
+            cache_key = self._get_cache_key(description, payee, category)
+            if not force_process:
+                cached_result = self._get_cached_result(cache_key, "classification")
+                if cached_result:
+                    logger.info(
+                        f"✓ Using cached tax classification: {cached_result.get('tax_category', 'Unknown')}"
+                    )
+                    return ClassificationResponse(**cached_result)
 
             # Define context for the AI model
             transaction_context = f"Transaction: {description}\nPayee: {payee}\nCategory: {category}\nExpense Type: {expense_type}\nBusiness Percentage: {business_percentage}%"

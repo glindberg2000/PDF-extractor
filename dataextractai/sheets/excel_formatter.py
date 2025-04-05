@@ -23,16 +23,29 @@ class ExcelReportFormatter:
 
         # Define columns to show/hide
         self.visible_columns = [
+            # Transaction Info
             "transaction_date",
             "description",
             "normalized_amount",
+            # Payee Info (Pass 1)
             "payee",
-            "base_category",
+            "payee_confidence",
+            "business_description",
+            "general_category",
+            # Business Info (Pass 2)
             "expense_type",
-            "classification",
-            "tax_category",
             "business_percentage",
-            "tax_implications",
+            "business_context",
+            # Tax Info (Pass 3)
+            "tax_category",
+            "tax_subcategory",
+            "worksheet",
+            "tax_worksheet_line_number",
+            "tax_year",
+            # Review Info
+            "is_reviewed",
+            "review_notes",
+            "last_reviewed_at",
         ]
 
     def _get_business_categories(self, client_name):

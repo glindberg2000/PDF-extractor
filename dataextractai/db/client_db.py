@@ -429,17 +429,30 @@ class ClientDB:
                         c.payee_confidence,
                         c.payee_reasoning,
                         c.base_category,
+                        c.base_category_confidence,
                         c.category_confidence,
                         c.category_reasoning,
                         c.suggested_new_category,
                         c.new_category_reasoning,
                         c.classification,
                         c.classification_confidence,
-                        c.classification_reasoning, 
+                        c.classification_reasoning,
                         c.tax_implications,
                         c.expense_type,
                         c.tax_category,
-                        c.business_percentage
+                        c.tax_subcategory,
+                        c.tax_year,
+                        c.tax_worksheet_line_number,
+                        c.worksheet,
+                        c.split_amount,
+                        c.previous_year_comparison,
+                        c.is_reviewed,
+                        c.review_notes,
+                        c.last_reviewed_at,
+                        c.business_percentage,
+                        c.business_description,
+                        c.general_category,
+                        c.business_context
                     FROM normalized_transactions t
                     LEFT JOIN transaction_classifications c 
                         ON t.client_id = c.client_id 
@@ -462,6 +475,7 @@ class ClientDB:
                 "transaction_date",
                 "statement_start_date",
                 "statement_end_date",
+                "last_reviewed_at",
             ]
             for col in date_columns:
                 if col in df.columns:
