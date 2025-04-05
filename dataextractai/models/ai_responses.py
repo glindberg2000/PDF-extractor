@@ -4,6 +4,7 @@ Pydantic models for AI classification responses.
 
 from pydantic import BaseModel, Field
 from typing import Optional, Literal
+from dataclasses import dataclass
 
 
 class PayeeResponse(BaseModel):
@@ -22,20 +23,17 @@ class PayeeResponse(BaseModel):
     )
 
 
-class CategoryResponse(BaseModel):
-    """Response model for category assignment."""
+@dataclass
+class CategoryResponse:
+    """Response from category assignment step."""
 
-    category: str = Field(..., description="Assigned category")
-    confidence: Literal["high", "medium", "low"] = Field(
-        ..., description="Confidence level in the categorization"
-    )
-    reasoning: str = Field(..., description="Explanation of the categorization")
-    suggested_new_category: Optional[str] = Field(
-        None, description="Suggested new category if needed"
-    )
-    new_category_reasoning: Optional[str] = Field(
-        None, description="Explanation for suggested new category"
-    )
+    category: str
+    expense_type: str
+    business_percentage: int
+    notes: str
+    # Optional fields for precise mode
+    confidence: str = "medium"
+    detailed_context: str = ""
 
 
 class ClassificationResponse(BaseModel):

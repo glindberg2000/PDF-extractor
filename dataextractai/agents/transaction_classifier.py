@@ -44,6 +44,7 @@ import difflib
 import traceback
 from dataclasses import dataclass
 from thefuzz import fuzz
+import re
 
 # Initialize colorama
 init(autoreset=True)
@@ -162,7 +163,26 @@ class TransactionClassifier:
                 logger.info(
                     f"{Fore.CYAN}[CACHE HIT] Found cached {pass_type} result for: {cache_key.split('|')[0][:40]}...{Style.RESET_ALL}"
                 )
-                return json.loads(result[0])
+                cached = json.loads(result[0])
+
+                # Handle legacy cache format for category responses
+                if pass_type == "category":
+                    # Map old fields to new structure
+                    return {
+                        "category": cached.get("category", ""),
+                        "expense_type": cached.get("expense_type", "personal"),
+                        "business_percentage": int(
+                            cached.get("business_percentage", 0)
+                        ),
+                        "notes": cached.get(
+                            "reasoning", ""
+                        ),  # Map old reasoning to notes
+                        "confidence": cached.get("confidence", "medium"),
+                        "detailed_context": cached.get(
+                            "business_context", ""
+                        ),  # Map old business_context to detailed_context
+                    }
+                return cached
         return None
 
     def _cache_result(self, cache_key: str, pass_type: str, result: Dict) -> None:
@@ -368,113 +388,103 @@ class TransactionClassifier:
                         )
                         category_info = self._get_category(
                             transaction["description"],
-                            existing["payee"],
-                            existing.get("business_description"),
-                            existing.get("general_category"),
-                            force_process,
+                            transaction["amount"],
+                            transaction["transaction_date"].strftime("%Y-%m-%d"),
                         )
                         logger.info(
                             f"[Row {row_number}] ✓ Category assigned: {category_info.category} (confidence: {category_info.confidence})"
                         )
 
-                    # Extract expense_type from reasoning
-                    expense_type = "personal"  # Default to personal
-                    business_percentage = 0  # Default to 0%
-                    business_context = ""  # Default to empty
+                        # Extract fields from category_info
+                        expense_type = "personal"  # Default to personal
+                        business_percentage = 0  # Default to 0%
+                        business_context = ""
 
-                    if "Expense type: business" in category_info.reasoning:
-                        expense_type = "business"
-                        business_percentage = 100  # Default for business
-                    elif "Expense type: mixed" in category_info.reasoning:
-                        expense_type = "mixed"
-                        # Try to extract percentage
-                        try:
-                            if "Business percentage:" in category_info.reasoning:
-                                percentage_line = [
-                                    line
-                                    for line in category_info.reasoning.split("\n")
-                                    if "Business percentage:" in line
-                                ][0]
-                                percentage_str = (
-                                    percentage_line.split(":", 1)[1].strip().rstrip("%")
-                                )
-                                business_percentage = int(percentage_str)
-                            elif (
-                                "business percentage:"
-                                in category_info.reasoning.lower()
-                            ):
-                                percentage_line = [
-                                    line
-                                    for line in category_info.reasoning.split("\n")
-                                    if "business percentage:" in line.lower()
-                                ][0]
-                                percentage_str = (
-                                    percentage_line.split(":", 1)[1].strip().rstrip("%")
-                                )
-                                business_percentage = int(percentage_str)
-                        except:
-                            # If extraction fails, use 50% as default for mixed
-                            business_percentage = 50
-
-                    # Try to extract business_context if available
-                    if "Business context:" in category_info.reasoning:
-                        try:
-                            context_start = category_info.reasoning.find(
-                                "Business context:"
+                        if category_info.notes:
+                            # Extract expense type
+                            expense_type_match = re.search(
+                                r"Expense type:\s*(business|personal|mixed)",
+                                category_info.notes.lower(),
                             )
-                            if context_start > 0:
-                                context_part = category_info.reasoning[
-                                    context_start + 17 :
-                                ]
-                                # Extract until next double newline or end
-                                end_pos = context_part.find("\n\n")
-                                if end_pos > 0:
-                                    business_context = context_part[:end_pos].strip()
-                                else:
-                                    business_context = context_part.strip()
-                        except:
-                            pass
+                            if expense_type_match:
+                                expense_type = expense_type_match.group(1)
 
-                    logger.info(f"[Row {row_number}] • Expense type: {expense_type}")
-                    logger.info(
-                        f"[Row {row_number}] • Business percentage: {business_percentage}%"
-                    )
-                    if business_context:
-                        logger.info(
-                            f"[Row {row_number}] • Business context: {business_context[:100]}..."
-                        )
+                            # Extract business percentage
+                            percentage_match = re.search(
+                                r"Business percentage:\s*(\d+)%",
+                                category_info.notes,
+                            )
+                            if percentage_match:
+                                business_percentage = int(percentage_match.group(1))
+                                # Ensure expense_type is consistent with business_percentage
+                                if business_percentage == 100:
+                                    expense_type = "business"
+                                elif business_percentage == 0:
+                                    expense_type = "personal"
+                                elif business_percentage > 0:
+                                    expense_type = "mixed"
 
-                    # Update transaction with category info
-                    update_data = {
-                        "client_id": self.db.get_client_id(self.client_name),
-                        "base_category": category_info.category,
-                        "category_confidence": category_info.confidence,
-                        "category_reasoning": category_info.reasoning,
-                        "expense_type": expense_type,
-                        "business_percentage": business_percentage,
-                    }
+                            # Extract business context
+                            context_match = re.search(
+                                r"Business context:\s*([^\n]+)", category_info.notes
+                            )
+                            if context_match:
+                                business_context = context_match.group(1).strip()
 
-                    if business_context:
-                        update_data["business_context"] = business_context
-
-                    self.db.update_transaction_classification(
-                        transaction["transaction_id"], update_data
-                    )
-
-                    # Cache the result with expense_type
-                    if not cached_category:
-                        cache_data = {
-                            "category": category_info.category,
-                            "confidence": category_info.confidence,
-                            "reasoning": category_info.reasoning,
-                            "expense_type": expense_type,
-                            "business_percentage": business_percentage,
+                        # Update transaction with category info
+                        update_data = {
+                            "client_id": self.db.get_client_id(self.client_name),
+                            "category": str(category_info.category),
+                            "category_confidence": str(category_info.confidence),
+                            "category_reasoning": str(category_info.notes),
+                            "expense_type": str(category_info.expense_type),
+                            "business_percentage": int(
+                                category_info.business_percentage
+                            ),
+                            "business_context": str(
+                                category_info.detailed_context or ""
+                            ),
+                            "classification": str(
+                                "Business"
+                                if category_info.expense_type == "business"
+                                else (
+                                    "Personal"
+                                    if category_info.expense_type == "personal"
+                                    else "Unclassified"  # Map 'mixed' to 'Unclassified'
+                                )
+                            ),
+                            "classification_confidence": str(category_info.confidence),
                         }
 
-                        if business_context:
-                            cache_data["business_context"] = business_context
+                        # Log what we're updating
+                        logger.info(
+                            f"[Row {row_number}] Updating transaction {transaction['transaction_id']} with:"
+                        )
+                        for key, value in update_data.items():
+                            logger.info(f"  • {key}: {value}")
 
-                        self._cache_result(cache_key, "category", cache_data)
+                        # Update the database
+                        self.db.update_transaction_classification(
+                            transaction["transaction_id"], update_data
+                        )
+
+                        # Cache the result
+                        self._cache_result(
+                            cache_key,
+                            "category",
+                            {
+                                "category": str(category_info.category),
+                                "expense_type": str(category_info.expense_type),
+                                "business_percentage": int(
+                                    category_info.business_percentage
+                                ),
+                                "notes": str(category_info.notes),
+                                "confidence": str(category_info.confidence),
+                                "detailed_context": str(
+                                    category_info.detailed_context or ""
+                                ),
+                            },
+                        )
 
                     # Update status
                     self.db.update_transaction_status(
@@ -488,7 +498,7 @@ class TransactionClassifier:
                     )
 
                     logger.info(
-                        f"{Fore.GREEN}✓ Pass 2 complete: {category_info.category} ({expense_type}){Style.RESET_ALL}"
+                        f"{Fore.GREEN}✓ Pass 2 complete: {category_info.category} ({category_info.expense_type}){Style.RESET_ALL}"
                     )
                     processed_count[2] += 1
 
@@ -969,121 +979,16 @@ NOTES:
                 general_category="",
             )
 
-    def _get_category(
+    def _build_category_prompt(
         self,
         description: str,
         payee: str,
         business_description: str = None,
         general_category: str = None,
-        force_process: bool = False,
-    ) -> CategoryResponse:
-        """Process a single transaction to assign a base category.
-
-        This assigns an initial business-friendly category, which will later be mapped to
-        Schedule 6A categories in pass 3.
-
-        Args:
-            description: Transaction description
-            payee: Identified payee name
-            business_description: Optional description of the payee business
-            general_category: Optional general expense category from Pass 1
-            force_process: Whether to do fresh lookups for missing fields
-        """
-        # Get client's custom categories
-        client_categories = self.db.get_client_categories(self.client_name)
-        custom_categories = [cat["category_name"] for cat in client_categories]
-
-        # Define base business categories (more intuitive than 6A categories)
-        base_business_categories = [
-            "Office Supplies",
-            "Software and Technology",
-            "Professional Services",
-            "Marketing and Advertising",
-            "Travel Expenses",
-            "Meals and Entertainment",
-            "Vehicle Expenses",
-            "Equipment and Furniture",
-            "Training and Education",
-            "Insurance",
-            "Rent and Utilities",
-            "Maintenance and Repairs",
-            "Banking and Financial Fees",
-            "Shipping and Postage",
-            "Employee Benefits",
-            "Contract Services",
-            "Licenses and Permits",
-            "Other Business Expenses",
-        ]
-
-        # Define common personal expense categories
-        personal_categories = [
-            "Groceries",
-            "Dining Out",
-            "Personal Shopping",
-            "Entertainment",
-            "Healthcare",
-            "Personal Services",
-            "Housing",
-            "Utilities (Personal)",
-            "Transportation",
-            "Education",
-            "Travel (Personal)",
-            "Home Improvement",
-            "Subscriptions",
-            "Childcare",
-            "Pet Expenses",
-            "Hobbies",
-            "Other Personal Expenses",
-        ]
-
-        # Combine all categories
-        available_categories = (
-            base_business_categories + personal_categories + custom_categories
-        )
-
-        # Check cache for category
-        cache_key = self._get_cache_key(description, payee)
-        cached_result = self._get_cached_result(cache_key, "category")
-
-        # Check if we have a valid cache hit
-        if cached_result:
-            result = CategoryResponse(**cached_result)
-
-            # If not forcing process and we have high confidence, use cache as is
-            if not force_process and result.confidence == "high":
-                logger.info(
-                    f"✓ Using cached category: {result.category} (confidence: {result.confidence})"
-                )
-                return result
-
-            # If forcing process or low confidence, check for missing fields
-            missing_fields = []
-            if not result.category:
-                missing_fields.append("category")
-            if not result.reasoning or "expense_type" not in result.reasoning.lower():
-                missing_fields.append("expense_type")
-            if (
-                not result.reasoning
-                or "business_percentage" not in result.reasoning.lower()
-            ):
-                missing_fields.append("business_percentage")
-
-            # If we have all fields and high confidence, use cache
-            if not missing_fields and result.confidence == "high":
-                logger.info(
-                    f"✓ Using complete cached category: {result.category} (confidence: {result.confidence})"
-                )
-                return result
-
-            # If only missing some fields, log what we're updating
-            if missing_fields:
-                logger.info(
-                    f"⚠ Cache hit but missing fields: {', '.join(missing_fields)}. Will update..."
-                )
-            else:
-                logger.info(
-                    f"⚠ Low confidence cache hit ({result.confidence}), will try to improve..."
-                )
+    ) -> str:
+        """Build the prompt for category classification."""
+        # Get available categories
+        available_categories = self._get_available_categories()
 
         # Build context information about the transaction
         transaction_context = f"""Transaction Description: {description}
@@ -1095,8 +1000,22 @@ Payee: {payee}"""
         if general_category:
             transaction_context += f"\nGeneral Category from Pass 1: {general_category}"
 
-        # Create the prompt for the AI model
-        prompt = f"""Analyze this transaction and determine the most appropriate expense category.
+        # Create the prompt based on model type
+        if self.model_type == "fast":
+            prompt = f"""Analyze this transaction and determine:
+
+{transaction_context}
+
+Available Categories:
+{', '.join(available_categories)}
+
+Respond with a JSON object containing:
+1. category: The most appropriate category from the list
+2. expense_type: "business", "personal", or "mixed"
+3. business_percentage: 0-100 (100 for business, 0 for personal, or percentage for mixed)
+4. notes: Brief explanation of the categorization"""
+        else:
+            prompt = f"""Analyze this transaction in detail:
 
 {transaction_context}
 
@@ -1106,131 +1025,157 @@ Business Context:
 Available Categories:
 {', '.join(available_categories)}
 
-Determine:
-1. The most appropriate category from the list above
-2. Whether this is a business, personal, or mixed expense
-3. For mixed expenses, estimate the business use percentage
+Respond with a JSON object containing:
+1. category: The most appropriate category from the list
+2. expense_type: "business", "personal", or "mixed"
+3. business_percentage: 0-100 (100 for business, 0 for personal, or percentage for mixed)
+4. notes: Brief explanation of the categorization
+5. confidence: "high", "medium", or "low"
+6. detailed_context: Detailed business context and reasoning"""
 
-Format your response as a JSON object with:
-- category: The selected category from the list
-- confidence: Your confidence level (high, medium, low)
-- reasoning: Your explanation including:
-  - Why you chose this category
-  - Expense type: business, personal, or mixed
-  - Business percentage (if mixed)
-  - Any relevant business context
+        return prompt
 
-Example reasoning format:
-"This appears to be a business expense for office supplies.
-Expense type: business
-Business percentage: 100%
-This is clearly for business use based on..."
+    def _get_category(
+        self,
+        transaction_description: str,
+        amount: float,
+        date: str,
+    ) -> CategoryResponse:
+        """Get the category for a transaction."""
+        # Default to personal unless strong business case
+        default_classification = {
+            "category": "Uncategorized",
+            "expense_type": "personal",
+            "business_percentage": 0,
+            "category_confidence": "low",
+            "notes": "Default personal classification",
+        }
 
-NOTE: Focus on the nature of the expense itself, not just the business type."""
+        # Build a more conservative prompt
+        prompt = f"""Classify this transaction with an IRS-audit mindset. Default to personal unless there is clear business justification.
+Transaction: {transaction_description}
+Amount: ${amount}
+Date: {date}
 
-        response = self.client.responses.create(
-            model=self._get_model(),
-            input=[
-                {
-                    "role": "system",
-                    "content": ASSISTANTS_CONFIG["AmeliaAI"]["instructions"],
-                },
-                {"role": "user", "content": prompt},
-            ],
-            text={
-                "format": {
-                    "type": "json_schema",
-                    "name": "category_response",
-                    "schema": {
-                        "type": "object",
-                        "properties": {
-                            "category": {
-                                "type": "string",
-                                "description": "The selected category",
-                            },
-                            "confidence": {
-                                "type": "string",
-                                "enum": ["high", "medium", "low"],
-                                "description": "Confidence level in the categorization",
-                            },
-                            "reasoning": {
-                                "type": "string",
-                                "description": "Explanation including expense type and business context",
-                            },
-                        },
-                        "required": ["category", "confidence", "reasoning"],
-                        "additionalProperties": False,
-                    },
-                    "strict": True,
-                }
-            },
-        )
+Business Profile: Real estate professional
+
+Rules:
+1. Default to personal (0% business) unless clear business connection
+2. Groceries, restaurants, and retail stores are personal by default
+3. Only classify as business if:
+   - Direct real estate expenses (property maintenance, utilities for properties)
+   - Clear professional services (legal, accounting)
+   - Documented business meetings or travel
+4. Mixed expenses need strong justification and documentation
+5. Mark confidence as:
+   - high: Clear business purpose with documentation
+   - medium: Likely business but needs verification
+   - low: Uncertain or personal by default
+
+Respond in JSON format:
+{{
+    "category": "Category name",
+    "expense_type": "business|personal|mixed",
+    "business_percentage": 0-100,
+    "category_confidence": "high|medium|low",
+    "notes": "Detailed reasoning including what documentation would be needed for IRS"
+}}"""
 
         try:
-            response_text = response.output_text.strip()
-            if response_text.startswith("```json"):
-                response_text = response_text[7:]
-            if response_text.endswith("```"):
-                response_text = response_text[:-3]
-            response_text = response_text.strip()
+            # Get completion from OpenAI
+            response = self.client.chat.completions.create(
+                model=self._get_model(), messages=[{"role": "user", "content": prompt}]
+            )
 
-            result = json.loads(response_text)
-            new_response = CategoryResponse(**result)
+            # Extract and parse the response
+            response_text = response.choices[0].message.content.strip()
+            # Remove any markdown formatting
+            response_text = response_text.replace("```json\n", "").replace("\n```", "")
 
-            # If we had a cached result, merge the new fields with existing data
-            if cached_result:
-                cached = CategoryResponse(**cached_result)
-                # Keep the cached category and confidence if they were high confidence
-                if cached.confidence == "high":
-                    result["category"] = cached.category
-                    result["confidence"] = cached.confidence
-                # Combine reasoning, keeping expense type and business percentage info
-                result["reasoning"] = (
-                    f"Original categorization: {cached.reasoning}\nUpdated with: {new_response.reasoning}"
-                )
-
-            # Validate the category against available categories
-            if result["category"] not in available_categories:
-                # Try to find the closest match
-                closest_match = None
-                highest_ratio = 0
-                for category in available_categories:
-                    ratio = fuzz.ratio(result["category"].lower(), category.lower())
-                    if ratio > highest_ratio:
-                        highest_ratio = ratio
-                        closest_match = category
-
-                if highest_ratio >= 80:  # If we found a close match
-                    logger.info(
-                        f"Category '{result['category']}' not in available categories. Using closest match: {closest_match}"
-                    )
-                    result["category"] = closest_match
+            try:
+                result = json.loads(response_text)
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse JSON response: {e}")
+                logger.error(f"Raw response: {response_text}")
+                # Attempt to extract JSON from the response
+                match = re.search(r"\{.*\}", response_text, re.DOTALL)
+                if match:
+                    try:
+                        result = json.loads(match.group(0))
+                    except json.JSONDecodeError:
+                        raise
                 else:
-                    # Default to Other categories based on expense type
-                    if "personal" in result["reasoning"].lower():
-                        result["category"] = "Other Personal Expenses"
-                    else:
-                        result["category"] = "Other Business Expenses"
-                    logger.info(
-                        f"Category '{result['category']}' not in available categories. Defaulting to: {result['category']}"
-                    )
+                    raise
+
+            # Validate and set defaults for required fields
+            result = {
+                "category": str(result.get("category", "Other Business Expenses")),
+                "expense_type": str(result.get("expense_type", "personal")),
+                "business_percentage": int(result.get("business_percentage", 0)),
+                "notes": str(result.get("notes", "")),
+                "confidence": str(result.get("confidence", "medium")),
+                "detailed_context": str(result.get("detailed_context", "")),
+            }
+
+            # Ensure consistent business logic
+            if result["expense_type"] == "business":
+                result["business_percentage"] = 100
+            elif result["expense_type"] == "personal":
+                result["business_percentage"] = 0
+            elif result["expense_type"] == "mixed":
+                if (
+                    result["business_percentage"] <= 0
+                    or result["business_percentage"] >= 100
+                ):
+                    result["business_percentage"] = 50
+
+            # Create CategoryResponse object
+            category_response = CategoryResponse(**result)
 
             # Cache the result
             self._cache_result(
-                cache_key,
+                self._get_cache_key(transaction_description),
                 "category",
-                result,
+                category_response.__dict__,
             )
 
-            return CategoryResponse(**result)
+            return category_response
 
         except Exception as e:
-            logger.error(f"Error parsing category response: {str(e)}")
-            return CategoryResponse(
-                category="Other Personal Expenses",
-                confidence="low",
-                reasoning=f"Error during processing: {str(e)}",
+            logger.error(f"Error in _get_category: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            raise
+
+    def _validate_category_response(self, category_info: CategoryResponse) -> bool:
+        """Validate category response with stricter business rules."""
+        if (
+            category_info.expense_type == "business"
+            and category_info.category_confidence != "high"
+        ):
+            # Downgrade to personal if not high confidence
+            category_info.expense_type = "personal"
+            category_info.business_percentage = 0
+            category_info.notes += (
+                " [Downgraded to personal due to insufficient confidence]"
             )
+
+        if category_info.business_percentage > 0:
+            # List of categories that are typically personal
+            personal_categories = [
+                "Groceries",
+                "Restaurants",
+                "Retail",
+                "Entertainment",
+            ]
+            if (
+                category_info.category in personal_categories
+                and category_info.category_confidence != "high"
+            ):
+                category_info.business_percentage = 0
+                category_info.expense_type = "personal"
+                category_info.notes += " [Downgraded to personal due to category type]"
+
+        return True
 
     def _get_classification(
         self,
@@ -1708,6 +1653,58 @@ Return a JSON object with:
                 needs_splitting=False,
                 split_details=None,
             )
+
+    def _get_available_categories(self) -> List[str]:
+        """Get all available categories (standard + custom)."""
+        # Define base business categories
+        base_business_categories = [
+            "Office Supplies",
+            "Software and Technology",
+            "Professional Services",
+            "Marketing and Advertising",
+            "Travel Expenses",
+            "Meals and Entertainment",
+            "Vehicle Expenses",
+            "Equipment and Furniture",
+            "Training and Education",
+            "Insurance",
+            "Rent and Utilities",
+            "Maintenance and Repairs",
+            "Banking and Financial Fees",
+            "Shipping and Postage",
+            "Employee Benefits",
+            "Contract Services",
+            "Licenses and Permits",
+            "Other Business Expenses",
+        ]
+
+        # Define common personal expense categories
+        personal_categories = [
+            "Groceries",
+            "Dining Out",
+            "Personal Shopping",
+            "Entertainment",
+            "Healthcare",
+            "Personal Services",
+            "Housing",
+            "Utilities (Personal)",
+            "Transportation",
+            "Education",
+            "Travel (Personal)",
+            "Home Improvement",
+            "Subscriptions",
+            "Childcare",
+            "Pet Expenses",
+            "Hobbies",
+            "Other Personal Expenses",
+        ]
+
+        # Get client's custom categories
+        client_categories = self.db.get_client_categories(self.client_name)
+        custom_categories = [cat["category_name"] for cat in client_categories]
+
+        # Combine all categories
+        return base_business_categories + personal_categories + custom_categories
 
 
 @dataclass

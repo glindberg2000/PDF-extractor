@@ -239,6 +239,30 @@ class ClientDB:
             """
             )
 
+            # Business rules table
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS business_rules (
+                    id INTEGER PRIMARY KEY,
+                    client_id INTEGER NOT NULL,
+                    rule_type TEXT NOT NULL CHECK(rule_type IN ('category', 'payee', 'amount', 'composite')),
+                    rule_name TEXT NOT NULL,
+                    rule_description TEXT,
+                    conditions JSON NOT NULL,  -- Stores rule matching conditions
+                    actions JSON NOT NULL,     -- Stores actions to take when rule matches
+                    priority INTEGER NOT NULL DEFAULT 0,
+                    is_active BOOLEAN DEFAULT 1,
+                    ai_generated BOOLEAN DEFAULT 0,
+                    ai_confidence TEXT CHECK(ai_confidence IN ('high', 'medium', 'low')),
+                    ai_reasoning TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY(client_id) REFERENCES clients(id),
+                    UNIQUE(client_id, rule_name)
+                )
+            """
+            )
+
     def get_client_id(self, client_name: str) -> Optional[int]:
         """Get client ID from name, creating if doesn't exist."""
         with sqlite3.connect(self.db_path) as conn:
@@ -890,40 +914,90 @@ class ClientDB:
         """
         try:
             with sqlite3.connect(self.db_path) as conn:
-                # Convert classification data to column updates
-                updates = []
-                values = []
-                for key, value in classification_data.items():
-                    updates.append(f"{key} = ?")
-                    values.append(value)
+                # Enable foreign keys
+                conn.execute("PRAGMA foreign_keys = ON")
 
-                # Add updated_at timestamp
-                updates.append("updated_at = CURRENT_TIMESTAMP")
-
-                # Build and execute update query
-                query = f"""
-                    UPDATE transaction_classifications 
-                    SET {', '.join(updates)}
+                # First check if the row exists
+                check_query = """
+                    SELECT * FROM transaction_classifications
                     WHERE transaction_id = ?
                 """
-                values.append(transaction_id)
+                cursor = conn.execute(check_query, (transaction_id,))
+                existing_row = cursor.fetchone()
 
-                conn.execute(query, values)
+                if existing_row:
+                    # Get column names
+                    column_names = [
+                        description[0] for description in cursor.description
+                    ]
+                    existing_data = dict(zip(column_names, existing_row))
+                    logger.info(f"Existing data for transaction {transaction_id}:")
+                    for key, value in existing_data.items():
+                        logger.info(f"  • {key}: {value}")
 
-                # If no row was updated, we need to insert
-                if conn.total_changes == 0:
-                    # Prepare columns and values for insert
+                    # Build update query
+                    updates = []
+                    values = []
+                    for key, value in classification_data.items():
+                        if key not in ["id", "created_at", "transaction_id"]:
+                            updates.append(f"{key} = ?")
+                            values.append(value)
+
+                    query = f"""
+                        UPDATE transaction_classifications 
+                        SET {', '.join(updates)}
+                        WHERE transaction_id = ?
+                    """
+                    values.append(transaction_id)
+
+                    # Log the query and values
+                    logger.info(f"Executing UPDATE for transaction {transaction_id}")
+                    logger.info(f"Query: {query}")
+                    logger.info(f"Values: {values}")
+
+                    # Execute update
+                    conn.execute(query, values)
+                    logger.info(f"Rows affected by UPDATE: {conn.total_changes}")
+                else:
+                    # Prepare insert
                     columns = list(classification_data.keys()) + ["transaction_id"]
                     placeholders = ["?"] * len(columns)
                     values = list(classification_data.values()) + [transaction_id]
 
-                    # Build and execute insert query
                     query = f"""
                         INSERT INTO transaction_classifications 
                         ({', '.join(columns)})
                         VALUES ({', '.join(placeholders)})
                     """
+                    # Log the query and values
+                    logger.info(f"Executing INSERT for transaction {transaction_id}")
+                    logger.info(f"Query: {query}")
+                    logger.info(f"Values: {values}")
+
+                    # Execute insert
                     conn.execute(query, values)
+                    logger.info(f"Rows affected by INSERT: {conn.total_changes}")
+
+                # Verify the update
+                verify_query = """
+                    SELECT * FROM transaction_classifications
+                    WHERE transaction_id = ?
+                """
+                cursor = conn.execute(verify_query, (transaction_id,))
+                result = cursor.fetchone()
+                if result:
+                    column_names = [
+                        description[0] for description in cursor.description
+                    ]
+                    logger.info(
+                        f"Verification result for transaction {transaction_id}:"
+                    )
+                    for i, value in enumerate(result):
+                        logger.info(f"  • {column_names[i]}: {value}")
+                else:
+                    logger.warning(
+                        f"No row found after update for transaction {transaction_id}!"
+                    )
 
         except sqlite3.Error as e:
             logger.error(
@@ -959,3 +1033,209 @@ class ClientDB:
         except sqlite3.Error as e:
             logger.error(f"Database error getting transaction classification: {str(e)}")
             raise
+
+    def get_all_categories(self, client_name: str) -> List[str]:
+        """Get all unique categories used in transactions."""
+        client_id = self.get_client_id(client_name)
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                """
+                SELECT DISTINCT base_category 
+                FROM transaction_classifications 
+                WHERE client_id = ? 
+                AND base_category IS NOT NULL
+                """,
+                (client_id,),
+            )
+            return [row[0] for row in cursor.fetchall()]
+
+    def get_all_payees(self, client_name: str) -> List[str]:
+        """Get all unique payees in transactions."""
+        client_id = self.get_client_id(client_name)
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                """
+                SELECT DISTINCT payee 
+                FROM transaction_classifications 
+                WHERE client_id = ? 
+                AND payee IS NOT NULL 
+                AND payee != 'Unknown Payee'
+                """,
+                (client_id,),
+            )
+            return [row[0] for row in cursor.fetchall()]
+
+    def load_transactions_by_category(
+        self, client_name: str, category: str
+    ) -> List[Dict]:
+        """Load all transactions for a given category."""
+        client_id = self.get_client_id(client_name)
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                """
+                SELECT 
+                    t.transaction_id,
+                    t.transaction_date,
+                    t.amount,
+                    t.description,
+                    c.payee,
+                    c.base_category,
+                    c.business_percentage,
+                    c.is_reviewed
+                FROM normalized_transactions t
+                JOIN transaction_classifications c 
+                    ON t.transaction_id = c.transaction_id 
+                    AND t.client_id = c.client_id
+                WHERE t.client_id = ? 
+                AND c.base_category = ?
+                ORDER BY t.transaction_date DESC
+                """,
+                (client_id, category),
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    def load_transactions_by_business_percentage(
+        self, client_name: str, percentage: int
+    ) -> List[Dict]:
+        """Load all transactions with a specific business percentage."""
+        client_id = self.get_client_id(client_name)
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                """
+                SELECT 
+                    t.transaction_id,
+                    t.transaction_date,
+                    t.amount,
+                    t.description,
+                    c.payee,
+                    c.base_category,
+                    c.business_percentage,
+                    c.is_reviewed
+                FROM normalized_transactions t
+                JOIN transaction_classifications c 
+                    ON t.transaction_id = c.transaction_id 
+                    AND t.client_id = c.client_id
+                WHERE t.client_id = ? 
+                AND c.business_percentage = ?
+                ORDER BY t.transaction_date DESC
+                """,
+                (client_id, percentage),
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    def load_transactions_by_payee(self, client_name: str, payee: str) -> List[Dict]:
+        """Load all transactions for a given payee."""
+        client_id = self.get_client_id(client_name)
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                """
+                SELECT 
+                    t.transaction_id,
+                    t.transaction_date,
+                    t.amount,
+                    t.description,
+                    c.payee,
+                    c.base_category,
+                    c.business_percentage,
+                    c.is_reviewed
+                FROM normalized_transactions t
+                JOIN transaction_classifications c 
+                    ON t.transaction_id = c.transaction_id 
+                    AND t.client_id = c.client_id
+                WHERE t.client_id = ? 
+                AND c.payee = ?
+                ORDER BY t.transaction_date DESC
+                """,
+                (client_id, payee),
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    def load_transactions_by_ids(
+        self, client_name: str, transaction_ids: List[str]
+    ) -> List[Dict]:
+        """Load specific transactions by their IDs."""
+        client_id = self.get_client_id(client_name)
+        placeholders = ",".join("?" * len(transaction_ids))
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                f"""
+                SELECT 
+                    t.transaction_id,
+                    t.transaction_date,
+                    t.amount,
+                    t.description,
+                    c.payee,
+                    c.base_category,
+                    c.business_percentage,
+                    c.is_reviewed
+                FROM normalized_transactions t
+                JOIN transaction_classifications c 
+                    ON t.transaction_id = c.transaction_id 
+                    AND t.client_id = c.client_id
+                WHERE t.client_id = ? 
+                AND t.transaction_id IN ({placeholders})
+                ORDER BY t.transaction_date DESC
+                """,
+                (client_id, *transaction_ids),
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    def batch_update_business_percentage(
+        self, client_name: str, transaction_ids: List[str], percentage: int
+    ) -> None:
+        """Update business percentage for multiple transactions."""
+        client_id = self.get_client_id(client_name)
+        placeholders = ",".join("?" * len(transaction_ids))
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                f"""
+                UPDATE transaction_classifications
+                SET 
+                    business_percentage = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE client_id = ? 
+                AND transaction_id IN ({placeholders})
+                """,
+                (percentage, client_id, *transaction_ids),
+            )
+            conn.commit()
+
+    def batch_update_review_status(
+        self,
+        client_name: str,
+        transaction_ids: List[str],
+        is_reviewed: bool,
+        review_notes: Optional[str] = None,
+    ) -> None:
+        """Update review status for multiple transactions."""
+        client_id = self.get_client_id(client_name)
+        placeholders = ",".join("?" * len(transaction_ids))
+        with sqlite3.connect(self.db_path) as conn:
+            if review_notes:
+                conn.execute(
+                    f"""
+                    UPDATE transaction_classifications
+                    SET 
+                        is_reviewed = ?,
+                        review_notes = ?,
+                        last_reviewed_at = CURRENT_TIMESTAMP,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE client_id = ? 
+                    AND transaction_id IN ({placeholders})
+                    """,
+                    (is_reviewed, review_notes, client_id, *transaction_ids),
+                )
+            else:
+                conn.execute(
+                    f"""
+                    UPDATE transaction_classifications
+                    SET 
+                        is_reviewed = ?,
+                        last_reviewed_at = CURRENT_TIMESTAMP,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE client_id = ? 
+                    AND transaction_id IN ({placeholders})
+                    """,
+                    (is_reviewed, client_id, *transaction_ids),
+                )
+            conn.commit()

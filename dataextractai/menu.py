@@ -17,6 +17,7 @@ from .db.client_db import ClientDB
 from dotenv import load_dotenv
 import sqlite3
 from datetime import datetime
+from .agents.business_rules_manager import BusinessRulesManager
 
 # Load environment variables
 load_dotenv()
@@ -420,6 +421,7 @@ def start_menu():
                 "Purge Classification Cache",
                 "Export to Excel Report",
                 "Upload to Google Sheets",
+                "Review Pass 2 Results",
                 "Exit",
             ],
         ).ask()
@@ -670,10 +672,17 @@ def start_menu():
                             missing_payees = cursor.fetchone()[0]
 
                             if missing_payees > 0:
+                                # Instead of blocking, warn and ask for confirmation
                                 click.echo(
-                                    f"Error: {missing_payees} transactions are missing valid payees. Please run Pass 1 first."
+                                    f"\nWarning: {missing_payees} transactions are missing valid payees."
                                 )
-                                continue
+                                click.echo(
+                                    "These transactions will be skipped during Pass 2."
+                                )
+                                if not questionary.confirm(
+                                    "Do you want to continue with Pass 2?"
+                                ).ask():
+                                    continue
 
                     if pass_num > 2:
                         # Check if Pass 2 has been completed
@@ -699,6 +708,32 @@ def start_menu():
                                     f"Error: {missing_categories} transactions with valid payees are missing categories. Please run Pass 2 first."
                                 )
                                 continue
+
+                    # For Pass 2, check for missing payees but don't block execution
+                    if pass_num == 2:
+                        with sqlite3.connect(db.db_path) as conn:
+                            cursor = conn.execute(
+                                """
+                                SELECT COUNT(*) 
+                                FROM normalized_transactions t
+                                LEFT JOIN transaction_classifications c 
+                                    ON t.transaction_id = c.transaction_id 
+                                    AND t.client_id = c.client_id
+                                WHERE t.client_id = ? 
+                                AND (c.payee IS NULL OR c.payee = 'Unknown Payee')
+                                """,
+                                (db.get_client_id(client_name),),
+                            )
+                            missing_payees = cursor.fetchone()[0]
+
+                            if missing_payees > 0:
+                                click.echo(
+                                    f"Warning: {missing_payees} transactions have missing or unknown payees and will be skipped during Pass 2."
+                                )
+                                if not questionary.confirm(
+                                    "Do you want to continue?"
+                                ).ask():
+                                    continue
 
                     # For individual passes, we'll use resume_from_pass to control execution
                     # Pass 1: resume_from_pass=1 (only payee identification)
@@ -1158,6 +1193,311 @@ def start_menu():
 
             except Exception as e:
                 click.echo(f"Error reprocessing all transactions: {e}")
+
+        elif action == "Review Pass 2 Results":
+            review_pass2_results(client_name)
+
+
+def review_pass2_results(client_name: str):
+    """Review and adjust Pass 2 results before proceeding to Pass 3."""
+    db = ClientDB()
+    rules_manager = BusinessRulesManager(client_name)
+
+    while True:
+        action = questionary.select(
+            "Review Options:",
+            choices=[
+                "View by Category",
+                "View by Business Percentage",
+                "View by Payee",
+                "View Unreviewed Transactions",
+                "Batch Update Business Percentage",
+                "Batch Update Category",
+                "Add Review Notes",
+                "Mark as Reviewed",
+                "Generate Business Rules",
+                "View/Edit Business Rules",
+                "Apply Business Rules",
+                "Back to Main Menu",
+            ],
+        ).ask()
+
+        if action == "Back to Main Menu":
+            break
+
+        elif action == "Generate Business Rules":
+            # Get all transactions
+            transactions = db.load_normalized_transactions(client_name)
+            if transactions.empty:
+                click.echo("No transactions found.")
+                continue
+
+            # Convert DataFrame to list of dictionaries
+            transactions_list = transactions.to_dict("records")
+
+            # Generate rules
+            click.echo("\nAnalyzing transactions and generating business rules...")
+            rules = rules_manager.analyze_and_generate_rules(transactions_list)
+
+            # Display generated rules
+            click.echo("\nGenerated Business Rules:")
+            for rule in rules:
+                click.echo("\n" + "=" * 50)
+                click.echo(f"Rule: {rule['rule_name']}")
+                click.echo(f"Type: {rule['rule_type']}")
+                click.echo(f"Description: {rule['rule_description']}")
+                click.echo(f"Confidence: {rule['ai_confidence']}")
+                click.echo(f"Reasoning: {rule['ai_reasoning']}")
+                click.echo("Conditions:")
+                for condition in rule["conditions"]:
+                    click.echo(
+                        f"  - {condition['field']} {condition['operator']} {condition['value']}"
+                    )
+                click.echo("Actions:")
+                for action in rule["actions"]:
+                    click.echo(f"  - Set {action['field']} to {action['value']}")
+
+        elif action == "View/Edit Business Rules":
+            rules = db.get_business_rules(client_name)
+            if not rules:
+                click.echo("No business rules found.")
+                continue
+
+            while True:
+                rule_action = questionary.select(
+                    "Rule Management:",
+                    choices=[
+                        "View All Rules",
+                        "Edit Rule",
+                        "Deactivate Rule",
+                        "Back to Review Menu",
+                    ],
+                ).ask()
+
+                if rule_action == "Back to Review Menu":
+                    break
+
+                elif rule_action == "View All Rules":
+                    for rule in rules:
+                        click.echo("\n" + "=" * 50)
+                        click.echo(f"Rule: {rule['rule_name']}")
+                        click.echo(f"Type: {rule['rule_type']}")
+                        click.echo(f"Description: {rule['rule_description']}")
+                        click.echo(f"Active: {'Yes' if rule['is_active'] else 'No'}")
+                        click.echo(
+                            f"AI Generated: {'Yes' if rule['ai_generated'] else 'No'}"
+                        )
+                        if rule["ai_generated"]:
+                            click.echo(f"AI Confidence: {rule['ai_confidence']}")
+                            click.echo(f"AI Reasoning: {rule['ai_reasoning']}")
+
+                elif rule_action == "Deactivate Rule":
+                    rule_name = questionary.select(
+                        "Select rule to deactivate:",
+                        choices=[r["rule_name"] for r in rules if r["is_active"]],
+                    ).ask()
+                    if rule_name:
+                        db.deactivate_business_rule(client_name, rule_name)
+                        click.echo(f"Deactivated rule: {rule_name}")
+
+        elif action == "Apply Business Rules":
+            # Get transactions to apply rules to
+            filter_type = questionary.select(
+                "Apply rules to:",
+                choices=[
+                    "All Transactions",
+                    "Unreviewed Transactions",
+                    "Selected Category",
+                    "Selected Payee",
+                    "Selected IDs",
+                ],
+            ).ask()
+
+            transactions_to_update = get_filtered_transactions(
+                db, client_name, filter_type
+            )
+            if not transactions_to_update:
+                click.echo("No transactions selected.")
+                continue
+
+            # Apply rules and show preview
+            click.echo("\nPreviewing changes:")
+            changes = []
+            for txn in transactions_to_update:
+                modified_txn = rules_manager.apply_rules_to_transaction(txn)
+                if modified_txn != txn:
+                    changes.append((txn, modified_txn))
+
+            if not changes:
+                click.echo("No changes would be made by applying rules.")
+                continue
+
+            # Show preview of changes
+            for original, modified in changes:
+                click.echo("\n" + "-" * 50)
+                click.echo(f"Transaction ID: {original['transaction_id']}")
+                click.echo(f"Date: {original['transaction_date']}")
+                click.echo(f"Description: {original['description']}")
+                click.echo("\nChanges:")
+                for key in modified:
+                    if key in original and modified[key] != original[key]:
+                        click.echo(f"  {key}: {original[key]} -> {modified[key]}")
+
+            # Confirm and apply changes
+            if questionary.confirm("Apply these changes?").ask():
+                for original, modified in changes:
+                    # Update transaction with modified values
+                    update_data = {
+                        k: v
+                        for k, v in modified.items()
+                        if k in original and v != original[k]
+                    }
+                    db.update_transaction_classification(
+                        original["transaction_id"], update_data
+                    )
+                click.echo(f"Successfully updated {len(changes)} transactions")
+
+        elif action == "View by Category":
+            category = questionary.select(
+                "Select category to view:",
+                choices=sorted(list(set(db.get_all_categories(client_name)))),
+            ).ask()
+
+            transactions = db.load_transactions_by_category(client_name, category)
+            display_transactions_for_review(transactions)
+
+            # After displaying transactions, offer to generate rules
+            if questionary.confirm(
+                "\nWould you like to generate business rules based on these transactions?"
+            ).ask():
+                suggested_rules = rules_manager.get_rule_suggestions(transactions[0])
+
+                click.echo("\nSuggested Business Rules:")
+                for rule in suggested_rules:
+                    click.echo("\n" + "=" * 50)
+                    click.echo(f"Rule: {rule['rule_name']}")
+                    click.echo(f"Description: {rule['rule_description']}")
+                    click.echo(f"Confidence: {rule['ai_confidence']}")
+                    click.echo(f"Reasoning: {rule['ai_reasoning']}")
+
+                    if questionary.confirm("Would you like to save this rule?").ask():
+                        db.save_business_rule(client_name, rule)
+                        click.echo("Rule saved successfully")
+
+        elif action == "View by Business Percentage":
+            percentage = questionary.text(
+                "Enter business percentage to view (0-100):",
+                validate=lambda x: x.isdigit() and 0 <= int(x) <= 100,
+            ).ask()
+
+            transactions = db.load_transactions_by_business_percentage(
+                client_name, int(percentage)
+            )
+            display_transactions_for_review(transactions)
+
+        elif action == "View by Payee":
+            payee = questionary.select(
+                "Select payee to view:",
+                choices=sorted(list(set(db.get_all_payees(client_name)))),
+            ).ask()
+
+            transactions = db.load_transactions_by_payee(client_name, payee)
+            display_transactions_for_review(transactions)
+
+        elif action == "Batch Update Business Percentage":
+            # Get filter criteria
+            filter_type = questionary.select(
+                "Filter transactions by:", choices=["Category", "Payee", "Selected IDs"]
+            ).ask()
+
+            # Get transactions based on filter
+            transactions_to_update = get_filtered_transactions(
+                db, client_name, filter_type
+            )
+
+            # Get new percentage
+            new_percentage = questionary.text(
+                "Enter new business percentage (0-100):",
+                validate=lambda x: x.isdigit() and 0 <= int(x) <= 100,
+            ).ask()
+
+            # Confirm update
+            if questionary.confirm(
+                f"Update {len(transactions_to_update)} transactions to {new_percentage}% business?"
+            ).ask():
+                db.batch_update_business_percentage(
+                    client_name,
+                    [t["transaction_id"] for t in transactions_to_update],
+                    int(new_percentage),
+                )
+                click.echo("Successfully updated business percentage")
+
+        elif action == "Add Review Notes":
+            # Similar structure to batch update, but for adding notes
+            pass
+
+        elif action == "Mark as Reviewed":
+            # Similar structure to batch update, but for marking as reviewed
+            pass
+
+
+def display_transactions_for_review(transactions):
+    """Display transactions in a review-friendly format."""
+    click.echo("\nTransactions for Review:")
+    click.echo("=" * 120)
+
+    header = "{:<5} {:<12} {:<12} {:<30} {:<15} {:<15} {:<10} {:<15}".format(
+        "ID",
+        "Date",
+        "Amount",
+        "Description",
+        "Payee",
+        "Category",
+        "Bus %",
+        "Review Status",
+    )
+    click.echo(header)
+    click.echo("-" * 120)
+
+    for t in transactions:
+        row = "{:<5} {:<12} {:<12} {:<30} {:<15} {:<15} {:<10} {:<15}".format(
+            t["transaction_id"],
+            t["transaction_date"],
+            f"${t['amount']:.2f}",
+            t["description"][:30],
+            t["payee"][:15],
+            t["category"][:15],
+            f"{t['business_percentage']}%",
+            "✓" if t["is_reviewed"] else "",
+        )
+        click.echo(row)
+
+
+def get_filtered_transactions(db, client_name, filter_type):
+    """Get transactions based on filter criteria."""
+    if filter_type == "Category":
+        category = questionary.select(
+            "Select category:",
+            choices=sorted(list(set(db.get_all_categories(client_name)))),
+        ).ask()
+        return db.load_transactions_by_category(client_name, category)
+
+    elif filter_type == "Payee":
+        payee = questionary.select(
+            "Select payee:", choices=sorted(list(set(db.get_all_payees(client_name))))
+        ).ask()
+        return db.load_transactions_by_payee(client_name, payee)
+
+    elif filter_type == "Selected IDs":
+        transaction_ids = []
+        while True:
+            transaction_id = questionary.text(
+                "Enter transaction ID (or leave empty to finish):"
+            ).ask()
+            if not transaction_id:
+                break
+            transaction_ids.append(transaction_id)
+        return db.load_transactions_by_ids(client_name, transaction_ids)
 
 
 if __name__ == "__main__":

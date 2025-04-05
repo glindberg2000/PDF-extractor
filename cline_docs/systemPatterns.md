@@ -299,67 +299,142 @@ ASSISTANTS_CONFIG = {
 
 ## Transaction Processing
 
-### Three-Pass Classification
-1. Pass 1: Payee Identification
-   - AI-based payee extraction
-   - Brave Search enrichment
-   - Confidence scoring
+### Multi-Pass Transaction Processing
+The system uses a three-pass approach for transaction classification:
 
-2. Pass 2: Category Assignment
-   - Requires valid payee from Pass 1
-   - Uses business context
-   - Suggests new categories
+1. Pass 1 - Payee Identification
+   - Identifies payee from transaction description
+   - Extracts business description and general category
+   - Uses smart caching with field-level granularity
+   - Maintains confidence scores for each field
 
-3. Pass 3: Classification
-   - Requires valid category from Pass 2
-   - Business vs Personal determination
-   - Tax implications
+2. Pass 2 - Business Classification
+   - Determines business vs personal nature
+   - Assigns business percentage
+   - Provides business context
+   - Uses Pass 1 data for informed decisions
 
-### Status Tracking
-1. Status Values
-   - `pending`: Not yet processed
-   - `processing`: Currently being processed
-   - `completed`: Successfully processed
-   - `error`: Failed with error
-   - `skipped`: Skipped due to missing dependency
-   - `force_required`: Needs force processing
+3. Pass 3 - Tax Classification
+   - Assigns tax categories
+   - Determines worksheet placement
+   - Analyzes tax implications
+   - Uses data from Pass 1 and 2
 
-2. Status Management
-   - Each pass tracked independently
-   - Error messages preserved
-   - Processing timestamps recorded
-   - Force processing available
+### Smart Caching System
+- Field-level granularity for caching
+- Only performs fresh lookups when fields are missing
+- Preserves high-confidence cached data
+- Merges new data with existing cache entries
+- Uses normalized transaction descriptions as cache keys
+- Maintains separate caches for each processing pass
 
-3. Dependencies
-   - Pass 2 requires Pass 1 completion
-   - Pass 3 requires Pass 2 completion
-   - Dependencies can be bypassed with force
+### Data Flow
+```
+PDF Files → Extraction → Normalization → Database
+                                          ↓
+                                    Pass 1 (Payee)
+                                          ↓
+                                    Pass 2 (Business)
+                                          ↓
+                                    Pass 3 (Tax)
+                                          ↓
+                                    Final Report
+```
 
-### Caching System
-1. Cache Storage
-   - Per-client caching
-   - Pass-specific results
-   - JSON result storage
-   - Cache key generation
+### Database Schema
+- transaction_classifications
+  - Core transaction data
+  - Classification fields
+  - Confidence scores
+  - Processing timestamps
 
-2. Cache Management
-   - Cache hit logging
-   - Cache invalidation
-   - Cache cleanup
-   - Cache size monitoring
+- transaction_status
+  - Status tracking per pass
+  - Error messages
+  - Processing timestamps
+  - Dependencies
 
-### Error Handling
-1. Transaction Level
-   - Individual transaction isolation
-   - Error status tracking
-   - Error message preservation
-   - Recovery options
+### Caching Structure
+```json
+{
+  "normalized_description": {
+    "payee": "...",
+    "payee_confidence": 0.95,
+    "business_description": "...",
+    "general_category": "...",
+    "last_updated": "timestamp",
+    "source": "ai/manual/cache"
+  }
+}
+```
 
-2. System Level
-   - Database connection handling
-   - API rate limiting
-   - Resource cleanup
-   - State consistency
+## Key Technical Decisions
+
+### Smart Caching Strategy
+- Decision: Implement field-level caching with selective updates
+- Rationale: 
+  - Reduces unnecessary API calls
+  - Preserves high-confidence data
+  - Allows gradual improvement of data quality
+  - Maintains processing speed while ensuring completeness
+
+### Multi-Pass Architecture
+- Decision: Separate processing into three distinct passes
+- Rationale:
+  - Clear separation of concerns
+  - Better error isolation
+  - Improved data quality through progressive refinement
+  - Easier debugging and maintenance
+
+### Database-Backed Progress Tracking
+- Decision: Use SQLite for progress tracking
+- Rationale:
+  - Reliable persistence
+  - Transaction support
+  - Easy querying for status
+  - Simple backup and restore
+
+## Error Handling
+
+### Transaction-Level Isolation
+- Each transaction processed independently
+- Errors don't affect other transactions
+- Clear error messages preserved in database
+- Ability to retry failed transactions
+
+### Progress Preservation
+- Status tracked per transaction per pass
+- Automatic checkpointing
+- Resume capability from any point
+- Force processing option for dependencies
+
+## Data Validation
+
+### Input Validation
+- PDF parsing validation
+- Transaction normalization checks
+- Data type verification
+- Required field validation
+
+### Output Validation
+- Classification value validation
+- Confidence score checks
+- Tax category verification
+- Report format validation
+
+## Reporting
+
+### Excel Export
+- Comprehensive column set
+- Data validation rules
+- Proper formatting
+- Summary calculations
+
+### Schedule 6A Report
+- Standard format
+- Required columns
+- Tax calculations
+- Business summaries
 
 ## Database Structure
 
@@ -435,4 +510,511 @@ ASSISTANTS_CONFIG = {
    - Operation status
    - Error messages
    - Success confirmation
-   - Processing updates 
+   - Processing updates
+
+## Future System Extensions
+
+### Web Application Architecture
+
+#### Frontend Architecture
+```
+React App
+├── Components/
+│   ├── TransactionManager/     # Transaction CRUD
+│   ├── ProcessingDashboard/    # Status monitoring
+│   ├── BatchControls/          # Batch operations
+│   └── Reports/                # Reporting interface
+├── Services/
+│   ├── API/                    # Backend communication
+│   ├── WebSocket/              # Real-time updates
+│   └── Auth/                   # Authentication
+└── State/
+    ├── Redux Store/            # Global state
+    └── Context/                # Feature-specific state
+```
+
+#### Backend Architecture
+```
+FastAPI Backend
+├── Routes/
+│   ├── transactions/           # Transaction endpoints
+│   ├── processing/             # Processing controls
+│   ├── websocket/             # Real-time updates
+│   └── auth/                   # Authentication
+├── Services/
+│   ├── TransactionService/     # Business logic
+│   ├── ProcessingService/      # Processing management
+│   └── WebSocketManager/       # Real-time communication
+└── Database/
+    └── Models/                 # SQLAlchemy models
+```
+
+### Intelligent Chatbot Architecture
+
+#### Core Components
+```
+Chatbot System
+├── ContextManager/
+│   ├── ClientContext/          # Client profile & rules
+│   ├── TransactionHistory/     # Historical data
+│   └── RelationshipGraph/      # Entity relationships
+├── NLPEngine/
+│   ├── IntentRecognition/      # Command understanding
+│   ├── EntityExtraction/       # Key information
+│   └── RuleGeneration/         # Dynamic rules
+├── ActionEngine/
+│   ├── MCPInterface/           # Database operations
+│   ├── RuleProcessor/          # Rule application
+│   └── ChangeTracker/          # Audit logging
+└── ValidationEngine/
+    ├── DataValidator/          # Input validation
+    └── ConstraintChecker/      # Business rules
+```
+
+#### Integration Points
+1. MCP Interface
+   ```python
+   class MCPInterface:
+       def __init__(self):
+           self.db = DatabaseConnection()
+           self.validator = DataValidator()
+           self.tracker = ChangeTracker()
+           
+       async def apply_changes(self, changes: List[Change]):
+           # Validate changes
+           validated = self.validator.validate(changes)
+           
+           # Apply changes through MCP
+           results = await self.db.execute_mcp(validated)
+           
+           # Track changes
+           self.tracker.log_changes(results)
+           
+           return results
+   ```
+
+2. Natural Language Processing
+   ```python
+   class NLPProcessor:
+       def __init__(self):
+           self.context = ContextManager()
+           self.intent = IntentRecognizer()
+           self.entities = EntityExtractor()
+           
+       def process_command(self, text: str) -> Action:
+           # Extract intent and entities
+           intent = self.intent.recognize(text)
+           entities = self.entities.extract(text)
+           
+           # Apply context
+           contextualized = self.context.apply(intent, entities)
+           
+           return Action.from_context(contextualized)
+   ```
+
+3. Rule Engine
+   ```python
+   class RuleEngine:
+       def __init__(self):
+           self.rules = RuleManager()
+           self.processor = RuleProcessor()
+           
+       def apply_rules(self, transactions: List[Transaction]):
+           # Get applicable rules
+           rules = self.rules.get_active_rules()
+           
+           # Apply rules
+           results = self.processor.process(transactions, rules)
+           
+           return results
+   ```
+
+### Key Technical Considerations
+
+1. Real-time Updates
+   - WebSocket for live status
+   - Event-driven architecture
+   - State synchronization
+   - Optimistic updates
+
+2. Data Consistency
+   - Transaction boundaries
+   - Atomic operations
+   - Rollback capability
+   - Version control
+
+3. Security
+   - Authentication
+   - Authorization
+   - Audit logging
+   - Data validation
+
+4. Scalability
+   - Microservices architecture
+   - Async processing
+   - Caching strategy
+   - Load balancing
+
+### Implementation Strategy
+
+1. Phase 1: Core Web App
+   - Basic CRUD operations
+   - Authentication system
+   - Real-time status updates
+   - Simple reporting
+
+2. Phase 2: Enhanced Processing
+   - Web-based reprocessing
+   - Progress monitoring
+   - Error handling
+   - Batch operations
+
+3. Phase 3: Chatbot Integration
+   - Basic query capabilities
+   - Context understanding
+   - Simple updates
+   - Audit logging
+
+4. Phase 4: Advanced Features
+   - Complex relationship handling
+   - Target-based adjustments
+   - Pattern recognition
+   - Bulk operations 
+
+### Tax Workbook System Architecture
+
+#### Core Components
+```
+Tax Workbook System
+├── WorkbookManager/
+│   ├── Schedule6AManager/      # Core business expense tracking
+│   ├── DocumentManager/        # Form management and tracking
+│   ├── ProgressTracker/        # Completion status tracking
+│   └── ValidationEngine/       # Cross-form validation
+├── DocumentProcessor/
+│   ├── FormDetector/          # Identify form types
+│   ├── OCREngine/             # Extract form data
+│   ├── DataValidator/         # Validate extracted data
+│   └── StorageManager/        # Document storage
+├── CalculationEngine/
+│   ├── Schedule6ACalculator/  # Business expense calculations
+│   ├── CrossFormCalculator/   # Multi-form calculations
+│   ├── TaxImplicationEngine/  # Tax impact analysis
+│   └── SummaryGenerator/      # Final calculations
+└── ReportingEngine/
+    ├── ProgressReporter/      # Status reporting
+    ├── ValidationReporter/    # Error and warning reports
+    ├── CompletionChecker/     # Final review system
+    └── ExportManager/         # Final document export
+```
+
+#### Data Models
+```python
+class TaxWorkbook:
+    def __init__(self, tax_year: int, client_id: str):
+        self.tax_year = tax_year
+        self.client_id = client_id
+        self.sections = {}
+        self.documents = {}
+        self.progress = WorkbookProgress()
+        self.validation = ValidationStatus()
+
+class WorkbookSection:
+    def __init__(self, section_id: str):
+        self.id = section_id
+        self.required_docs = []
+        self.manual_entries = {}
+        self.calculations = {}
+        self.status = SectionStatus()
+        self.validation = SectionValidation()
+
+class TaxDocument:
+    def __init__(self, doc_type: str, file_path: str):
+        self.type = doc_type
+        self.file_path = file_path
+        self.extracted_data = {}
+        self.validation_status = {}
+        self.processing_status = ProcessingStatus()
+```
+
+#### Integration Points
+1. Document Processing
+   ```python
+   class DocumentProcessor:
+       def __init__(self):
+           self.ocr = OCREngine()
+           self.validator = DataValidator()
+           self.storage = StorageManager()
+           
+       async def process_document(self, document: TaxDocument):
+           # Detect form type
+           doc_type = self.detect_type(document)
+           
+           # Extract data
+           data = await self.ocr.extract_data(document)
+           
+           # Validate
+           validation = self.validator.validate(data, doc_type)
+           
+           # Store
+           self.storage.store(document, data, validation)
+           
+           return ProcessingResult(data, validation)
+   ```
+
+2. Progress Tracking
+   ```python
+   class ProgressTracker:
+       def __init__(self, workbook: TaxWorkbook):
+           self.workbook = workbook
+           self.checklist = Checklist()
+           self.validator = ValidationEngine()
+           
+       def update_status(self):
+           # Check document completeness
+           docs_status = self.check_required_docs()
+           
+           # Validate data
+           data_status = self.validator.validate_all()
+           
+           # Update progress
+           self.workbook.progress.update(docs_status, data_status)
+           
+           return CompletionStatus(docs_status, data_status)
+   ```
+
+3. Calculation Engine
+   ```python
+   class TaxCalculator:
+       def __init__(self, workbook: TaxWorkbook):
+           self.workbook = workbook
+           self.rules = TaxRules()
+           
+       def calculate_all(self):
+           # Process Schedule 6A
+           sched_6a = self.calculate_schedule_6a()
+           
+           # Process other forms
+           other_calcs = self.process_other_forms()
+           
+           # Generate summaries
+           summaries = self.generate_summaries()
+           
+           return CalculationResults(sched_6a, other_calcs, summaries)
+   ```
+
+### Key Technical Considerations
+
+1. Document Management
+   - Secure storage
+   - Version control
+   - Access tracking
+   - Backup system
+
+2. Data Extraction
+   - OCR accuracy
+   - Form recognition
+   - Data validation
+   - Error correction
+
+3. Progress Tracking
+   - Real-time updates
+   - Dependency tracking
+   - Validation status
+   - Completion criteria
+
+4. Security
+   - Document encryption
+   - Access control
+   - Audit logging
+   - Data retention
+
+### Implementation Strategy
+
+1. Phase 1: Core Schedule 6A Integration
+   - Link with transaction processing
+   - Basic progress tracking
+   - Simple document storage
+   - Essential calculations
+
+2. Phase 2: Document Management
+   - Document upload system
+   - Basic form recognition
+   - Manual data entry
+   - Storage system
+
+3. Phase 3: Advanced Processing
+   - OCR implementation
+   - Automated data extraction
+   - Cross-form validation
+   - Progress dashboard
+
+4. Phase 4: Complete System
+   - Full workbook tracking
+   - Advanced calculations
+   - Comprehensive validation
+   - Final review system 
+
+### QuickBooks Integration Architecture
+
+#### Core Components
+```
+QuickBooks Export System
+├── QBExportManager/
+│   ├── TransactionFormatter/   # Format transactions for QB
+│   ├── AccountMapper/         # Map categories to QB accounts
+│   ├── VendorManager/         # Handle QB vendor mapping
+│   └── ValidationEngine/      # QB-specific validation
+├── FileGenerator/
+│   ├── IIFGenerator/         # Generate .IIF file format
+│   ├── QBOGenerator/         # Generate .QBO format
+│   └── QBXMLGenerator/       # Generate QB XML format
+└── SyncEngine/
+    ├── MappingManager/       # Handle field mappings
+    ├── ConflictResolver/     # Handle duplicates/conflicts
+    └── AuditLogger/         # Track export operations
+```
+
+#### Data Models
+```python
+class QBExportConfig:
+    def __init__(self):
+        self.account_map = {}      # Map categories to QB accounts
+        self.vendor_map = {}       # Map payees to QB vendors
+        self.class_map = {}        # Map business contexts to QB classes
+        self.export_format = "IIF" # IIF, QBO, or QBXML
+
+class QBTransaction:
+    def __init__(self):
+        self.trns_type = ""       # TRNS types (CHECK, BILL, etc.)
+        self.date = None          # Transaction date
+        self.account = ""         # QB account name
+        self.amount = 0.0         # Transaction amount
+        self.payee = ""          # QB vendor name
+        self.memo = ""           # Transaction description
+        self.class_name = ""     # QB class for tracking
+        self.tax_line = ""       # Tax line mapping
+
+class QBExportResult:
+    def __init__(self):
+        self.success = False
+        self.file_path = ""
+        self.format = ""
+        self.summary = {}
+        self.errors = []
+```
+
+#### Integration Points
+1. Transaction Export
+   ```python
+   class QBExporter:
+       def __init__(self, config: QBExportConfig):
+           self.config = config
+           self.formatter = TransactionFormatter()
+           self.validator = ValidationEngine()
+           
+       def export_transactions(self, transactions: List[Transaction]) -> QBExportResult:
+           # Format transactions for QB
+           qb_transactions = self.formatter.format_for_qb(transactions)
+           
+           # Validate QB-specific requirements
+           validation = self.validator.validate_for_qb(qb_transactions)
+           
+           # Generate appropriate file format
+           if self.config.export_format == "IIF":
+               return self.generate_iif(qb_transactions)
+           elif self.config.export_format == "QBO":
+               return self.generate_qbo(qb_transactions)
+           else:
+               return self.generate_qbxml(qb_transactions)
+   ```
+
+2. Account Mapping
+   ```python
+   class AccountMapper:
+       def __init__(self, config: QBExportConfig):
+           self.config = config
+           self.default_accounts = load_default_accounts()
+           
+       def map_category_to_account(self, category: str, tax_category: str) -> str:
+           # Try exact match
+           if category in self.config.account_map:
+               return self.config.account_map[category]
+           
+           # Try tax category based mapping
+           if tax_category in self.default_accounts:
+               return self.default_accounts[tax_category]
+           
+           # Return default catch-all account
+           return "Ask My Accountant"
+   ```
+
+3. File Generation
+   ```python
+   class IIFGenerator:
+       def generate(self, transactions: List[QBTransaction]) -> str:
+           output = self.generate_header()
+           
+           for trans in transactions:
+               # Generate TRNS line
+               output += self.format_trns_line(trans)
+               
+               # Generate SPL line
+               output += self.format_spl_line(trans)
+               
+               # Generate ENDTRNS
+               output += "ENDTRNS\n"
+           
+           return output
+   ```
+
+### Key Technical Considerations
+
+1. Data Mapping
+   - Category to account mapping
+   - Payee to vendor mapping
+   - Business context to class mapping
+   - Tax line mapping
+
+2. File Format Support
+   - IIF (Intuit Interchange Format)
+   - QBO (Web Connect)
+   - QBXML (Integration API)
+
+3. Validation Rules
+   - Account name validation
+   - Transaction type rules
+   - Amount formatting
+   - Required fields
+
+4. Error Handling
+   - Invalid mappings
+   - Missing required data
+   - Format-specific constraints
+   - Duplicate detection
+
+### Implementation Strategy
+
+1. Phase 1: Basic Export
+   - IIF file generation
+   - Essential field mapping
+   - Basic validation
+   - Simple error handling
+
+2. Phase 2: Enhanced Mapping
+   - Account mapping UI
+   - Vendor synchronization
+   - Class mapping
+   - Tax line mapping
+
+3. Phase 3: Advanced Features
+   - Multiple format support
+   - Conflict resolution
+   - Batch export
+   - Error recovery
+
+4. Phase 4: Integration Features
+   - Direct QB connection
+   - Real-time sync
+   - Change tracking
+   - Audit logging 

@@ -1,9 +1,9 @@
 # Active Context
 
 ## Current Focus
-- Transaction processing system with three-pass approach
-- Implementation of caching system for transaction analysis
-- Error handling and progress tracking
+- Implementing and testing the multi-pass transaction classification system
+- Ensuring proper data population across all passes
+- Preparing for final Schedule 6A report generation
 
 ## Current State
 - Successfully implemented multi-client parser system
@@ -12,42 +12,70 @@
 - Implemented basic client configuration system
 
 ## Recent Changes
-1. Implemented comprehensive caching system:
-   - Persistent cache storage in JSON format
-   - Cache keys based on normalized transaction descriptions
-   - Separate caching for each processing pass (payee, category, classification)
-   - Clear logging of cache hits and misses
-   - Cache persistence between program runs
+- Enhanced transaction processing with smart caching strategy
+  - Only performs fresh lookups when fields are missing
+  - Preserves high-confidence cached data
+  - Merges new data with existing cache entries
+- Added business_description and general_category to PayeeResponse
+- Updated load_normalized_transactions to include all columns
+- Expanded Excel export with comprehensive column set
+- Fixed fuzz import to use thefuzz package
+- Pass 1 is now running with proper payee identification and caching
+- Modified transaction_classifier.py:
+  - Added stricter business rules
+  - Implemented confidence-based validation
+  - Fixed prompt template formatting
+  - Added documentation requirements
+  - Improved cache management
+- Database Updates:
+  - Purged category cache while preserving payee cache
+  - Reset Pass 2 status for reprocessing
+  - Maintained transaction_cache table structure with pass_type
 
-2. Enhanced error handling and progress tracking:
-   - Detailed error messages for each processing pass
-   - Progress saving after each pass
-   - Resume capability from any pass
-   - Clear logging of processing status
+## Next Steps
+1. Verify Pass 2 functionality
+   - Ensure business vs personal classification works correctly
+   - Check that business percentages are being assigned
+   - Verify business context is being populated
+   
+2. Verify Pass 3 functionality
+   - Confirm tax category assignments
+   - Check worksheet assignments
+   - Validate tax implications
 
-3. Improved transaction processing:
-   - Single transaction processing for better accuracy
-   - Proper validation of classification values
-   - Consistent output file organization
-   - Better error isolation
+3. Generate and validate Schedule 6A report
+   - Ensure all required columns are present
+   - Verify calculations and summaries
+   - Check formatting and readability
 
-4. Added new transaction status tracking system:
-   - Created `transaction_status` table in database
-   - Added status tracking for each pass (payee, category, classification)
-   - Implemented status management methods in `ClientDB`
-   - Updated `TransactionClassifier` to use status tracking
-   - Added color-coded status display to menu
+4. Pass 3 Enhancement Ideas:
+   - AI-driven business expense optimization
+   - Historical pattern analysis (6A guidelines)
+   - Smart distribution of business expenses
+   - Risk-aware adjustments
+   - Documentation generation
 
-5. Added new menu options:
-   - "View Transaction Status" - Shows progress with color coding
-   - "Force Process Transaction" - Allows bypassing dependencies
-   - "Reset Transaction Status" - Enables retrying specific passes
+5. Potential Features:
+   - Chatbot interface for rule generation
+   - Pattern-based expense distribution
+   - Category-specific confidence thresholds
+   - Audit risk assessment
+   - Documentation requirement tracking
 
-6. Improved dependency management:
-   - Pass 2 requires Pass 1 completion
-   - Pass 3 requires Pass 2 completion
-   - Added force processing option
-   - Clear status indicators for dependencies
+## Current Issues/Challenges
+- Need to verify that Pass 2 and 3 handle the expanded dataset correctly
+- Need to ensure all passes maintain data consistency
+- Need to validate final report format matches requirements
+
+## Dependencies
+- Pass 1 must complete successfully before running Pass 2
+- Pass 2 must complete successfully before running Pass 3
+- All passes must complete before generating final report
+
+## Notes
+- Currently monitoring Pass 1 execution with new caching strategy
+- Will need to carefully review Pass 2 and 3 outputs for data quality
+- Final report generation will need thorough validation
 
 ## Current CLI Structure
 1. Legacy System (scripts/grok.py):
@@ -238,3 +266,203 @@ python -m dataextractai.cli.main categories generate <client_name>
 - Working on `feature/db-transaction-tracking`
 - Changes committed and pushed to GitHub
 - Ready for testing 
+
+## Future Enhancements
+
+### Web Application
+1. Transaction Management Interface
+   - Real-time transaction viewing and editing
+   - Status monitoring dashboard
+   - Batch processing controls
+   - Progress tracking visualization
+
+2. Processing Controls
+   - Ability to trigger reprocessing of transactions
+   - Fine-grained control over which passes to run
+   - Force processing options
+   - Batch operation capabilities
+
+### Intelligent Chatbot Assistant
+1. Context-Aware Features
+   - Full access to client profile and context
+   - Historical transaction awareness
+   - Understanding of business rules
+   - Knowledge of tax implications
+
+2. Natural Language Processing
+   - Relationship understanding (e.g., identifying spouses, business partners)
+   - Transaction pattern recognition
+   - Rule-based modifications
+   - Global change capabilities
+
+3. Smart Adjustments
+   - Target-based modifications (e.g., adjusting expense categories to meet targets)
+   - Confidence-based filtering
+   - Bulk updates with reasoning
+   - Audit trail for changes
+
+4. Integration Points
+   - MCP interface for database updates
+   - API access for transaction modifications
+   - Real-time data validation
+   - Change tracking and versioning
+
+### Implementation Priorities
+1. Core Web App
+   - Basic CRUD operations
+   - Authentication system
+   - Real-time status updates
+   - Basic reporting
+
+2. Enhanced Processing
+   - Web-based reprocessing
+   - Progress monitoring
+   - Error handling
+   - Batch operations
+
+3. Chatbot Integration
+   - Basic query capabilities
+   - Context understanding
+   - Simple updates
+   - Audit logging
+
+4. Advanced Features
+   - Complex relationship handling
+   - Target-based adjustments
+   - Pattern recognition
+   - Bulk operations 
+
+### Tax Workbook Management
+1. Comprehensive Workbook Tracking
+   - Schedule 6A (Core)
+     * Transaction categorization and summaries
+     * Business expense tracking
+     * Tax implications calculation
+   - Document Management
+     * W-2 form attachments
+     * 1099 form tracking (all types)
+     * Supporting documentation upload
+   - Manual Entry Sections
+     * Additional income sources
+     * Non-transaction deductions
+     * Special calculations
+
+2. Workbook Progress Dashboard
+   - Section-by-section completion status
+   - Required document checklist
+   - Missing information alerts
+   - Validation warnings
+   - Cross-reference checks
+
+3. Document Processing
+   - OCR for form data extraction
+   - Automatic form type detection
+   - Data validation against IRS rules
+   - Cross-form data consistency checks
+
+4. Completion Tracking
+   - Per-section progress tracking
+   - Required vs optional fields
+   - Data validation status
+   - Supporting document status
+   - Final review checklist
+
+### Implementation Priorities
+1. Core Schedule 6A (Current Focus)
+   - Transaction processing
+   - Business expense categorization
+   - Tax category mapping
+   - Summary calculations
+
+2. Document Management
+   - Document upload system
+   - Form type detection
+   - Basic data extraction
+   - Storage and organization
+
+3. Progress Tracking
+   - Section completion status
+   - Document checklist
+   - Missing data alerts
+   - Validation system
+
+4. Advanced Features
+   - OCR data extraction
+   - Cross-form validation
+   - Auto-calculations
+   - Year-over-year comparison 
+
+### QuickBooks Integration
+1. Export Capabilities
+   - IIF file generation for desktop QB
+   - QBO format for QB Online
+   - QBXML for direct integration
+   - Batch export support
+
+2. Data Mapping
+   - Category to QB account mapping
+   - Payee to vendor mapping
+   - Business context to class mapping
+   - Tax line mapping
+   - Default mappings management
+
+3. Validation & Verification
+   - Account name validation
+   - Required field checking
+   - Amount format validation
+   - Duplicate detection
+   - Error reporting
+
+4. Integration Features
+   - Account list synchronization
+   - Vendor list management
+   - Class list management
+   - Change tracking
+   - Audit logging
+
+### Implementation Priorities
+1. Basic QB Export (Phase 1)
+   - IIF file generation
+   - Basic field mapping
+   - Essential validation
+   - Simple error handling
+
+2. Enhanced Mapping (Phase 2)
+   - Account mapping interface
+   - Vendor synchronization
+   - Class mapping system
+   - Tax line mapping
+
+3. Advanced Features (Phase 3)
+   - Multiple format support
+   - Conflict resolution
+   - Batch processing
+   - Error recovery
+
+4. Direct Integration (Phase 4)
+   - QB API integration
+   - Real-time sync
+   - Change tracking
+   - Audit system 
+
+## Current Task
+Implemented stricter IRS-compliant business expense classification with:
+- Default to personal (0% business) unless clear justification
+- Confidence levels (high/medium/low) for review
+- Documentation requirements in notes field
+- Special handling for typically personal categories
+- Cache management per pass type
+
+## Technical Decisions
+1. Moved business logic validation to Pass 2
+2. Separated cache by pass_type
+3. Enhanced prompt engineering for IRS compliance
+4. Added confidence-based downgrades
+5. Implemented documentation tracking
+
+## Current Status
+- Pass 2 running with stricter rules
+- Default-to-personal working as intended
+- Confidence levels properly assigned
+- Documentation requirements captured
+- Cache management improved 
