@@ -58,35 +58,27 @@ class VendorInfo(TypedDict):
     relevance_score: int
 
 
-def lookup_vendor_info(vendor_name: str, max_results: int = 5) -> List[VendorInfo]:
+def lookup_vendor_info(
+    vendor_name: str,
+    max_results: int = 5,
+    industry_keywords: Dict[str, int] = None,
+    location_abbreviations: Dict[str, str] = None,
+    search_query: str = None,
+) -> List[VendorInfo]:
     """
     Look up information about a business/vendor using the Brave Search API.
-
-    Note on Rate Limits:
-        The free plan is limited to 1 request per second.
-        If you need to make multiple lookups, add a 1-second delay between calls.
 
     Args:
         vendor_name: The name of the vendor/business to look up
         max_results: Maximum number of results to return (default: 5, max: 20)
+        industry_keywords: Optional dictionary of industry-specific keywords and their scores
+            e.g. {"real estate": 3, "property": 2}
+        location_abbreviations: Optional dictionary mapping location abbreviations to full names
+            e.g. {"ABQ": "Albuquerque", "NYC": "New York City"}
+        search_query: Optional custom search query. If not provided, will use vendor_name
 
     Returns:
         List of VendorInfo dictionaries, sorted by relevance score (highest first).
-        Each dictionary contains:
-            - title: The business title
-            - url: The business website URL
-            - description: Business description (if available)
-            - last_updated: When the information was last updated (if available)
-            - relevance_score: How relevant the result is to the search
-
-    Raises:
-        ValueError: If BRAVE_API_KEY is missing or max_results is invalid
-        RuntimeError: If the API request fails (including rate limit errors)
-
-    Example:
-        >>> results = lookup_vendor_info("Apple Inc", max_results=3)
-        >>> for result in results:
-        ...     print(f"{result['title']}: {result['relevance_score']}")
     """
     brave_api_key = os.getenv("BRAVE_API_KEY")
     if not brave_api_key:
@@ -95,8 +87,25 @@ def lookup_vendor_info(vendor_name: str, max_results: int = 5) -> List[VendorInf
     if not 1 <= max_results <= 20:
         raise ValueError("max_results must be between 1 and 20")
 
-    # Add business-focused keywords to improve results
-    search_query = f"{vendor_name} business company information"
+    # Use default location abbreviations if none provided
+    location_abbreviations = location_abbreviations or {
+        "ABQ": "Albuquerque",
+        "NYC": "New York City",
+        "LA": "Los Angeles",
+        "SF": "San Francisco",
+        "PHX": "Phoenix",
+    }
+
+    # Clean vendor name and extract location
+    vendor_parts = vendor_name.split()
+    location = None
+    if len(vendor_parts) > 1:
+        possible_abbrev = vendor_parts[-1].upper()
+        if possible_abbrev in location_abbreviations:
+            location = location_abbreviations[possible_abbrev]
+
+    # Use provided search query or just vendor name
+    query = search_query if search_query else vendor_name
 
     url = "https://api.search.brave.com/res/v1/web/search"
     headers = {
@@ -105,9 +114,9 @@ def lookup_vendor_info(vendor_name: str, max_results: int = 5) -> List[VendorInf
         "X-Subscription-Token": brave_api_key,
     }
     params = {
-        "q": search_query,
+        "q": query,
         "count": max_results,
-        "text_format": "html",  # Get formatted text for better parsing
+        "text_format": "html",
     }
 
     try:
@@ -131,45 +140,41 @@ def lookup_vendor_info(vendor_name: str, max_results: int = 5) -> List[VendorInf
     if "web" in results and "results" in results["web"]:
         for result in results["web"]["results"]:
             relevance_score = 0
+            title = result["title"]
+            description = result.get("description", "")
+            url = result["url"]
 
-            # Business indicators for scoring
-            business_keywords = [
-                "inc",
-                "llc",
-                "ltd",
-                "corporation",
-                "company",
-                "corp",
-                "business",
-                "official site",
-                "official website",
-                "store",
-                "shop",
-            ]
+            # Exact match bonus
+            if vendor_name.lower() == title.lower():
+                relevance_score += 10
 
-            title_lower = result["title"].lower()
-            desc_lower = result.get("description", "").lower()
+            # Domain name match
+            domain = url.lower().split("//")[-1].split("/")[0]
+            vendor_domain = vendor_name.lower().replace(" ", "")
+            if vendor_domain in domain:
+                relevance_score += 8
 
-            # Score based on vendor name match
-            if vendor_name.lower() in title_lower:
-                relevance_score += 3
-            if vendor_name.lower() in desc_lower:
-                relevance_score += 2
+            # Partial name match in title
+            if vendor_name.lower() in title.lower():
+                relevance_score += 5
 
-            # Score based on business keywords
-            for keyword in business_keywords:
-                if keyword in title_lower:
-                    relevance_score += 2
-                if keyword in desc_lower:
-                    relevance_score += 1
+            # Location match
+            if location:
+                if location.lower() in (title + description + url).lower():
+                    relevance_score += 4
+
+            # Industry-specific keyword scoring
+            if industry_keywords:
+                content = (title + " " + description).lower()
+                for keyword, score in industry_keywords.items():
+                    if keyword.lower() in content:
+                        relevance_score += score
 
             if relevance_score > 0:
                 vendor_info: VendorInfo = {
-                    "title": result["title"],
-                    "url": result["url"],
-                    "description": result.get("description", "")
-                    .replace("\n", " ")
-                    .strip(),
+                    "title": title,
+                    "url": url,
+                    "description": description.replace("\n", " ").strip(),
                     "last_updated": result.get("age"),
                     "relevance_score": relevance_score,
                 }
