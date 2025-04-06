@@ -453,8 +453,9 @@ class TransactionClassifier:
                                     expense_type = "business"
                                 elif business_percentage == 0:
                                     expense_type = "personal"
-                                elif business_percentage > 0:
-                                    expense_type = "mixed"
+                                else:
+                                    # For mixed use (partial business), treat as business with percentage
+                                    expense_type = "business"
 
                             # Extract business context
                             context_match = re.search(
@@ -1211,36 +1212,37 @@ Payee: {payee}"""
         if general_category:
             transaction_context += f"\nGeneral Category from Pass 1: {general_category}"
 
-        # Create the prompt based on model type
-        if self.model_type == "fast":
-            prompt = f"""Analyze this transaction and determine:
+        # Add IRS compliance rules
+        irs_rules = """
+IRS Compliance Rules:
+1. Fast food and restaurant meals are personal expenses unless clear business purpose documented
+2. Real estate photography and marketing are always business advertising expenses
+3. Mixed-use expenses must have documented business purpose and percentage
+4. Personal items cannot be classified as business expenses
+5. Default to personal expense if business purpose is not clearly documented
 
-{transaction_context}
+Special Rules for Real Estate:
+1. Photography and virtual tours are Advertising expenses
+2. Marketing materials and services are Advertising expenses
+3. Property staging and presentation costs are Advertising expenses
+4. Documentation must show direct relation to property marketing"""
 
-Available Categories:
-{', '.join(available_categories)}
+        # Create the prompt
+        prompt = f"""{transaction_context}
 
-Respond with a JSON object containing:
-1. category: The most appropriate category from the list
-2. expense_type: "business", "personal", or "mixed"
-3. business_percentage: 0-100 (100 for business, 0 for personal, or percentage for mixed)
-4. notes: Brief explanation of the categorization"""
-        else:
-            prompt = f"""Analyze this transaction in detail:
-
-{transaction_context}
-
-Business Context:
-{self.business_context}
+{irs_rules}
 
 Available Categories:
 {', '.join(available_categories)}
 
 Respond with a JSON object containing:
 1. category: The most appropriate category from the list
-2. expense_type: "business", "personal", or "mixed"
-3. business_percentage: 0-100 (100 for business, 0 for personal, or percentage for mixed)
-4. notes: Brief explanation of the categorization
+2. expense_type: "business" or "personal" (use "business" for mixed-use with appropriate percentage)
+3. business_percentage: 0-100 (100 for fully business, 0 for personal, or appropriate percentage for mixed-use)
+4. notes: Brief explanation including:
+   - Business purpose (if any)
+   - IRS compliance justification
+   - Documentation requirements
 5. confidence: "high", "medium", or "low"
 6. detailed_context: Detailed business context and reasoning"""
 
@@ -1256,29 +1258,121 @@ Respond with a JSON object containing:
         general_category: str = None,
         force_process: bool = False,
     ) -> CategoryResponse:
-        """Get category for a transaction.
-
-        Args:
-            transaction_description: The raw transaction description
-            amount: The transaction amount
-            date: The transaction date
-            payee: The identified payee name (optional)
-            business_description: Description of the payee's business (optional)
-            general_category: General business category (optional)
-            force_process: Whether to bypass cache and force processing
-
-        Returns:
-            CategoryResponse object containing the categorization details
-        """
+        """Get category information for a transaction."""
         try:
-            # Check cache first
-            cache_key = self._get_cache_key(transaction_description)
+            # Check cache
+            cache_key = self._get_cache_key(
+                transaction_description, payee, general_category
+            )
             if not force_process:
                 cached_result = self._get_cached_result(cache_key, "category")
                 if cached_result:
                     return CategoryResponse(**cached_result)
 
-            # Build the prompt
+            # Load client profile and patterns
+            profile = self.profile_manager._load_profile()
+            if not profile:
+                logger.error("No client profile found")
+                raise ValueError("Client profile not found")
+
+            # Get category patterns and industry keywords
+            category_patterns = profile.get("category_patterns", {})
+            industry_keywords = profile.get("industry_keywords", {})
+
+            # First check for matches in category patterns
+            for category, patterns in category_patterns.items():
+                # Check in transaction description
+                if any(
+                    pattern.lower() in transaction_description.lower()
+                    for pattern in patterns
+                ):
+                    return CategoryResponse(
+                        category=category,
+                        expense_type="business",
+                        business_percentage=100,
+                        confidence="high",
+                        notes=f"Matched category pattern for {category}. This is a standard business expense.",
+                        detailed_context=f"Transaction matches known patterns for {category} expenses in the client's business profile.",
+                    )
+
+                # Check in business description if available
+                if business_description and any(
+                    pattern.lower() in business_description.lower()
+                    for pattern in patterns
+                ):
+                    return CategoryResponse(
+                        category=category,
+                        expense_type="business",
+                        business_percentage=100,
+                        confidence="high",
+                        notes=f"Business description matches pattern for {category}. This is a standard business expense.",
+                        detailed_context=f"Business description matches known patterns for {category} expenses.",
+                    )
+
+            # Check for personal expense patterns
+            personal_patterns = [
+                "fast food",
+                "fastfood",
+                "restaurant",
+                "dining",
+                "grocery",
+                "supermarket",
+                "clothing",
+                "personal",
+            ]
+            if any(
+                pattern in transaction_description.lower()
+                for pattern in personal_patterns
+            ):
+                return CategoryResponse(
+                    category="Personal Expense",
+                    expense_type="personal",
+                    business_percentage=0,
+                    confidence="high",
+                    notes="Transaction matches known personal expense patterns.",
+                    detailed_context="This type of transaction is typically personal unless specific business purpose is documented.",
+                )
+
+            # Use industry keywords to determine business relevance
+            business_relevance = 0
+            relevant_keywords = []
+            desc_lower = (
+                transaction_description + " " + (business_description or "")
+            ).lower()
+
+            for keyword, confidence in industry_keywords.items():
+                if keyword.lower() in desc_lower:
+                    business_relevance += float(confidence)
+                    relevant_keywords.append(keyword)
+
+            # If strong business relevance found
+            if business_relevance > 0.8 and relevant_keywords:
+                # Determine most appropriate category based on keywords
+                if any(
+                    kw in ["photography", "virtual tour", "marketing", "advertising"]
+                    for kw in relevant_keywords
+                ):
+                    return CategoryResponse(
+                        category="Advertising",
+                        expense_type="business",
+                        business_percentage=100,
+                        confidence="high",
+                        notes=f"Matches business marketing/advertising patterns: {', '.join(relevant_keywords)}",
+                        detailed_context="Marketing and advertising expenses for real estate business.",
+                    )
+                elif any(
+                    kw in ["mls", "subscription", "dues"] for kw in relevant_keywords
+                ):
+                    return CategoryResponse(
+                        category="Dues and Subscriptions",
+                        expense_type="business",
+                        business_percentage=100,
+                        confidence="high",
+                        notes=f"Professional subscription/dues: {', '.join(relevant_keywords)}",
+                        detailed_context="Professional memberships and subscriptions necessary for business.",
+                    )
+
+            # Build the prompt for AI categorization as last resort
             prompt = self._build_category_prompt(
                 transaction_description,
                 payee or "Unknown",
@@ -1286,19 +1380,14 @@ Respond with a JSON object containing:
                 general_category,
             )
 
-            # Add specific rules for real estate business expenses
-            prompt += """
-Special Rules for Real Estate Business Expenses:
-1. Photography and marketing services for real estate properties are business expenses
-2. Virtual tour services and 3D scanning are business marketing expenses
-3. Professional photography for property listings is an advertising expense
-4. Property marketing materials and services are business expenses
-5. Real estate photography appointments are business expenses
-
-For photography/marketing services:
-- If related to real estate properties: Classify as business expense (Advertising)
-- If clearly personal photography: Classify as personal expense
-- If unclear: Request documentation of business purpose
+            # Add client-specific context from profile
+            prompt += f"""
+Client Business Context:
+Business Type: {profile.get('business_type', '')}
+Business Description: {profile.get('business_description', '')}
+Industry Keywords: {json.dumps(industry_keywords, indent=2)}
+Category Patterns: {json.dumps(category_patterns, indent=2)}
+Industry Insights: {profile.get('industry_insights', '')}
 """
 
             # Get response from LLM
@@ -1316,29 +1405,6 @@ For photography/marketing services:
 
             result = json.loads(response.choices[0].message.content)
 
-            # Add specific handling for photography/marketing services
-            if business_description and any(
-                kw in business_description.lower()
-                for kw in [
-                    "photography",
-                    "photo",
-                    "virtual tour",
-                    "3d tour",
-                    "marketing",
-                ]
-            ):
-                if "real estate" in business_description.lower():
-                    result.update(
-                        {
-                            "category": "Advertising",
-                            "expense_type": "business",
-                            "business_percentage": 100,
-                            "confidence": "high",
-                            "notes": "Real estate photography and marketing services are classified as business advertising expenses as they directly relate to property marketing and promotion.",
-                            "detailed_context": "Professional photography and marketing services for real estate properties are essential business expenses for property promotion and marketing.",
-                        }
-                    )
-
             # Create CategoryResponse object and cache
             category_response = CategoryResponse(**result)
             self._cache_result(cache_key, "category", category_response.__dict__)
@@ -1350,57 +1416,66 @@ For photography/marketing services:
             raise
 
     def _validate_category_response(self, category_info: CategoryResponse) -> bool:
-        """Validate category response with stricter business rules."""
-        # Special handling for real estate marketing expenses
-        if (
-            category_info.business_description
-            and any(
-                kw in category_info.business_description.lower()
-                for kw in [
-                    "photography",
-                    "photo",
-                    "virtual tour",
-                    "3d tour",
-                    "marketing",
-                ]
-            )
-            and "real estate" in category_info.business_description.lower()
-        ):
-            # Override any previous classification
-            category_info.expense_type = "business"
-            category_info.business_percentage = 100
-            category_info.category = "Advertising"
-            category_info.category_confidence = "high"
-            category_info.notes = "Real estate photography and marketing services are essential business expenses."
+        """Validate and potentially override category response based on business rules."""
+        # Load client profile
+        profile = self.db.load_profile(self.client_name)
+        if not profile:
+            logger.warning(f"No profile found for client {self.client_name}")
             return True
 
-        # Regular validation rules
-        if (
-            category_info.expense_type == "business"
-            and category_info.category_confidence != "high"
-        ):
-            # Downgrade to personal if not high confidence
-            category_info.expense_type = "personal"
-            category_info.business_percentage = 0
-            category_info.notes += (
-                " [Downgraded to personal due to insufficient confidence]"
-            )
+        # Get patterns from profile
+        personal_patterns = profile.get("personal_patterns", [])
+        category_patterns = profile.get("category_patterns", {})
+        industry_keywords = profile.get("industry_keywords", {})
 
-        if category_info.business_percentage > 0:
-            # List of categories that are typically personal
-            personal_categories = [
-                "Groceries",
-                "Restaurants",
-                "Retail",
-                "Entertainment",
-            ]
-            if (
-                category_info.category in personal_categories
-                and category_info.category_confidence != "high"
+        desc_lower = ""
+        if hasattr(category_info, "description"):
+            desc_lower = str(category_info.description or "").lower()
+        if hasattr(category_info, "business_description"):
+            desc_lower += " " + str(category_info.business_description or "").lower()
+
+        # Calculate business relevance from industry keywords
+        business_relevance = 0
+        relevant_keywords = []
+        for keyword, confidence in industry_keywords.items():
+            if keyword.lower() in desc_lower:
+                business_relevance += float(confidence)
+                relevant_keywords.append(keyword)
+
+        # Validate and potentially override categorization
+        if (
+            personal_patterns
+            and any(pattern.lower() in desc_lower for pattern in personal_patterns)
+            and business_relevance < 0.8
+        ):
+            # Override to personal unless there's strong business evidence
+            if not (
+                category_info.notes
+                and "business purpose documented" in category_info.notes.lower()
             ):
-                category_info.business_percentage = 0
                 category_info.expense_type = "personal"
-                category_info.notes += " [Downgraded to personal due to category type]"
+                category_info.business_percentage = 0
+                category_info.confidence = "high"
+                category_info.notes = "Defaulted to personal expense - matches personal expense patterns and no clear business purpose documented."
+                return True
+
+        # Check against category patterns from profile
+        for category, patterns in category_patterns.items():
+            if any(pattern.lower() in desc_lower for pattern in patterns):
+                category_info.category = category
+                category_info.expense_type = "business"
+                category_info.business_percentage = 100
+                category_info.confidence = "high"
+                category_info.notes = f"Category adjusted based on client profile pattern match for {category}."
+                return True
+
+        # If high business relevance but no specific category matched
+        if business_relevance > 0.8:
+            category_info.expense_type = "business"
+            category_info.business_percentage = 100
+            category_info.confidence = "high"
+            category_info.notes = f"Classified as business expense due to high relevance of industry keywords: {', '.join(relevant_keywords)}"
+            return True
 
         return True
 

@@ -287,14 +287,23 @@ def list_transactions(client_name: str):
 
         # Display transactions in a clean format
         click.echo("\nTransactions:")
-        click.echo("=" * 100)
+        click.echo("=" * 150)
 
         # Header format
-        header = "{:<5} {:<12} {:<12} {:<30} {:<15} {:<20}".format(
-            "ID", "Date", "Amount", "Description", "Payee", "Category"
+        header = "{:<5} {:<12} {:<12} {:<30} {:<15} {:<20} {:<8} {:<15} {:<15} {:<10}".format(
+            "ID",
+            "Date",
+            "Amount",
+            "Description",
+            "Payee",
+            "Category",
+            "Bus %",
+            "Tax Cat",
+            "Class",
+            "Status",
         )
         click.echo(header)
-        click.echo("-" * 100)
+        click.echo("-" * 150)
 
         # Get status information for color coding
         status_info = {}
@@ -349,7 +358,7 @@ def list_transactions(client_name: str):
             color = status_colors.get(worst_status, "white")
 
             # Format row data
-            row_str = "{:<5} {:<12} {:<12} {:<30} {:<15} {:<20}".format(
+            row_str = "{:<5} {:<12} {:<12} {:<30} {:<15} {:<20} {:<8} {:<15} {:<15} {:<10}".format(
                 row["transaction_id"],
                 row["transaction_date"],
                 format_amount(row["amount"]),
@@ -359,15 +368,19 @@ def list_transactions(client_name: str):
                     else str(row["description"])
                 ),
                 (
-                    (row.get("payee", "N/A")[:12] + "...")
-                    if len(str(row.get("payee", "N/A"))) > 15
-                    else str(row.get("payee", "N/A"))
+                    (row.get("payee", "Unclassified")[:12] + "...")
+                    if len(str(row.get("payee", "Unclassified"))) > 15
+                    else str(row.get("payee", "Unclassified"))
                 ),
                 (
-                    (row.get("category", "N/A")[:17] + "...")
-                    if len(str(row.get("category", "N/A"))) > 20
-                    else str(row.get("category", "N/A"))
+                    (row.get("category", "Unclassified")[:17] + "...")
+                    if len(str(row.get("category", "Unclassified"))) > 20
+                    else str(row.get("category", "Unclassified"))
                 ),
+                f"{row.get('business_percentage', 'N/A')}%",
+                str(row.get("tax_category", "N/A")),
+                str(row.get("classification", "N/A")),
+                worst_status,
             )
 
             click.echo(click.style(row_str, fg=color))
@@ -378,6 +391,88 @@ def list_transactions(client_name: str):
         click.echo("\nStatus Colors:")
         for status, color in status_colors.items():
             click.echo(click.style(f"  {status}", fg=color))
+
+        # Option to view detailed information for a specific transaction
+        if questionary.confirm(
+            "\nWould you like to view detailed information for a specific transaction?"
+        ).ask():
+            while True:
+                transaction_id = questionary.text(
+                    "Enter transaction ID (or leave empty to finish):"
+                ).ask()
+                if not transaction_id:
+                    break
+
+                # Get full transaction details
+                transaction = filtered_df[
+                    filtered_df["transaction_id"] == transaction_id
+                ]
+                if not transaction.empty:
+                    click.echo("\nDetailed Transaction Information:")
+                    click.echo("=" * 80)
+
+                    # Basic Information
+                    click.echo("\nBasic Information:")
+                    click.echo(f"ID: {transaction_id}")
+                    click.echo(f"Date: {transaction.iloc[0]['transaction_date']}")
+                    click.echo(
+                        f"Amount: {format_amount(transaction.iloc[0]['amount'])}"
+                    )
+                    click.echo(f"Description: {transaction.iloc[0]['description']}")
+
+                    # Pass 1 - Payee Information
+                    click.echo("\nPayee Information (Pass 1):")
+                    click.echo(f"Payee: {transaction.iloc[0].get('payee', 'N/A')}")
+                    click.echo(
+                        f"Confidence: {transaction.iloc[0].get('payee_confidence', 'N/A')}"
+                    )
+                    click.echo(
+                        f"Reasoning: {transaction.iloc[0].get('payee_reasoning', 'N/A')}"
+                    )
+
+                    # Pass 2 - Category Information
+                    click.echo("\nCategory Information (Pass 2):")
+                    click.echo(
+                        f"Category: {transaction.iloc[0].get('category', 'N/A')}"
+                    )
+                    click.echo(
+                        f"Confidence: {transaction.iloc[0].get('category_confidence', 'N/A')}"
+                    )
+                    click.echo(
+                        f"Reasoning: {transaction.iloc[0].get('category_reasoning', 'N/A')}"
+                    )
+
+                    # Pass 3 - Classification Information
+                    click.echo("\nClassification Information (Pass 3):")
+                    click.echo(
+                        f"Classification: {transaction.iloc[0].get('classification', 'N/A')}"
+                    )
+                    click.echo(
+                        f"Business %: {transaction.iloc[0].get('business_percentage', 'N/A')}%"
+                    )
+                    click.echo(
+                        f"Tax Category: {transaction.iloc[0].get('tax_category', 'N/A')}"
+                    )
+                    click.echo(
+                        f"Tax Implications: {transaction.iloc[0].get('tax_implications', 'N/A')}"
+                    )
+                    click.echo(
+                        f"Confidence: {transaction.iloc[0].get('classification_confidence', 'N/A')}"
+                    )
+                    click.echo(
+                        f"Reasoning: {transaction.iloc[0].get('classification_reasoning', 'N/A')}"
+                    )
+
+                    # Processing Status
+                    status = status_info.get(transaction_id, {})
+                    click.echo("\nProcessing Status:")
+                    click.echo(f"Pass 1 (Payee): {status.get('pass_1', 'N/A')}")
+                    click.echo(f"Pass 2 (Category): {status.get('pass_2', 'N/A')}")
+                    click.echo(
+                        f"Pass 3 (Classification): {status.get('pass_3', 'N/A')}"
+                    )
+                else:
+                    click.echo("Transaction not found.")
 
     except Exception as e:
         click.echo(f"Error listing transactions: {e}")
