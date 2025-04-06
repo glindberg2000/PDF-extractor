@@ -24,19 +24,27 @@ class ExcelReportFormatter:
         # Define columns to show/hide
         self.visible_columns = [
             # Transaction Info
+            "transaction_id",
             "transaction_date",
             "description",
+            "amount",
             "normalized_amount",
+            "source",
             # Payee Info (Pass 1)
             "payee",
             "payee_confidence",
-            "business_description",
-            "general_category",
-            # Business Info (Pass 2)
+            "payee_reasoning",
+            # Category Info (Pass 2)
+            "category",
+            "category_confidence",
+            "category_reasoning",
             "expense_type",
             "business_percentage",
             "business_context",
             # Tax Info (Pass 3)
+            "classification",
+            "classification_confidence",
+            "classification_reasoning",
             "tax_category",
             "tax_subcategory",
             "worksheet",
@@ -94,9 +102,9 @@ class ExcelReportFormatter:
         # Get categories from business profile
         categories = self._get_business_categories(client_name)
         classifications = [
-            "Personal",
             "Business",
-            "Mixed Use",
+            "Personal",
+            "Unclassified",
         ]  # Default classifications
 
         # Create workbook
@@ -134,7 +142,7 @@ class ExcelReportFormatter:
 
         # Get column letters for validation
         try:
-            category_col = get_column_letter(all_columns.index("base_category") + 1)
+            category_col = get_column_letter(all_columns.index("category") + 1)
             class_col = get_column_letter(all_columns.index("classification") + 1)
 
             # Add validation to category column
@@ -166,6 +174,7 @@ class ExcelReportFormatter:
             "Total Amount",
             "Transaction Count",
             "Average Amount",
+            "Business %",
         ]
         for col, header in enumerate(summary_headers, 1):
             cell = summary.cell(row=1, column=col, value=header)
@@ -176,7 +185,10 @@ class ExcelReportFormatter:
         # Get column letters for summary calculations
         try:
             amount_col = get_column_letter(all_columns.index("normalized_amount") + 1)
-            category_col = get_column_letter(all_columns.index("base_category") + 1)
+            category_col = get_column_letter(all_columns.index("category") + 1)
+            business_pct_col = get_column_letter(
+                all_columns.index("business_percentage") + 1
+            )
             last_row = len(data) + 1
 
             # Write category rows with formulas
@@ -200,6 +212,12 @@ class ExcelReportFormatter:
                     '"$"#,##0.00'
                 )
 
+                # Average Business % (AVERAGEIF)
+                biz_pct_formula = f'=AVERAGEIF(Transactions!{category_col}2:{category_col}{last_row},"{category}",Transactions!{business_pct_col}2:{business_pct_col}{last_row})'
+                summary.cell(row=row, column=5, value=biz_pct_formula).number_format = (
+                    "0.00%"
+                )
+
             # Add totals row
             total_row = len(categories) + 2
             summary.cell(row=total_row, column=1, value="Total").font = Font(bold=True)
@@ -214,6 +232,11 @@ class ExcelReportFormatter:
                 column=4,
                 value=f"=IF(C{total_row}>0,B{total_row}/C{total_row},0)",
             ).number_format = '"$"#,##0.00'
+            summary.cell(
+                row=total_row,
+                column=5,
+                value=f"=AVERAGE(E2:E{total_row-1})",
+            ).number_format = "0.00%"
 
             # Create pie chart
             pie = PieChart()
@@ -258,6 +281,9 @@ class ExcelReportFormatter:
                     "Total Amount",
                     "Transaction Count",
                     "Average Amount",
+                    "Average Business %",
+                    "Worksheet",
+                    "Line Number",
                 ]
                 for col, header in enumerate(tax_headers, 1):
                     cell = tax_summary.cell(row=1, column=col, value=header)
@@ -270,6 +296,13 @@ class ExcelReportFormatter:
                     all_columns.index("normalized_amount") + 1
                 )
                 tax_col = get_column_letter(all_columns.index("tax_category") + 1)
+                business_pct_col = get_column_letter(
+                    all_columns.index("business_percentage") + 1
+                )
+                worksheet_col = get_column_letter(all_columns.index("worksheet") + 1)
+                line_number_col = get_column_letter(
+                    all_columns.index("tax_worksheet_line_number") + 1
+                )
                 class_col = get_column_letter(all_columns.index("classification") + 1)
                 last_row = len(data) + 1
 
@@ -307,6 +340,20 @@ class ExcelReportFormatter:
                         row=row, column=4, value=avg_formula
                     ).number_format = '"$"#,##0.00'
 
+                    # Average Business % (AVERAGEIF)
+                    biz_pct_formula = f'=AVERAGEIF(Transactions!{tax_col}2:{tax_col}{last_row},"{category}",Transactions!{business_pct_col}2:{business_pct_col}{last_row})'
+                    tax_summary.cell(
+                        row=row, column=5, value=biz_pct_formula
+                    ).number_format = "0.00%"
+
+                    # Most common worksheet (MODE)
+                    worksheet_formula = f'=MODE(IF(Transactions!{tax_col}2:{tax_col}{last_row}="{category}",Transactions!{worksheet_col}2:{worksheet_col}{last_row},""))'
+                    tax_summary.cell(row=row, column=6, value=worksheet_formula)
+
+                    # Most common line number (MODE)
+                    line_formula = f'=MODE(IF(Transactions!{tax_col}2:{tax_col}{last_row}="{category}",Transactions!{line_number_col}2:{line_number_col}{last_row},""))'
+                    tax_summary.cell(row=row, column=7, value=line_formula)
+
                 # Add totals row
                 total_row = len(tax_categories) + 2
                 tax_summary.cell(row=total_row, column=1, value="Total").font = Font(
@@ -323,6 +370,9 @@ class ExcelReportFormatter:
                     column=4,
                     value=f"=IF(C{total_row}>0,B{total_row}/C{total_row},0)",
                 ).number_format = '"$"#,##0.00'
+                tax_summary.cell(
+                    row=total_row, column=5, value=f"=AVERAGE(E2:E{total_row-1})"
+                ).number_format = "0.00%"
 
                 # Create pie chart for tax categories
                 pie = PieChart()
@@ -340,7 +390,7 @@ class ExcelReportFormatter:
                 pie.set_categories(labels_ref)
 
                 # Add chart to worksheet
-                tax_summary.add_chart(pie, "F2")
+                tax_summary.add_chart(pie, "I2")
 
                 # Format tax summary sheet
                 max_col = len(tax_headers)
