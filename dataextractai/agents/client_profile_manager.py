@@ -83,6 +83,14 @@ class ClientProfileManager:
             "Other expenses",
         ]
 
+        # First generate industry keywords
+        industry_keywords = self._generate_industry_keywords(
+            profile_data["business_type"], profile_data["business_description"]
+        )
+
+        # Log the generated keywords for debugging
+        logger.debug(f"Generated industry keywords: {industry_keywords}")
+
         prompt = f"""As a business analysis expert, analyze this business profile focusing strictly on IRS Schedule 6A expense categories.
 
 Business Type: {profile_data['business_type']}
@@ -128,17 +136,85 @@ Return the response as a JSON object with the following structure:
 
         enhanced_profile = json.loads(response.choices[0].message.content)
 
-        # Merge with original profile data
-        enhanced_profile.update(
-            {
-                "business_type": profile_data["business_type"],
-                "business_description": profile_data["business_description"],
-                "custom_categories": profile_data["custom_categories"],
-                "schedule_6a_categories": SCHEDULE_6A_CATEGORIES,  # Include fixed list for reference
-            }
+        # Create final profile with all components including keywords
+        final_profile = {
+            "business_type": profile_data["business_type"],
+            "business_description": profile_data["business_description"],
+            "custom_categories": profile_data["custom_categories"],
+            "schedule_6a_categories": SCHEDULE_6A_CATEGORIES,  # Include fixed list for reference
+            "industry_keywords": industry_keywords,  # Add generated keywords
+            "category_patterns": enhanced_profile.get("category_patterns", {}),
+            "industry_insights": enhanced_profile.get("industry_insights", ""),
+            "business_context": enhanced_profile.get("business_context", ""),
+            "category_mapping": enhanced_profile.get("category_mapping", {}),
+            "last_updated": datetime.utcnow().isoformat() + "Z",
+        }
+
+        # Log the final profile for debugging
+        logger.debug(
+            f"Final profile with keywords: {final_profile.get('industry_keywords', {})}"
         )
 
-        return enhanced_profile
+        return final_profile
+
+    def _generate_industry_keywords(
+        self, business_type: str, business_description: str
+    ) -> Dict[str, float]:
+        """Generate industry-specific keywords and their weights based on business type and description."""
+        prompt = f"""Analyze this business profile and generate a comprehensive list of industry-specific keywords with their importance weights.
+
+Business Type: {business_type}
+Description: {business_description}
+
+Rules:
+1. Generate at least 15-20 relevant keywords
+2. Include terms from these categories:
+   - Core services and products
+   - Industry terminology
+   - Business processes
+   - Customer interactions
+   - Market-specific terms
+   - Location-specific terms if relevant
+3. Weight scale:
+   0.95 = Essential to business identity/core offering
+   0.90 = Primary business activities
+   0.85 = Common business elements
+   0.80 = Supporting activities/terms
+   0.75 = Related concepts/context
+
+Return a JSON object mapping keywords to their weights. Each weight should be between 0.75 and 0.95.
+The keywords should be highly specific to this business type and description."""
+
+        try:
+            response = self.client.chat.completions.create(
+                model=OPENAI_MODEL_PRECISE,
+                response_format={"type": "json_object"},
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a business analysis expert that specializes in identifying industry-specific terminology and business patterns. Generate comprehensive, specific keywords that reflect all aspects of the given business type.",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+            )
+
+            result = json.loads(response.choices[0].message.content)
+
+            # Validate weights are in correct range
+            validated_keywords = {
+                k: float(v)
+                for k, v in result.items()
+                if isinstance(v, (int, float)) and 0.75 <= float(v) <= 0.95
+            }
+
+            logger.info(
+                f"Generated {len(validated_keywords)} industry keywords for {self.client_name}"
+            )
+            return validated_keywords
+
+        except Exception as e:
+            logger.error(f"Error generating industry keywords: {e}")
+            return {}
 
     def _merge_profiles(self, existing: Dict, enhanced: Dict) -> Dict:
         """Merge existing profile with enhanced profile, preserving important custom data."""
@@ -151,12 +227,20 @@ Return the response as a JSON object with the following structure:
                 "business_description": enhanced["business_description"],
                 "custom_categories": enhanced["custom_categories"],
                 "schedule_6a_categories": enhanced["schedule_6a_categories"],
+                "industry_keywords": enhanced.get(
+                    "industry_keywords", {}
+                ),  # Add industry keywords
                 "category_patterns": enhanced.get("category_patterns", {}),
                 "industry_insights": enhanced["industry_insights"],
                 "business_context": enhanced["business_context"],
                 "category_mapping": enhanced.get("category_mapping", {}),
                 "last_updated": enhanced["last_updated"],
             }
+        )
+
+        # Log the merged profile for debugging
+        logger.debug(
+            f"Merged profile with keywords: {merged.get('industry_keywords', {})}"
         )
 
         return merged
@@ -183,16 +267,25 @@ Return the response as a JSON object with the following structure:
     def _save_profile(self, profile: Dict) -> None:
         """Save the client's business profile to both DB and file."""
         try:
+            logger.debug(f"Starting to save profile for {self.client_name}")
+            logger.debug(f"Profile data: {json.dumps(profile, indent=2)}")
+
             # Save to DB
+            logger.debug("Saving to database...")
             self.db.save_profile(self.client_name, profile)
+            logger.debug("Successfully saved to database")
 
             # Save to file as backup
+            logger.debug(f"Saving to file: {self.profile_file}")
             os.makedirs(os.path.dirname(self.profile_file), exist_ok=True)
             with open(self.profile_file, "w") as f:
                 json.dump(profile, f, indent=2)
+            logger.debug("Successfully saved to file")
+
             logger.info(f"Saved business profile for {self.client_name}")
         except Exception as e:
             logger.error(f"Error saving profile: {e}")
+            logger.exception("Full traceback:")
 
     def generate_categorization_prompt(self) -> str:
         """Generate a prompt for transaction categorization based on the business profile."""

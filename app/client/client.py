@@ -15,6 +15,7 @@ class ClientConfig:
     employee_count: Optional[int] = None
     business_activities: List[str] = field(default_factory=list)
     typical_expenses: List[str] = field(default_factory=list)
+    industry_keywords: dict = field(default_factory=dict)  # Maps keywords to weights
     last_updated: datetime = field(default_factory=lambda: datetime.now())
 
     def to_dict(self):
@@ -29,6 +30,7 @@ class ClientConfig:
                 "employee_count": self.employee_count,
                 "business_activities": self.business_activities,
                 "typical_expenses": self.typical_expenses,
+                "industry_keywords": self.industry_keywords,
             },
             "last_updated": self.last_updated.strftime("%Y-%m-%d %H:%M:%S"),
         }
@@ -46,6 +48,7 @@ class ClientConfig:
             employee_count=business_details.get("employee_count"),
             business_activities=business_details.get("business_activities", []),
             typical_expenses=business_details.get("typical_expenses", []),
+            industry_keywords=business_details.get("industry_keywords", {}),
             last_updated=datetime.strptime(
                 data.get("last_updated", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
                 "%Y-%m-%d %H:%M:%S",

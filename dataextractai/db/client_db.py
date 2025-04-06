@@ -43,8 +43,8 @@ class ClientDB:
                     business_type TEXT,
                     business_description TEXT,
                     custom_categories JSON,
-                    ai_generated_categories JSON,
-                    common_patterns JSON,
+                    industry_keywords JSON,
+                    category_patterns JSON,
                     industry_insights TEXT,
                     category_hierarchy JSON,
                     business_context TEXT,
@@ -287,39 +287,77 @@ class ClientDB:
 
     def save_profile(self, client_name: str, profile: Dict) -> None:
         """Save business profile to database."""
+        logger.debug(f"Starting database save for client: {client_name}")
         client_id = self.get_client_id(client_name)
+        logger.debug(f"Got client_id: {client_id}")
 
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute(
-                """
-                INSERT OR REPLACE INTO business_profiles (
-                    client_id,
-                    business_type,
-                    business_description,
-                    custom_categories,
-                    ai_generated_categories,
-                    common_patterns,
-                    industry_insights,
-                    category_hierarchy,
-                    business_context,
-                    profile_data,
-                    updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                """,
-                (
-                    client_id,
-                    profile.get("business_type"),
-                    profile.get("business_description"),
-                    json.dumps(profile.get("custom_categories", [])),
-                    json.dumps(profile.get("ai_generated_categories", [])),
-                    json.dumps(profile.get("common_patterns", [])),
-                    profile.get("industry_insights"),
-                    json.dumps(profile.get("category_hierarchy", {})),
-                    profile.get("business_context"),
-                    json.dumps(profile),  # Store full profile as backup
-                ),
-            )
-            logger.info(f"Saved profile for client {client_name} to database")
+        # Log the profile data for debugging
+        logger.debug(
+            f"Saving profile with industry_keywords: {profile.get('industry_keywords', {})}"
+        )
+
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                logger.debug("Connected to database")
+                cursor = conn.execute(
+                    """
+                    INSERT OR REPLACE INTO business_profiles (
+                        client_id,
+                        business_type,
+                        business_description,
+                        custom_categories,
+                        industry_keywords,
+                        category_patterns,
+                        industry_insights,
+                        category_hierarchy,
+                        business_context,
+                        profile_data,
+                        updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    """,
+                    (
+                        client_id,
+                        profile.get("business_type"),
+                        profile.get("business_description"),
+                        json.dumps(profile.get("custom_categories", [])),
+                        json.dumps(profile.get("industry_keywords", {})),
+                        json.dumps(profile.get("category_patterns", {})),
+                        profile.get("industry_insights"),
+                        json.dumps(profile.get("category_hierarchy", {})),
+                        profile.get("business_context"),
+                        json.dumps(profile),  # Store full profile as backup
+                    ),
+                )
+                logger.debug("Executed INSERT OR REPLACE")
+
+                # Verify the save
+                cursor = conn.execute(
+                    """
+                    SELECT industry_keywords, business_type, business_description
+                    FROM business_profiles
+                    WHERE client_id = ?
+                    """,
+                    (client_id,),
+                )
+                result = cursor.fetchone()
+                if result:
+                    logger.debug(
+                        f"Verified save - found profile with business_type: {result[1]}"
+                    )
+                    if result[0]:  # industry_keywords
+                        saved_keywords = json.loads(result[0])
+                        logger.debug(
+                            f"Verified saved industry_keywords: {saved_keywords}"
+                        )
+                    else:
+                        logger.warning("No industry_keywords found after save!")
+                else:
+                    logger.error("Failed to find profile after save!")
+
+                logger.info(f"Saved profile for client {client_name} to database")
+        except Exception as e:
+            logger.error(f"Database error saving profile: {str(e)}")
+            logger.exception("Full traceback:")
 
     def load_profile(self, client_name: str) -> Optional[Dict]:
         """Load business profile from database."""
@@ -327,13 +365,46 @@ class ClientDB:
 
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute(
-                "SELECT profile_data FROM business_profiles WHERE client_id = ?",
+                """
+                SELECT 
+                    business_type,
+                    business_description,
+                    custom_categories,
+                    industry_keywords,
+                    category_patterns,
+                    industry_insights,
+                    category_hierarchy,
+                    business_context,
+                    profile_data
+                FROM business_profiles 
+                WHERE client_id = ?
+                """,
                 (client_id,),
             )
             result = cursor.fetchone()
 
-            if result and result[0]:
-                return json.loads(result[0])
+            if result:
+                # Load the full profile from profile_data
+                profile = json.loads(result[8]) if result[8] else {}
+
+                # Update with the latest values from individual columns
+                profile.update(
+                    {
+                        "business_type": result[0],
+                        "business_description": result[1],
+                        "custom_categories": json.loads(result[2]) if result[2] else [],
+                        "industry_keywords": json.loads(result[3]) if result[3] else {},
+                        "category_patterns": json.loads(result[4]) if result[4] else {},
+                        "industry_insights": result[5],
+                        "category_hierarchy": (
+                            json.loads(result[6]) if result[6] else {}
+                        ),
+                        "business_context": result[7],
+                    }
+                )
+
+                return profile
+
             return None
 
     def save_normalized_transactions(
@@ -627,6 +698,10 @@ class ClientDB:
             status_data: Dictionary of status data to update
         """
         try:
+            client_id = status_data.get("client_id")
+            if not client_id:
+                raise ValueError("client_id is required in status_data")
+
             with sqlite3.connect(self.db_path) as conn:
                 # Convert status data to column updates
                 updates = []
@@ -642,14 +717,21 @@ class ClientDB:
                 query = f"""
                     UPDATE transaction_status 
                     SET {', '.join(updates)}
-                    WHERE transaction_id = ?
+                    WHERE client_id = ? AND transaction_id = ?
                 """
-                values.append(transaction_id)
+                values.extend([client_id, transaction_id])
 
                 conn.execute(query, values)
 
                 # If no row was updated, we need to insert
                 if conn.total_changes == 0:
+                    # Initialize status fields if not provided
+                    for pass_num in range(1, 4):
+                        if f"pass_{pass_num}_status" not in status_data:
+                            status_data[f"pass_{pass_num}_status"] = "pending"
+                            status_data[f"pass_{pass_num}_error"] = None
+                            status_data[f"pass_{pass_num}_processed_at"] = None
+
                     # Prepare columns and values for insert
                     columns = list(status_data.keys()) + ["transaction_id"]
                     placeholders = ["?"] * len(columns)
@@ -667,32 +749,56 @@ class ClientDB:
             logger.error(f"Database error updating transaction status: {str(e)}")
             raise
 
-    def get_transaction_status(self, transaction_id: str) -> Optional[Dict[str, Any]]:
-        """Get the status of a transaction's processing.
+    def get_transaction_status(
+        self, client_name: str, transaction_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Get status of a transaction.
 
         Args:
-            transaction_id: The transaction ID to get status for
+            client_name: Name of the client
+            transaction_id: ID of the transaction
 
         Returns:
-            Dictionary of status data or None if not found
+            Dictionary containing status information for each pass, or None if not found
         """
         try:
+            client_id = self.get_client_id(client_name)
             with sqlite3.connect(self.db_path) as conn:
-                conn.row_factory = sqlite3.Row
                 cursor = conn.execute(
                     """
-                    SELECT *
+                    SELECT 
+                        pass_1_status, pass_1_error, pass_1_processed_at,
+                        pass_2_status, pass_2_error, pass_2_processed_at,
+                        pass_3_status, pass_3_error, pass_3_processed_at
                     FROM transaction_status
-                    WHERE transaction_id = ?
+                    WHERE client_id = ? AND transaction_id = ?
                     """,
-                    (transaction_id,),
+                    (client_id, transaction_id),
                 )
                 row = cursor.fetchone()
-                return dict(row) if row else None
+                if not row:
+                    return None
 
-        except sqlite3.Error as e:
-            logger.error(f"Database error getting transaction status: {str(e)}")
-            raise
+                return {
+                    "pass_1": {
+                        "status": row[0],
+                        "error": row[1],
+                        "processed_at": row[2],
+                    },
+                    "pass_2": {
+                        "status": row[3],
+                        "error": row[4],
+                        "processed_at": row[5],
+                    },
+                    "pass_3": {
+                        "status": row[6],
+                        "error": row[7],
+                        "processed_at": row[8],
+                    },
+                }
+        except Exception as e:
+            logger.error(f"Error getting transaction status: {e}")
+            return None
 
     def add_client_category(
         self,
@@ -864,44 +970,49 @@ class ClientDB:
             return dict(row) if row else None
 
     def reset_transaction_status(
-        self, transaction_id: str, pass_number: Optional[int] = None
+        self, client_name: str, transaction_id: str, pass_number: Optional[int] = None
     ) -> None:
-        """Reset the processing status for a transaction.
-
-        If pass_number is provided, only reset that pass and subsequent passes.
-        If pass_number is None, reset all passes.
-        """
-        if pass_number is None:
+        """Reset transaction status to pending."""
+        try:
+            client_id = self.get_client_id(client_name)
             with sqlite3.connect(self.db_path) as conn:
-                conn.execute(
-                    """
-                    DELETE FROM transaction_status
-                    WHERE transaction_id = ?
-                """,
-                    (transaction_id,),
-                )
-        else:
-            # Build update query based on pass number
-            updates = []
-            for p in range(
-                pass_number, 4
-            ):  # Update current pass and all subsequent passes
-                updates.extend(
-                    [
-                        f"pass_{p}_complete = 0",
-                        f"pass_{p}_error = NULL",
-                        f"pass_{p}_completed_at = NULL",
-                    ]
-                )
-
-            query = f"""
-                UPDATE transaction_status
-                SET {", ".join(updates)}, updated_at = CURRENT_TIMESTAMP
-                WHERE transaction_id = ?
-            """
-            with sqlite3.connect(self.db_path) as conn:
-                conn.execute(query, (transaction_id,))
-                conn.commit()
+                if pass_number:
+                    # Reset specific pass
+                    conn.execute(
+                        f"""
+                        UPDATE transaction_status 
+                        SET 
+                            pass_{pass_number}_status = 'pending',
+                            pass_{pass_number}_error = NULL,
+                            pass_{pass_number}_processed_at = NULL,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE client_id = ? AND transaction_id = ?
+                        """,
+                        (client_id, transaction_id),
+                    )
+                else:
+                    # Reset all passes
+                    conn.execute(
+                        """
+                        UPDATE transaction_status 
+                        SET 
+                            pass_1_status = 'pending',
+                            pass_1_error = NULL,
+                            pass_1_processed_at = NULL,
+                            pass_2_status = 'pending',
+                            pass_2_error = NULL,
+                            pass_2_processed_at = NULL,
+                            pass_3_status = 'pending',
+                            pass_3_error = NULL,
+                            pass_3_processed_at = NULL,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE client_id = ? AND transaction_id = ?
+                        """,
+                        (client_id, transaction_id),
+                    )
+        except Exception as e:
+            logger.error(f"Error resetting transaction status: {e}")
+            raise
 
     def update_transaction_classification(
         self, transaction_id: str, classification_data: Dict[str, Any]

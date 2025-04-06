@@ -443,116 +443,7 @@ def start_menu():
 
         if action == "Create/Update Business Profile":
             try:
-                # Initialize profile manager
-                profile_manager = ClientProfileManager(client_name)
-
-                # Check if profile needs migration
-                db = ClientDB()
-                existing_profile = db.load_profile(client_name)
-
-                # Force migration of old profiles
-                if existing_profile:
-                    needs_migration = False
-
-                    # Check category mappings
-                    category_mapping = existing_profile.get("category_mapping", {})
-                    for category, mapped_to in category_mapping.items():
-                        if mapped_to != "Other expenses":
-                            needs_migration = True
-                            break
-
-                    # Check for old format indicators
-                    if (
-                        "ai_generated_categories" in existing_profile
-                        or "category_hierarchy" in existing_profile
-                        or "supplementary_categories" in existing_profile
-                        or any(
-                            len(patterns) > 3
-                            for patterns in existing_profile.get(
-                                "category_patterns", {}
-                            ).values()
-                        )  # Too many specific patterns
-                    ):
-                        needs_migration = True
-
-                    if needs_migration:
-                        click.echo(
-                            "\nYour profile needs to be migrated to strictly follow 6A worksheet categories."
-                        )
-                        click.echo("This will:")
-                        click.echo("1. Move ALL custom categories under Other expenses")
-                        click.echo(
-                            "2. Simplify category patterns to match 6A structure"
-                        )
-                        click.echo("3. Remove any non-6A structures\n")
-
-                        if not questionary.confirm(
-                            "Would you like to migrate now?"
-                        ).ask():
-                            click.echo(
-                                "Profile must be migrated before continuing. Operation cancelled."
-                            )
-                            continue
-
-                        profile_manager.migrate_existing_profile()
-                        click.echo("Profile successfully migrated to 6A format.")
-                        continue
-
-                # Try to load existing profile from database
-                existing_profile = db.load_profile(client_name)
-
-                # Use existing values as defaults
-                default_business_type = (
-                    existing_profile.get("business_type", "")
-                    if existing_profile
-                    else ""
-                )
-                default_description = (
-                    existing_profile.get("business_description", "")
-                    if existing_profile
-                    else ""
-                )
-                default_categories = (
-                    existing_profile.get("custom_categories", [])
-                    if existing_profile
-                    else []
-                )
-
-                # Get new values
-                business_type = questionary.text(
-                    "Business Type:", default=default_business_type
-                ).ask()
-                business_description = questionary.text(
-                    "Business Description:", default=default_description
-                ).ask()
-
-                # Handle categories
-                categories = []
-                if default_categories:
-                    click.echo("\nExisting Categories:")
-                    for cat in default_categories:
-                        click.echo(f"- {cat}")
-                    keep_categories = questionary.confirm(
-                        "Keep existing categories?"
-                    ).ask()
-                    if keep_categories:
-                        categories = default_categories
-
-                while questionary.confirm("Add a category?").ask():
-                    category = questionary.text("Enter category:").ask()
-                    if category:
-                        categories.append(category)
-
-                # Create or update profile with AI enhancement
-                profile = profile_manager.create_or_update_profile(
-                    business_type=business_type,
-                    business_description=business_description,
-                    custom_categories=categories,
-                )
-
-                click.echo("Business profile saved successfully.")
-                click.echo(f"Profile saved to: {profile_manager.profile_file}")
-
+                create_or_update_profile(client_name)
             except Exception as e:
                 click.echo(f"Error updating business profile: {e}")
 
@@ -637,8 +528,15 @@ def start_menu():
                         default=str(len(transactions_df)),
                     ).ask()
                     try:
-                        start_row = max(0, int(start_row) - 1)  # Convert to 0-based
-                        end_row = min(len(transactions_df), int(end_row))
+                        start_row = int(start_row)
+                        end_row = int(end_row)
+                        if (
+                            start_row < 1
+                            or end_row > len(transactions_df)
+                            or start_row > end_row
+                        ):
+                            click.echo("Invalid row range")
+                            continue
                     except ValueError:
                         click.echo("Invalid row numbers")
                         continue
@@ -646,9 +544,20 @@ def start_menu():
                 # Process transactions based on action
                 if "Process All" in action:
                     # Process all passes
-                    result_df = classifier.process_transactions(
-                        transactions_df, start_row=start_row, end_row=end_row
-                    )
+                    classifier.process_transactions(transactions_df, force_process=True)
+                elif "Row Range" in action:
+                    # Process each row in the range
+                    for row_num in range(start_row, end_row + 1):
+                        click.echo(f"\nProcessing row {row_num} of {end_row}...")
+                        try:
+                            classifier.process_single_row(
+                                transactions_df, row_num, force_process=True
+                            )
+                        except Exception as e:
+                            click.echo(f"Error processing row {row_num}: {str(e)}")
+                            if not questionary.confirm("Continue with next row?").ask():
+                                break
+                    click.echo("\nRow range processing complete!")
                 elif action.startswith("Pass "):
                     # Extract pass number and process specific pass
                     pass_num = int(action[5:6])  # "Pass 1", "Pass 2", "Pass 3"
@@ -1498,6 +1407,367 @@ def get_filtered_transactions(db, client_name, filter_type):
                 break
             transaction_ids.append(transaction_id)
         return db.load_transactions_by_ids(client_name, transaction_ids)
+
+
+def manage_categories(
+    existing_categories: List[str], profile_manager: ClientProfileManager
+) -> List[str]:
+    """Manage custom categories with options to add, edit, or delete."""
+    categories = existing_categories.copy()
+
+    # Get current mappings and keywords from profile
+    profile = profile_manager._load_profile()
+    category_mapping = profile.get("category_mapping", {}) if profile else {}
+    industry_keywords = profile.get("industry_keywords", {}) if profile else {}
+
+    while True:
+        action = questionary.select(
+            "Profile Management:",
+            choices=[
+                "View Categories and 6A Mappings",
+                "Add Custom Category",
+                "Edit Custom Category",
+                "Delete Custom Category",
+                "Manage Industry Keywords",
+                "Done",
+            ],
+        ).ask()
+
+        if action == "Done":
+            return categories
+
+        elif action == "Manage Industry Keywords":
+            while True:
+                keyword_action = questionary.select(
+                    "Industry Keywords Management:",
+                    choices=[
+                        "View Keywords",
+                        "Add Keyword",
+                        "Edit Keyword",
+                        "Delete Keyword",
+                        "Regenerate All Keywords",
+                        "Back",
+                    ],
+                ).ask()
+
+                if keyword_action == "Back":
+                    break
+
+                elif keyword_action == "View Keywords":
+                    if not industry_keywords:
+                        click.echo("No industry keywords defined.")
+                    else:
+                        click.echo("\nIndustry Keywords and Weights:")
+                        # Sort by weight descending
+                        sorted_keywords = sorted(
+                            industry_keywords.items(), key=lambda x: x[1], reverse=True
+                        )
+                        for keyword, weight in sorted_keywords:
+                            click.echo(f"- {keyword}: {weight:.2f}")
+
+                elif keyword_action == "Add Keyword":
+                    new_keyword = questionary.text("Enter new keyword:").ask()
+                    if new_keyword and new_keyword not in industry_keywords:
+                        weight = questionary.select(
+                            "Select keyword weight:",
+                            choices=[
+                                "0.95 - Essential to business identity",
+                                "0.90 - Primary business activity",
+                                "0.85 - Common business element",
+                                "0.80 - Supporting activity",
+                                "0.75 - Related concept",
+                            ],
+                        ).ask()
+                        weight_value = float(weight.split(" - ")[0])
+                        industry_keywords[new_keyword] = weight_value
+                        click.echo(
+                            f"Added keyword: {new_keyword} with weight {weight_value}"
+                        )
+
+                elif keyword_action == "Edit Keyword":
+                    if not industry_keywords:
+                        click.echo("No keywords to edit.")
+                        continue
+                    keyword_to_edit = questionary.select(
+                        "Select keyword to edit:",
+                        choices=list(industry_keywords.keys()) + ["Cancel"],
+                    ).ask()
+                    if keyword_to_edit != "Cancel":
+                        edit_what = questionary.checkbox(
+                            "What would you like to edit?",
+                            choices=["Keyword Text", "Weight"],
+                        ).ask()
+
+                        if "Keyword Text" in edit_what:
+                            new_text = questionary.text(
+                                "Enter new text:", default=keyword_to_edit
+                            ).ask()
+                            if new_text:
+                                weight = industry_keywords.pop(keyword_to_edit)
+                                industry_keywords[new_text] = weight
+                                click.echo(
+                                    f"Updated keyword text: {keyword_to_edit} -> {new_text}"
+                                )
+
+                        if "Weight" in edit_what:
+                            current_weight = industry_keywords[keyword_to_edit]
+                            new_weight = questionary.select(
+                                f"Select new weight for '{keyword_to_edit}' (currently: {current_weight}):",
+                                choices=[
+                                    "0.95 - Essential to business identity",
+                                    "0.90 - Primary business activity",
+                                    "0.85 - Common business element",
+                                    "0.80 - Supporting activity",
+                                    "0.75 - Related concept",
+                                ],
+                            ).ask()
+                            weight_value = float(new_weight.split(" - ")[0])
+                            industry_keywords[keyword_to_edit] = weight_value
+                            click.echo(
+                                f"Updated weight for {keyword_to_edit}: {weight_value}"
+                            )
+
+                elif keyword_action == "Delete Keyword":
+                    if not industry_keywords:
+                        click.echo("No keywords to delete.")
+                        continue
+                    keyword_to_delete = questionary.select(
+                        "Select keyword to delete:",
+                        choices=list(industry_keywords.keys()) + ["Cancel"],
+                    ).ask()
+                    if keyword_to_delete != "Cancel":
+                        del industry_keywords[keyword_to_delete]
+                        click.echo(f"Deleted keyword: {keyword_to_delete}")
+
+                elif keyword_action == "Regenerate All Keywords":
+                    if questionary.confirm(
+                        "This will replace all existing keywords. Continue?"
+                    ).ask():
+                        # Get business type and description from profile
+                        business_type = profile.get("business_type", "")
+                        business_description = profile.get("business_description", "")
+                        if business_type and business_description:
+                            industry_keywords = (
+                                profile_manager._generate_industry_keywords(
+                                    business_type, business_description
+                                )
+                            )
+                            click.echo("Keywords regenerated successfully.")
+                        else:
+                            click.echo(
+                                "Error: Business type and description required to regenerate keywords."
+                            )
+
+                # Update profile with new keywords
+                if profile:
+                    profile["industry_keywords"] = industry_keywords
+                    profile_manager._save_profile(profile)
+
+        elif action == "View Categories and 6A Mappings":
+            if not categories:
+                click.echo("No custom categories defined.")
+            else:
+                click.echo("\nCustom Categories and their Schedule 6A Mappings:")
+                for i, cat in enumerate(categories, 1):
+                    mapped_to = category_mapping.get(cat, "Not mapped")
+                    click.echo(f"{i}. {cat} -> Maps to: {mapped_to}")
+
+        elif action == "Add Custom Category":
+            # First show available 6A categories
+            click.echo("\nAvailable Schedule 6A Categories:")
+            schedule_6a = [
+                "Advertising",
+                "Car and truck expenses",
+                "Commissions and fees",
+                "Contract labor",
+                "Depletion",
+                "Employee benefit programs",
+                "Insurance (other than health)",
+                "Interest (mortgage/other)",
+                "Legal and professional services",
+                "Office expenses",
+                "Pension and profit-sharing plans",
+                "Rent or lease (vehicles/equipment/other)",
+                "Repairs and maintenance",
+                "Supplies",
+                "Taxes and licenses",
+                "Travel, meals, and entertainment",
+                "Utilities",
+                "Wages",
+                "Other expenses",
+            ]
+            for cat in schedule_6a:
+                click.echo(f"- {cat}")
+
+            new_cat = questionary.text("Enter new custom category:").ask()
+            if new_cat and new_cat not in categories:
+                # Select which 6A category this maps to
+                mapped_to = questionary.select(
+                    f"Which Schedule 6A category should '{new_cat}' map to?",
+                    choices=schedule_6a,
+                ).ask()
+
+                categories.append(new_cat)
+                category_mapping[new_cat] = mapped_to
+                click.echo(f"Added category: {new_cat} -> Maps to: {mapped_to}")
+
+        elif action == "Edit Custom Category":
+            if not categories:
+                click.echo("No categories to edit.")
+                continue
+            cat_to_edit = questionary.select(
+                "Select category to edit:", choices=categories + ["Cancel"]
+            ).ask()
+            if cat_to_edit != "Cancel":
+                # Allow editing name and/or mapping
+                edit_what = questionary.checkbox(
+                    "What would you like to edit?",
+                    choices=["Category Name", "6A Mapping"],
+                ).ask()
+
+                if "Category Name" in edit_what:
+                    new_name = questionary.text(
+                        "Enter new name:", default=cat_to_edit
+                    ).ask()
+                    if new_name:
+                        idx = categories.index(cat_to_edit)
+                        categories[idx] = new_name
+                        # Update mapping
+                        if cat_to_edit in category_mapping:
+                            category_mapping[new_name] = category_mapping.pop(
+                                cat_to_edit
+                            )
+                        click.echo(
+                            f"Updated category name: {cat_to_edit} -> {new_name}"
+                        )
+
+                if "6A Mapping" in edit_what:
+                    current_mapping = category_mapping.get(cat_to_edit, "Not mapped")
+                    new_mapping = questionary.select(
+                        f"Select new Schedule 6A mapping for '{cat_to_edit}' (currently: {current_mapping}):",
+                        choices=schedule_6a,
+                    ).ask()
+                    category_mapping[cat_to_edit] = new_mapping
+                    click.echo(f"Updated mapping: {cat_to_edit} -> {new_mapping}")
+
+        elif action == "Delete Custom Category":
+            if not categories:
+                click.echo("No categories to delete.")
+                continue
+            cat_to_delete = questionary.select(
+                "Select category to delete:", choices=categories + ["Cancel"]
+            ).ask()
+            if cat_to_delete != "Cancel":
+                categories.remove(cat_to_delete)
+                # Remove from mapping
+                if cat_to_delete in category_mapping:
+                    del category_mapping[cat_to_delete]
+                click.echo(f"Deleted category: {cat_to_delete}")
+
+    # Update profile with new mappings
+    if profile:
+        profile["category_mapping"] = category_mapping
+        profile_manager._save_profile(profile)
+
+    return categories
+
+
+def create_or_update_profile(client_name: str):
+    """Create or update a business profile."""
+    try:
+        # Initialize profile manager
+        profile_manager = ClientProfileManager(client_name)
+
+        # Load existing profile
+        existing_profile = profile_manager._load_profile()
+
+        # Use existing values as defaults
+        default_business_type = (
+            existing_profile.get("business_type", "") if existing_profile else ""
+        )
+        default_description = (
+            existing_profile.get("business_description", "") if existing_profile else ""
+        )
+        default_categories = (
+            existing_profile.get("custom_categories", []) if existing_profile else []
+        )
+
+        # Get new values with defaults
+        business_type = questionary.text(
+            f"Business Type (current: {default_business_type or 'Not set'}):",
+            default=default_business_type,
+        ).ask()
+
+        business_description = questionary.text(
+            f"Business Description (current: {default_description or 'Not set'}):",
+            default=default_description,
+        ).ask()
+
+        # Handle categories using the new management function
+        click.echo("\nCustom Categories Management")
+        click.echo("These are sub-categories that map to Schedule 6A categories.")
+        categories = manage_categories(default_categories, profile_manager)
+
+        # Check if anything has changed
+        has_changes = (
+            business_type != default_business_type
+            or business_description != default_description
+            or sorted(categories) != sorted(default_categories)
+        )
+
+        if has_changes:
+            # Create or update profile with AI enhancement
+            click.echo("\nChanges detected. Regenerating AI-enhanced profile...")
+            profile = profile_manager.create_or_update_profile(
+                business_type=business_type,
+                business_description=business_description,
+                custom_categories=categories,
+            )
+        else:
+            click.echo("\nNo changes detected. Using existing profile...")
+            profile = existing_profile
+
+        # Show the enhanced profile
+        click.echo("\nProfile Details:")
+        click.echo(f"Business Type: {profile['business_type']}")
+        click.echo(f"Description: {profile['business_description']}")
+        click.echo("\nCustom Categories and their Schedule 6A Mappings:")
+        for cat in profile["custom_categories"]:
+            mapped_to = profile.get("category_mapping", {}).get(cat, "Not mapped")
+            click.echo(f"- {cat} -> Maps to: {mapped_to}")
+
+        # Display industry keywords with weights
+        click.echo("\nIndustry Keywords:")
+        industry_keywords = profile.get("industry_keywords", {})
+        if industry_keywords:
+            # Sort by weight descending
+            sorted_keywords = sorted(
+                industry_keywords.items(), key=lambda x: x[1], reverse=True
+            )
+            for keyword, weight in sorted_keywords:
+                click.echo(f"- {keyword}: {weight:.2f}")
+
+            # Offer to edit keywords if they exist
+            if questionary.confirm(
+                "\nWould you like to edit the industry keywords?"
+            ).ask():
+                profile = (
+                    profile_manager._load_profile()
+                )  # Reload to ensure we have latest
+                categories = manage_categories(
+                    profile.get("custom_categories", []), profile_manager
+                )
+                # No need to regenerate AI profile here since we're just editing keywords
+        else:
+            click.echo("No industry keywords generated")
+
+        click.echo("\nIndustry Insights:")
+        click.echo(profile.get("industry_insights", ""))
+        click.echo("\nBusiness Context:")
+        click.echo(profile.get("business_context", ""))
+
+    except Exception as e:
+        click.echo(f"Error updating business profile: {e}")
 
 
 if __name__ == "__main__":
