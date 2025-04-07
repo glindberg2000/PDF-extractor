@@ -549,7 +549,7 @@ class TransactionClassifier:
                     existing = self.db.get_transaction_classification(
                         transaction["transaction_id"]
                     )
-                    if not existing or not existing.get("base_category"):
+                    if not existing or not existing.get("category"):
                         logger.warning(
                             f"[Row {row_number}] ⚠ No category found from pass 2, skipping pass 3"
                         )
@@ -573,7 +573,7 @@ class TransactionClassifier:
                         cache_key = self._get_cache_key(
                             transaction["description"],
                             existing["payee"],
-                            existing["base_category"],
+                            existing["category"],
                         )
                         cached_classification = self._get_cached_result(
                             cache_key, "classification"
@@ -600,12 +600,12 @@ class TransactionClassifier:
 
                             # Get classification info from LLM
                             logger.info(
-                                f"[Row {row_number}] 🤖 Getting tax classification for: {existing['base_category']}"
+                                f"[Row {row_number}] 🤖 Getting tax classification for: {existing['category']}"
                             )
                             classification_info = self._get_classification(
                                 transaction["description"],
                                 existing["payee"],
-                                existing["base_category"],
+                                existing["category"],
                                 existing.get("expense_type", "business"),
                                 business_percentage,
                                 existing.get("business_description"),
@@ -1235,16 +1235,15 @@ Special Rules for Real Estate:
 Available Categories:
 {', '.join(available_categories)}
 
-Respond with a JSON object containing:
-1. category: The most appropriate category from the list
-2. expense_type: "business" or "personal" (use "business" for mixed-use with appropriate percentage)
-3. business_percentage: 0-100 (100 for fully business, 0 for personal, or appropriate percentage for mixed-use)
-4. notes: Brief explanation including:
-   - Business purpose (if any)
-   - IRS compliance justification
-   - Documentation requirements
-5. confidence: "high", "medium", or "low"
-6. detailed_context: Detailed business context and reasoning"""
+Respond with a JSON object containing ONLY these fields:
+{{
+    "category": "The most appropriate category from the list",
+    "expense_type": "business or personal (use business for mixed-use with appropriate percentage)",
+    "business_percentage": "0-100 (100 for fully business, 0 for personal, or appropriate percentage for mixed-use)",
+    "notes": "Brief explanation including business purpose, IRS compliance justification, and documentation requirements",
+    "confidence": "high, medium, or low",
+    "detailed_context": "Detailed business context and reasoning"
+}}"""
 
         return prompt
 
