@@ -4,6 +4,7 @@ import os
 import pandas as pd
 from typing import Optional
 from .agents.transaction_classifier import TransactionClassifier
+from .db.client_db import ClientDB
 
 
 async def process_transactions(
@@ -28,8 +29,9 @@ async def process_transactions(
             print("Error: No transactions found in the file")
             return
 
-        # Initialize classifier
-        classifier = TransactionClassifier(client_name, model_type)
+        # Initialize database and classifier
+        db = ClientDB()
+        classifier = TransactionClassifier(client_name, db, model_type)
 
         # Process transactions
         print(f"\nProcessing transactions for {client_name}...")

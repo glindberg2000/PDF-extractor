@@ -606,6 +606,7 @@ def start_menu():
                 # Initialize classifier
                 classifier = TransactionClassifier(
                     client_name=client_name,
+                    db=db,
                     model_type="precise" if "Precise" in action else "fast",
                 )
 
@@ -1010,6 +1011,7 @@ def start_menu():
                     # Initialize classifier
                     classifier = TransactionClassifier(
                         client_name=client_name,
+                        db=db,
                         model_type=model_type,
                     )
 

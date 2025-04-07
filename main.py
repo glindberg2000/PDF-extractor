@@ -46,8 +46,11 @@ def process_transactions(
             print("Error: No transactions found in the file")
             return
 
-        # Initialize classifier
-        classifier = TransactionClassifier(client_name, model_type)
+        # Initialize database and classifier
+        from dataextractai.db.client_db import ClientDB
+
+        db = ClientDB()
+        classifier = TransactionClassifier(client_name, db, model_type)
 
         # Process transactions
         print(f"\nProcessing transactions for {client_name}...")

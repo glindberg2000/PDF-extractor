@@ -80,19 +80,21 @@ if not logger.handlers:
 
 
 class TransactionClassifier:
-    def __init__(self, client_name: str, model_type: str = "fast"):
+    def __init__(self, client_name: str, db: ClientDB, model_type: str = "fast"):
         """Initialize the transaction classifier.
 
         Args:
-            client_name: Name of the client whose transactions to classify
-            model_type: Type of model to use ("fast" or "precise")
+            client_name: Name of the client
+            db: Database instance
+            model_type: Type of model to use ("fast" or "precise"), defaults to "fast"
         """
         self.client_name = client_name
+        self.db = db
         self.client = OpenAI()
+        self._persistent_conn = None  # For batch processing
         self.profile_manager = ClientProfileManager(client_name)
         self.business_profile = self.profile_manager._load_profile()
         self.model_type = model_type
-        self.db = ClientDB()
 
         # Load standard categories
         self.standard_categories = list(
@@ -114,6 +116,21 @@ class TransactionClassifier:
         logger.info(f"  • Model type: {self.model_type}")
         logger.info(f"  • Standard categories: {len(self.standard_categories)}")
         logger.info(f"  • Custom categories: {len(self.client_categories)}")
+
+    def _start_batch_processing(self):
+        """Start batch processing by establishing a persistent connection."""
+        if not self._persistent_conn:
+            self._persistent_conn = sqlite3.connect(
+                self.db.db_path, isolation_level=None
+            )
+            logger.debug("Established persistent connection for batch processing")
+
+    def _end_batch_processing(self):
+        """End batch processing by closing the persistent connection."""
+        if self._persistent_conn:
+            self._persistent_conn.close()
+            self._persistent_conn = None
+            logger.debug("Closed persistent connection for batch processing")
 
     def _load_client_categories(self) -> List[str]:
         """Load client-specific categories from the database."""
@@ -157,27 +174,57 @@ class TransactionClassifier:
         return clean_desc
 
     def _get_cache_key(
-        self,
-        description: str,
-        payee: Optional[str] = None,
-        category: Optional[str] = None,
+        self, description: str, payee: str = None, category: str = None
     ) -> str:
-        """Get a cache key for storing results."""
-        # Clean description first
-        normalized_desc = self._clean_description(description)
+        """Generate a consistent cache key.
 
-        # Create a unique key based on the cleaned details
-        key_parts = [normalized_desc]
+        Args:
+            description: Raw transaction description
+            payee: Optional standardized payee name
+            category: Optional category name
+
+        Returns:
+            Consistent cache key string
+        """
+        # Always start with cleaned description
+        clean_desc = self._clean_description(description)
+
+        # Detailed logging for key generation
+        logger.debug(f"Generating cache key - Input values:")
+        logger.debug(f"  • Raw description: {repr(description)}")
+        logger.debug(f"  • Cleaned description: {repr(clean_desc)}")
+        logger.debug(f"  • Raw payee: {repr(payee)}")
+        logger.debug(f"  • Raw category: {repr(category)}")
+
+        key_parts = [clean_desc]
+
+        # Only add payee if it's standardized and different from description
         if payee:
-            key_parts.append(self._clean_description(payee))
-        if category:
-            key_parts.append(category.lower())
+            clean_payee = self._clean_description(payee)
+            logger.debug(f"  • Cleaned payee: {repr(clean_payee)}")
+            if clean_payee != clean_desc:
+                key_parts.append(clean_payee)
 
-        return "|".join(key_parts)
+        # Add category if provided
+        if category:
+            clean_category = category.lower()
+            logger.debug(f"  • Cleaned category: {repr(clean_category)}")
+            key_parts.append(clean_category)
+
+        cache_key = "|".join(key_parts)
+        logger.debug(f"  • Final cache key: {repr(cache_key)}")
+
+        return cache_key
 
     def _get_cached_result(self, cache_key: str, pass_type: str) -> Optional[Dict]:
         """Get a cached result from the database."""
-        with sqlite3.connect(self.db.db_path) as conn:
+        logger.debug(f"Checking cache for key: {cache_key} (pass: {pass_type})")
+
+        # Use persistent connection if available, otherwise create a new one
+        conn = self._persistent_conn or sqlite3.connect(
+            self.db.db_path, isolation_level=None
+        )
+        try:
             cursor = conn.execute(
                 """
                 SELECT result
@@ -189,34 +236,49 @@ class TransactionClassifier:
             result = cursor.fetchone()
             if result:
                 logger.info(
-                    f"{Fore.CYAN}[CACHE HIT] Found cached {pass_type} result for: {cache_key.split('|')[0][:40]}...{Style.RESET_ALL}"
+                    f"{Fore.CYAN}[CACHE HIT] Found cached {pass_type} result for: {cache_key}{Style.RESET_ALL}"
                 )
                 cached = json.loads(result[0])
 
+                # Log cache contents for debugging
+                logger.debug(f"Cache hit contents: {json.dumps(cached, indent=2)}")
+
                 # Handle legacy cache format for category responses
                 if pass_type == "category":
-                    # Map old fields to new structure
                     return {
                         "category": cached.get("category", ""),
                         "expense_type": cached.get("expense_type", "personal"),
                         "business_percentage": int(
                             cached.get("business_percentage", 0)
                         ),
-                        "notes": cached.get(
-                            "reasoning", ""
-                        ),  # Map old reasoning to notes
+                        "notes": cached.get("reasoning", ""),
                         "confidence": cached.get("confidence", "medium"),
-                        "detailed_context": cached.get(
-                            "business_context", ""
-                        ),  # Map old business_context to detailed_context
+                        "detailed_context": cached.get("business_context", ""),
                     }
                 return cached
-        return None
+            else:
+                logger.debug(f"No cache hit for key: {cache_key}")
+                return None
+        finally:
+            # Only close the connection if it's not the persistent one
+            if not self._persistent_conn and conn:
+                conn.close()
 
     def _cache_result(self, cache_key: str, pass_type: str, result: Dict) -> None:
         """Save a result to the database cache."""
         client_id = self.db.get_client_id(self.client_name)
-        with sqlite3.connect(self.db.db_path) as conn:
+
+        # Log cache write attempt
+        logger.debug(f"Attempting to cache result:")
+        logger.debug(f"  • Cache key: {cache_key}")
+        logger.debug(f"  • Pass type: {pass_type}")
+        logger.debug(f"  • Result: {json.dumps(result, indent=2)}")
+
+        # Use persistent connection if available, otherwise create a new one
+        conn = self._persistent_conn or sqlite3.connect(
+            self.db.db_path, isolation_level=None
+        )
+        try:
             conn.execute(
                 """
                 INSERT INTO transaction_cache (client_id, cache_key, pass_type, result)
@@ -232,6 +294,11 @@ class TransactionClassifier:
                     json.dumps(result),
                 ),
             )
+            logger.debug(f"Cache write completed successfully")
+        finally:
+            # Only close the connection if it's not the persistent one
+            if not self._persistent_conn and conn:
+                conn.close()
 
     def process_transactions(
         self,
@@ -243,451 +310,449 @@ class TransactionClassifier:
         end_row: Optional[int] = None,
     ) -> None:
         """Process transactions through multiple passes."""
-        if not isinstance(transactions, pd.DataFrame):
-            raise ValueError("transactions must be a pandas DataFrame")
+        try:
+            # Start batch processing with persistent connection
+            self._start_batch_processing()
 
-        if resume_from_pass < 1 or resume_from_pass > 3:
-            raise ValueError("resume_from_pass must be between 1 and 3")
+            if not isinstance(transactions, pd.DataFrame):
+                raise ValueError("transactions must be a pandas DataFrame")
 
-        # Handle row range
-        start_row = start_row if start_row is not None else 0
-        end_row = end_row if end_row is not None else len(transactions)
+            if resume_from_pass < 1 or resume_from_pass > 3:
+                raise ValueError("resume_from_pass must be between 1 and 3")
 
-        if start_row < 0 or end_row > len(transactions) or start_row >= end_row:
-            raise ValueError("Invalid row range specified")
+            # Handle row range
+            start_row = start_row if start_row is not None else 0
+            end_row = end_row if end_row is not None else len(transactions)
 
-        total_transactions = end_row - start_row
-        pass_desc = {
-            1: "Payee identification",
-            2: "Category assignment",
-            3: "Final classification & tax mapping",
-        }
+            if start_row < 0 or end_row > len(transactions) or start_row >= end_row:
+                raise ValueError("Invalid row range specified")
 
-        logger.info(f"\n{Fore.GREEN}{'='*80}{Style.RESET_ALL}")
-        logger.info(
-            f"{Fore.GREEN}▶ Starting transaction processing for {self.client_name}{Style.RESET_ALL}"
-        )
-        logger.info(
-            f"  • Processing {total_transactions} transactions (rows {start_row+1}-{end_row})"
-        )
-        logger.info(
-            f"  • Starting from pass {resume_from_pass}: {pass_desc.get(resume_from_pass, '')}"
-        )
-        logger.info(f"  • Force processing: {force_process}")
-        logger.info(f"{Fore.GREEN}{'='*80}{Style.RESET_ALL}\n")
+            total_transactions = end_row - start_row
+            pass_desc = {
+                1: "Payee identification",
+                2: "Category assignment",
+                3: "Final classification & tax mapping",
+            }
 
-        # Stats counters
-        skipped_count = {1: 0, 2: 0, 3: 0}
-        processed_count = {1: 0, 2: 0, 3: 0}
-        error_count = {1: 0, 2: 0, 3: 0}
-        cache_hit_count = {1: 0, 2: 0, 3: 0}
+            logger.info(f"\n{Fore.GREEN}{'='*80}{Style.RESET_ALL}")
+            logger.info(
+                f"{Fore.GREEN}▶ Starting transaction processing for {self.client_name}{Style.RESET_ALL}"
+            )
+            logger.info(
+                f"  • Processing {total_transactions} transactions (rows {start_row+1}-{end_row})"
+            )
+            logger.info(
+                f"  • Starting from pass {resume_from_pass}: {pass_desc.get(resume_from_pass, '')}"
+            )
+            logger.info(f"  • Force processing: {force_process}")
+            logger.info(f"{Fore.GREEN}{'='*80}{Style.RESET_ALL}\n")
 
-        # Process transactions row by row
-        for idx in range(start_row, end_row):
-            transaction = transactions.iloc[idx]
-            row_number = idx + 1
+            # Stats counters
+            skipped_count = {1: 0, 2: 0, 3: 0}
+            processed_count = {1: 0, 2: 0, 3: 0}
+            error_count = {1: 0, 2: 0, 3: 0}
+            cache_hit_count = {1: 0, 2: 0, 3: 0}
 
-            try:
-                # Check if transaction is already fully processed
-                if not force_process:
-                    status = self.db.get_transaction_status(
-                        self.client_name, transaction["transaction_id"]
-                    )
-                    if status:
-                        skip_this_row = False
-                        for pass_num in range(resume_from_pass, 4):
-                            if status.get(f"pass_{pass_num}_status") == "completed":
-                                if pass_num == resume_from_pass:
-                                    logger.info(
-                                        f"{Fore.CYAN}[Row {row_number}] ✓ Already processed pass {pass_num}, skipping...{Style.RESET_ALL}"
-                                    )
-                                    skip_this_row = True
-                                    skipped_count[pass_num] += 1
-                                    break
-                        if skip_this_row:
-                            continue
+            # Process transactions row by row
+            for idx in range(start_row, end_row):
+                transaction = transactions.iloc[idx]
+                row_number = idx + 1
+                row_info = f"[Row {row_number}]"
 
-                # Log separator for visual clarity
-                logger.info(f"\n{Fore.CYAN}{'─'*80}{Style.RESET_ALL}")
-                logger.info(
-                    f"{Fore.CYAN}[Row {row_number}] Transaction: {transaction['description']}{Style.RESET_ALL}"
-                )
+                try:
+                    # Check if transaction is already fully processed
+                    if not force_process:
+                        status = self.db.get_transaction_status(
+                            self.client_name, transaction["transaction_id"]
+                        )
+                        if status:
+                            skip_this_row = False
+                            for pass_num in range(resume_from_pass, 4):
+                                if status.get(f"pass_{pass_num}_status") == "completed":
+                                    if pass_num == resume_from_pass:
+                                        logger.info(
+                                            f"{Fore.CYAN}[Row {row_number}] ✓ Already processed pass {pass_num}, skipping...{Style.RESET_ALL}"
+                                        )
+                                        skip_this_row = True
+                                        skipped_count[pass_num] += 1
+                                        break
+                            if skip_this_row:
+                                continue
 
-                # Pass 1: Payee identification
-                if resume_from_pass == 1:
+                    # Log separator for visual clarity
+                    logger.info(f"\n{Fore.CYAN}{'─'*80}{Style.RESET_ALL}")
                     logger.info(
-                        f"{Fore.GREEN}▶ PASS 1: Payee Identification{Style.RESET_ALL}"
+                        f"{Fore.CYAN}[Row {row_number}] Transaction: {transaction['description']}{Style.RESET_ALL}"
                     )
 
-                    # Get payee info
-                    payee_info = self._get_payee(
-                        transaction["description"], row_number, force_process
-                    )
+                    # Pass 1: Payee identification
+                    if resume_from_pass == 1:
+                        logger.info(
+                            f"{Fore.GREEN}▶ PASS 1: Payee Identification{Style.RESET_ALL}"
+                        )
 
-                    # Update transaction with payee info
-                    update_data = {
-                        "client_id": self.db.get_client_id(self.client_name),
-                        "payee": payee_info.payee,
-                        "payee_confidence": payee_info.confidence,
-                        "payee_reasoning": payee_info.reasoning,
-                        "business_description": payee_info.business_description,
-                        "general_category": payee_info.general_category,
-                    }
+                        # Get payee info
+                        payee_info = self._get_payee(
+                            transaction["description"],
+                            row_info=row_info,
+                            force_process=force_process,
+                        )
 
-                    self.db.update_transaction_classification(
-                        transaction["transaction_id"], update_data
-                    )
+                        # Update transaction with payee info
+                        update_data = {
+                            "client_id": self.db.get_client_id(self.client_name),
+                            "payee": payee_info.payee,
+                            "payee_confidence": payee_info.confidence,
+                            "payee_reasoning": payee_info.reasoning,
+                            "business_description": payee_info.business_description,
+                            "general_category": payee_info.general_category,
+                        }
 
-                    # Cache the result with all fields
-                    cache_key = self._get_cache_key(transaction["description"])
-                    cached_payee = self._get_cached_result(cache_key, "payee")
-                    if not cached_payee:
-                        self._cache_result(
-                            cache_key,
-                            "payee",
+                        self.db.update_transaction_classification(
+                            transaction["transaction_id"], update_data
+                        )
+
+                        # Cache the result with all fields
+                        cache_key = self._get_cache_key(transaction["description"])
+                        cached_payee = self._get_cached_result(cache_key, "payee")
+                        if not cached_payee:
+                            self._cache_result(
+                                cache_key,
+                                "payee",
+                                {
+                                    "payee": payee_info.payee,
+                                    "confidence": payee_info.confidence,
+                                    "reasoning": payee_info.reasoning,
+                                    "business_description": payee_info.business_description,
+                                    "general_category": payee_info.general_category,
+                                },
+                            )
+
+                        # Update status
+                        self.db.update_transaction_status(
+                            transaction["transaction_id"],
                             {
-                                "payee": payee_info.payee,
-                                "confidence": payee_info.confidence,
-                                "reasoning": payee_info.reasoning,
-                                "business_description": payee_info.business_description,
-                                "general_category": payee_info.general_category,
+                                "client_id": self.db.get_client_id(self.client_name),
+                                "pass_1_status": "completed",
+                                "pass_1_error": None,
+                                "pass_1_processed_at": datetime.now(),
                             },
                         )
 
-                    # Update status
-                    self.db.update_transaction_status(
-                        transaction["transaction_id"],
-                        {
-                            "client_id": self.db.get_client_id(self.client_name),
-                            "pass_1_status": "completed",
-                            "pass_1_error": None,
-                            "pass_1_processed_at": datetime.now(),
-                        },
-                    )
-
-                    logger.info(
-                        f"{Fore.GREEN}✓ Pass 1 complete: {payee_info.payee} ({payee_info.confidence}){Style.RESET_ALL}"
-                    )
-                    if payee_info.business_description:
                         logger.info(
-                            f"  • Business Description: {payee_info.business_description}"
+                            f"{Fore.GREEN}✓ Pass 1 complete: {payee_info.payee} ({payee_info.confidence}){Style.RESET_ALL}"
                         )
-                        logger.info(
-                            f"  • General Category: {payee_info.general_category}"
-                        )
-                    processed_count[1] += 1
-
-                    # If we're only doing pass 1, continue to next transaction
-                    if resume_from_pass == 1:
-                        continue
-
-                # Pass 2: Category assignment
-                if resume_from_pass <= 2:
-                    logger.info(
-                        f"{Fore.GREEN}▶ PASS 2: Category Assignment{Style.RESET_ALL}"
-                    )
-
-                    # Get existing payee info
-                    existing = self.db.get_transaction_classification(
-                        transaction["transaction_id"]
-                    )
-                    if not existing or not existing.get("payee"):
-                        logger.warning(
-                            f"[Row {row_number}] ⚠ No payee found from pass 1, skipping pass 2"
-                        )
-                        continue
-
-                    # Check cache for category
-                    cache_key = self._get_cache_key(
-                        transaction["description"], existing["payee"]
-                    )
-                    cached_category = self._get_cached_result(cache_key, "category")
-
-                    if cached_category and not force_process:
-                        logger.info(
-                            f"[Row {row_number}] ✓ Using cached category: {cached_category['category']} (confidence: {cached_category['confidence']})"
-                        )
-                        category_info = CategoryResponse(**cached_category)
-                        cache_hit_count[2] += 1
-                    else:
-                        # Get category info from LLM
-                        logger.info(
-                            f"[Row {row_number}] 🤖 Getting category for: {existing['payee']}"
-                        )
-                        category_info = self._get_category(
-                            transaction["description"],
-                            transaction["amount"],
-                            transaction["transaction_date"].strftime("%Y-%m-%d"),
-                            payee=existing["payee"],
-                            business_description=existing.get("business_description"),
-                            general_category=existing.get("general_category"),
-                            force_process=force_process,
-                        )
-                        logger.info(
-                            f"[Row {row_number}] ✓ Category assigned: {category_info.category} (confidence: {category_info.confidence})"
-                        )
-
-                        # Extract fields from category_info
-                        expense_type = "personal"  # Default to personal
-                        business_percentage = 0  # Default to 0%
-                        business_context = ""
-
-                        if category_info.notes:
-                            # Extract expense type
-                            expense_type_match = re.search(
-                                r"Expense type:\s*(business|personal|mixed-use)",
-                                category_info.notes.lower(),
+                        if payee_info.business_description:
+                            logger.info(
+                                f"  • Business Description: {payee_info.business_description}"
                             )
-                            if expense_type_match:
-                                expense_type = expense_type_match.group(1)
-                                # Convert 'mixed-use' to 'mixed' to match database constraint
-                                if expense_type == "mixed-use":
-                                    expense_type = "mixed"
-
-                            # Extract business percentage
-                            percentage_match = re.search(
-                                r"Business percentage:\s*(\d+)%",
-                                category_info.notes,
+                            logger.info(
+                                f"  • General Category: {payee_info.general_category}"
                             )
-                            if percentage_match:
-                                business_percentage = int(percentage_match.group(1))
-                                # Ensure expense_type is consistent with business_percentage
-                                if business_percentage == 100:
-                                    expense_type = "business"
-                                elif business_percentage == 0:
-                                    expense_type = "personal"
-                                else:
-                                    # For mixed use (partial business), treat as business with percentage
-                                    expense_type = "business"
+                        processed_count[1] += 1
 
-                            # Extract business context
-                            context_match = re.search(
-                                r"Business context:\s*([^\n]+)", category_info.notes
+                        # If we're only doing pass 1, continue to next transaction
+                        if resume_from_pass == 1:
+                            continue
+
+                    # Pass 2: Category assignment
+                    if resume_from_pass <= 2:
+                        logger.info(
+                            f"{Fore.GREEN}▶ PASS 2: Category Assignment{Style.RESET_ALL}"
+                        )
+
+                        # Get existing payee info
+                        existing = self.db.get_transaction_classification(
+                            transaction["transaction_id"]
+                        )
+                        if not existing or not existing.get("payee"):
+                            logger.warning(
+                                f"{row_info} ⚠ No payee found from pass 1, skipping pass 2"
                             )
-                            if context_match:
-                                business_context = context_match.group(1).strip()
+                            continue
 
-                        # Update transaction with category info
+                        # Check cache for category
+                        cache_key = self._get_cache_key(
+                            transaction["description"], existing["payee"]
+                        )
+                        cached_category = self._get_cached_result(cache_key, "category")
+
+                        if cached_category and not force_process:
+                            logger.info(
+                                f"{row_info} ✓ Using cached category: {cached_category['category']} (confidence: {cached_category['confidence']})"
+                            )
+                            category_info = CategoryResponse(**cached_category)
+                            cache_hit_count[2] += 1
+                        else:
+                            # Get category info from LLM
+                            logger.info(
+                                f"{row_info} 🤖 Getting category for: {existing['payee']}"
+                            )
+                            category_info = self._get_category(
+                                transaction["description"],
+                                transaction["amount"],
+                                transaction["transaction_date"].strftime("%Y-%m-%d"),
+                                payee=existing["payee"],
+                                business_description=existing.get(
+                                    "business_description"
+                                ),
+                                general_category=existing.get("general_category"),
+                                force_process=force_process,
+                                row_info=row_info,
+                            )
+                            logger.info(
+                                f"{row_info} ✓ Category assigned: {category_info.category} (confidence: {category_info.confidence})"
+                            )
+
+                            # Extract fields from category_info
+                            expense_type = "personal"  # Default to personal
+                            business_percentage = 0  # Default to 0%
+                            business_context = ""
+
+                            if category_info.notes:
+                                # Extract expense type
+                                expense_type_match = re.search(
+                                    r"Expense type:\s*(business|personal|mixed)",
+                                    category_info.notes.lower(),
+                                )
+                                if expense_type_match:
+                                    expense_type = expense_type_match.group(1)
+
+                                # Extract business percentage
+                                percentage_match = re.search(
+                                    r"Business percentage:\s*(\d+)%",
+                                    category_info.notes,
+                                )
+                                if percentage_match:
+                                    business_percentage = int(percentage_match.group(1))
+                                    # Ensure expense_type is consistent with business_percentage
+                                    if business_percentage == 100:
+                                        expense_type = "business"
+                                    elif business_percentage == 0:
+                                        expense_type = "personal"
+                                    elif business_percentage > 0:
+                                        expense_type = "mixed"
+
+                                # Extract business context
+                                context_match = re.search(
+                                    r"Business context:\s*([^\n]+)", category_info.notes
+                                )
+                                if context_match:
+                                    business_context = context_match.group(1).strip()
+
+                            # Update transaction with category info
+                            update_data = {
+                                "client_id": self.db.get_client_id(self.client_name),
+                                "category": str(category_info.category),
+                                "category_confidence": str(category_info.confidence),
+                                "category_reasoning": str(category_info.notes),
+                                "expense_type": str(category_info.expense_type),
+                                "business_percentage": int(
+                                    category_info.business_percentage
+                                ),
+                                "business_context": str(
+                                    category_info.detailed_context or ""
+                                ),
+                                "classification": str(
+                                    "Business"
+                                    if category_info.expense_type == "business"
+                                    else (
+                                        "Personal"
+                                        if category_info.expense_type == "personal"
+                                        else "Unclassified"  # Map 'mixed' to 'Unclassified'
+                                    )
+                                ),
+                                "classification_confidence": str(
+                                    category_info.confidence
+                                ),
+                            }
+
+                            # Log what we're updating
+                            logger.info(
+                                f"{row_info} Updating transaction {transaction['transaction_id']} with:"
+                            )
+                            for key, value in update_data.items():
+                                logger.info(f"  • {key}: {value}")
+
+                            # Update the database
+                            self.db.update_transaction_classification(
+                                transaction["transaction_id"], update_data
+                            )
+
+                            # Cache the result
+                            self._cache_result(
+                                cache_key,
+                                "category",
+                                {
+                                    "category": str(category_info.category),
+                                    "expense_type": str(category_info.expense_type),
+                                    "business_percentage": int(
+                                        category_info.business_percentage
+                                    ),
+                                    "notes": str(category_info.notes),
+                                    "confidence": str(category_info.confidence),
+                                    "detailed_context": str(
+                                        category_info.detailed_context or ""
+                                    ),
+                                },
+                            )
+
+                        # Update status
+                        self.db.update_transaction_status(
+                            transaction["transaction_id"],
+                            {
+                                "client_id": self.db.get_client_id(self.client_name),
+                                "pass_2_status": "completed",
+                                "pass_2_error": None,
+                                "pass_2_processed_at": datetime.now(),
+                            },
+                        )
+
+                        logger.info(
+                            f"{Fore.GREEN}✓ Pass 2 complete: {category_info.category} ({category_info.expense_type}){Style.RESET_ALL}"
+                        )
+                        processed_count[2] += 1
+
+                        # If we're only doing up to pass 2, continue to next transaction
+                        if resume_from_pass == 2:
+                            continue
+
+                    # Pass 3: Tax Classification
+                    if resume_from_pass <= 3:
+                        logger.info(
+                            f"{Fore.GREEN}▶ PASS 3: Tax Classification{Style.RESET_ALL}"
+                        )
+
+                        # Get existing category info
+                        existing = self.db.get_transaction_classification(
+                            transaction["transaction_id"]
+                        )
+                        if not existing or not existing.get("base_category"):
+                            logger.warning(
+                                f"{row_info} ⚠ No category found from pass 2, skipping pass 3"
+                            )
+                            continue
+
+                        # Skip personal expenses from detailed tax classification
+                        if existing.get("expense_type") == "personal":
+                            logger.info(
+                                f"{row_info} ℹ Personal expense, setting minimal tax classification"
+                            )
+                            classification_info = ClassificationResponse(
+                                tax_category="Not Applicable",
+                                tax_subcategory="Personal Expense",
+                                worksheet="6A",
+                                confidence="high",
+                                reasoning="This is a personal expense and not applicable for tax deductions.",
+                            )
+                            cache_hit_count[3] += 1
+                        else:
+                            # Get classification info from LLM
+                            logger.info(
+                                f"{row_info} 🤖 Getting tax classification for: {existing['base_category']}"
+                            )
+                            classification_info = self._get_classification(
+                                transaction["description"],
+                                existing["payee"],
+                                existing["base_category"],
+                                existing.get("expense_type", "business"),
+                                existing.get("business_percentage", 100),
+                                existing.get("business_description"),
+                                existing.get("general_category"),
+                                existing.get("business_context"),
+                                force_process=force_process,
+                                row_info=row_info,
+                            )
+                            logger.info(
+                                f"{row_info} ✓ Tax classification: {classification_info.tax_category} (confidence: {classification_info.confidence})"
+                            )
+
+                        # Update transaction with classification info
                         update_data = {
                             "client_id": self.db.get_client_id(self.client_name),
-                            "category": str(category_info.category),
-                            "category_confidence": str(category_info.confidence),
-                            "category_reasoning": str(category_info.notes),
-                            "expense_type": str(expense_type),
-                            "business_percentage": int(business_percentage),
-                            "business_context": str(business_context or ""),
-                            "classification": str(
-                                "Business"
-                                if expense_type == "business"
-                                else (
-                                    "Personal"
-                                    if expense_type == "personal"
-                                    else "Unclassified"  # Map 'mixed' to 'Unclassified'
-                                )
-                            ),
-                            "classification_confidence": str(category_info.confidence),
+                            "tax_category": classification_info.tax_category,
+                            "tax_subcategory": classification_info.tax_subcategory,
+                            "worksheet": classification_info.worksheet,
+                            "classification_confidence": classification_info.confidence,
+                            "classification_reasoning": classification_info.reasoning,
                         }
 
-                        # Log what we're updating
-                        logger.info(
-                            f"[Row {row_number}] Updating transaction {transaction['transaction_id']} with:"
-                        )
-                        for key, value in update_data.items():
-                            logger.info(f"  • {key}: {value}")
-
-                        # Update the database
                         self.db.update_transaction_classification(
                             transaction["transaction_id"], update_data
                         )
 
                         # Cache the result
-                        self._cache_result(
-                            cache_key,
-                            "category",
+                        if (
+                            not existing.get("expense_type") == "personal"
+                            and not classification_info
+                        ):
+                            self._cache_result(
+                                cache_key,
+                                "classification",
+                                {
+                                    "tax_category": classification_info.tax_category,
+                                    "tax_subcategory": classification_info.tax_subcategory,
+                                    "worksheet": classification_info.worksheet,
+                                    "confidence": classification_info.confidence,
+                                    "reasoning": classification_info.reasoning,
+                                },
+                            )
+
+                        # Update status
+                        self.db.update_transaction_status(
+                            transaction["transaction_id"],
                             {
-                                "category": str(category_info.category),
-                                "expense_type": str(expense_type),
-                                "business_percentage": int(business_percentage),
-                                "notes": str(category_info.notes),
-                                "confidence": str(category_info.confidence),
-                                "detailed_context": str(business_context or ""),
+                                "client_id": self.db.get_client_id(self.client_name),
+                                "pass_3_status": "completed",
+                                "pass_3_error": None,
+                                "pass_3_processed_at": datetime.now(),
                             },
                         )
 
-                    # Update status
-                    self.db.update_transaction_status(
-                        transaction["transaction_id"],
-                        {
-                            "client_id": self.db.get_client_id(self.client_name),
-                            "pass_2_status": "completed",
-                            "pass_2_error": None,
-                            "pass_2_processed_at": datetime.now(),
-                        },
-                    )
-
-                    logger.info(
-                        f"{Fore.GREEN}✓ Pass 2 complete: {category_info.category} ({expense_type}){Style.RESET_ALL}"
-                    )
-                    processed_count[2] += 1
-
-                    # If we're only doing up to pass 2, continue to next transaction
-                    if resume_from_pass == 2:
-                        continue
-
-                # Pass 3: Tax Classification
-                if resume_from_pass <= 3:
-                    logger.info(
-                        f"{Fore.GREEN}▶ PASS 3: Tax Classification{Style.RESET_ALL}"
-                    )
-
-                    # Get existing category info
-                    existing = self.db.get_transaction_classification(
-                        transaction["transaction_id"]
-                    )
-                    if not existing or not existing.get("category"):
-                        logger.warning(
-                            f"[Row {row_number}] ⚠ No category found from pass 2, skipping pass 3"
-                        )
-                        continue
-
-                    # Skip personal expenses from detailed tax classification
-                    if existing.get("expense_type") == "personal":
                         logger.info(
-                            f"[Row {row_number}] ℹ Personal expense, setting minimal tax classification"
+                            f"{Fore.GREEN}✓ Pass 3 complete: {classification_info.tax_category} (worksheet: {classification_info.worksheet}){Style.RESET_ALL}"
                         )
-                        classification_info = ClassificationResponse(
-                            tax_category="Not Applicable",
-                            tax_subcategory="Personal Expense",
-                            worksheet="6A",
-                            confidence="high",
-                            reasoning="This is a personal expense and not applicable for tax deductions.",
-                        )
-                        cache_hit_count[3] += 1
-                    else:
-                        # Check cache for classification
-                        cache_key = self._get_cache_key(
-                            transaction["description"],
-                            existing["payee"],
-                            existing["category"],
-                        )
-                        cached_classification = self._get_cached_result(
-                            cache_key, "classification"
-                        )
+                        processed_count[3] += 1
 
-                        if cached_classification and not force_process:
-                            logger.info(
-                                f"[Row {row_number}] ✓ Using cached tax classification: {cached_classification.get('tax_category', 'Unknown')}"
-                            )
-                            classification_info = ClassificationResponse(
-                                **cached_classification
-                            )
-                            cache_hit_count[3] += 1
-                        else:
-                            # Get business percentage
-                            business_percentage = existing.get(
-                                "business_percentage",
-                                (
-                                    100
-                                    if existing.get("expense_type") == "business"
-                                    else 0
-                                ),
-                            )
+                except Exception as e:
+                    error_message = (
+                        f"Error processing transaction {row_number}: {str(e)}"
+                    )
+                    logger.error(f"{Fore.RED}❌ {error_message}{Style.RESET_ALL}")
+                    error_count[resume_from_pass] += 1
 
-                            # Get classification info from LLM
-                            logger.info(
-                                f"[Row {row_number}] 🤖 Getting tax classification for: {existing['category']}"
-                            )
-                            classification_info = self._get_classification(
-                                transaction["description"],
-                                existing["payee"],
-                                existing["category"],
-                                existing.get("expense_type", "business"),
-                                business_percentage,
-                                existing.get("business_description"),
-                                existing.get("general_category"),
-                                existing.get("business_context"),
-                                force_process,
-                            )
-                            logger.info(
-                                f"[Row {row_number}] ✓ Tax classification: {classification_info.tax_category} (confidence: {classification_info.confidence})"
-                            )
-
-                    # Update transaction with classification info
-                    update_data = {
+                    # Update error status for the current pass
+                    error_status = {
                         "client_id": self.db.get_client_id(self.client_name),
-                        "tax_category": classification_info.tax_category,
-                        "tax_subcategory": classification_info.tax_subcategory,
-                        "worksheet": classification_info.worksheet,
-                        "classification_confidence": classification_info.confidence,
-                        "classification_reasoning": classification_info.reasoning,
+                        f"pass_{resume_from_pass}_status": "error",
+                        f"pass_{resume_from_pass}_error": str(e),
+                        f"pass_{resume_from_pass}_processed_at": datetime.now(),
                     }
-
-                    self.db.update_transaction_classification(
-                        transaction["transaction_id"], update_data
-                    )
-
-                    # Cache the result
-                    if (
-                        not existing.get("expense_type") == "personal"
-                        and not cached_classification
-                    ):
-                        self._cache_result(
-                            cache_key,
-                            "classification",
-                            {
-                                "tax_category": classification_info.tax_category,
-                                "tax_subcategory": classification_info.tax_subcategory,
-                                "worksheet": classification_info.worksheet,
-                                "confidence": classification_info.confidence,
-                                "reasoning": classification_info.reasoning,
-                            },
-                        )
-
-                    # Update status
                     self.db.update_transaction_status(
-                        transaction["transaction_id"],
-                        {
-                            "client_id": self.db.get_client_id(self.client_name),
-                            "pass_3_status": "completed",
-                            "pass_3_error": None,
-                            "pass_3_processed_at": datetime.now(),
-                        },
+                        transaction["transaction_id"], error_status
                     )
 
-                    logger.info(
-                        f"{Fore.GREEN}✓ Pass 3 complete: {classification_info.tax_category} (worksheet: {classification_info.worksheet}){Style.RESET_ALL}"
-                    )
-                    processed_count[3] += 1
+            # Print summary statistics
+            logger.info(f"\n{Fore.GREEN}{'='*80}{Style.RESET_ALL}")
+            logger.info(
+                f"{Fore.GREEN}▶ Transaction Processing Summary{Style.RESET_ALL}"
+            )
+            for pass_num in range(resume_from_pass, 4):
+                if pass_num <= 3:
+                    logger.info(f"  • Pass {pass_num} ({pass_desc.get(pass_num)})")
+                    logger.info(f"    - Processed: {processed_count.get(pass_num, 0)}")
+                    logger.info(f"    - Skipped: {skipped_count.get(pass_num, 0)}")
+                    logger.info(f"    - Cache hits: {cache_hit_count.get(pass_num, 0)}")
+                    logger.info(f"    - Errors: {error_count.get(pass_num, 0)}")
 
-            except Exception as e:
-                error_message = f"Error processing transaction {row_number}: {str(e)}"
-                logger.error(f"{Fore.RED}❌ {error_message}{Style.RESET_ALL}")
-                error_count[resume_from_pass] += 1
+            logger.info(f"{Fore.GREEN}{'='*80}{Style.RESET_ALL}\n")
+            logger.info(
+                f"{Fore.GREEN}Transaction processing complete!{Style.RESET_ALL}"
+            )
 
-                # Update error status for the current pass
-                error_status = {
-                    "client_id": self.db.get_client_id(self.client_name),
-                    f"pass_{resume_from_pass}_status": "error",
-                    f"pass_{resume_from_pass}_error": str(e),
-                    f"pass_{resume_from_pass}_processed_at": datetime.now(),
-                }
-                self.db.update_transaction_status(
-                    transaction["transaction_id"], error_status
-                )
-
-        # Print summary statistics
-        logger.info(f"\n{Fore.GREEN}{'='*80}{Style.RESET_ALL}")
-        logger.info(f"{Fore.GREEN}▶ Transaction Processing Summary{Style.RESET_ALL}")
-        for pass_num in range(resume_from_pass, 4):
-            if pass_num <= 3:
-                logger.info(f"  • Pass {pass_num} ({pass_desc.get(pass_num)})")
-                logger.info(f"    - Processed: {processed_count.get(pass_num, 0)}")
-                logger.info(f"    - Skipped: {skipped_count.get(pass_num, 0)}")
-                logger.info(f"    - Cache hits: {cache_hit_count.get(pass_num, 0)}")
-                logger.info(f"    - Errors: {error_count.get(pass_num, 0)}")
-
-        logger.info(f"{Fore.GREEN}{'='*80}{Style.RESET_ALL}\n")
-        logger.info(f"{Fore.GREEN}Transaction processing complete!{Style.RESET_ALL}")
+        finally:
+            # Always ensure we close the persistent connection
+            self._end_batch_processing()
 
     def _check_previous_pass_completion(self, pass_number: int) -> bool:
         """Check if the previous pass was completed for all transactions."""
@@ -879,85 +944,82 @@ class TransactionClassifier:
             }
 
     def _get_payee(
-        self, description: str, row_number: int = None, force_process: bool = False
+        self,
+        description: str,
+        profile: Optional[Dict] = None,
+        industry_keywords: Optional[List[str]] = None,
+        force_process: bool = False,
+        row_info: str = "",
     ) -> PayeeResponse:
         """Get payee information for a transaction."""
-        row_info = f"[Row {row_number}]" if row_number else ""
-
-        # Clean description first for consistent caching
+        # Clean description for consistent matching
         clean_desc = self._clean_description(description)
+
+        # Generate initial cache key from description only
         cache_key = self._get_cache_key(description)
+        logger.info(f"{row_info} 🔍 Checking payee cache with key: {cache_key}")
 
-        # Get client profile for industry keywords
-        profile = self.profile_manager._load_profile()
-        industry_keywords = profile.get("industry_keywords", {}) if profile else {}
-
-        # Check cache first
+        # Check cache first unless forced
         if not force_process:
-            cached_result = self._get_cached_result(cache_key, "payee")
-            if cached_result:
-                result = PayeeResponse(**cached_result)
-                missing_fields = []
-                if not result.business_description:
-                    missing_fields.append("business_description")
-                if not result.general_category:
-                    missing_fields.append("general_category")
+            cached = self._get_cached_result(cache_key, "payee")
+            if cached:
+                # Validate cached result has required fields
+                required_fields = {
+                    "payee",
+                    "business_description",
+                    "general_category",
+                    "confidence",
+                }
+                missing_fields = required_fields - set(cached.keys())
 
-                # If we have all fields and high confidence, use cache
-                if not missing_fields and result.confidence == "high":
+                # Use cache if complete and high/medium confidence
+                if not missing_fields and cached.get("confidence") in [
+                    "high",
+                    "medium",
+                ]:
                     logger.info(
-                        f"{row_info} {Fore.CYAN}✓ Using complete cached payee: {result.payee} ({result.confidence} confidence){Style.RESET_ALL}"
+                        f"{row_info} ✓ Using cached payee: {cached['payee']} (confidence: {cached['confidence']})"
                     )
-                    return result
+                    return PayeeResponse(**cached)
 
-                # If only missing some fields, log what we're updating
+                # Log why cache wasn't used
                 if missing_fields:
                     logger.info(
-                        f"{row_info} {Fore.YELLOW}⚠ Cache hit but missing fields: {', '.join(missing_fields)}. Will update...{Style.RESET_ALL}"
+                        f"{row_info} ⚠ Cache hit but missing fields: {', '.join(missing_fields)}. Will update..."
                     )
                 else:
                     logger.info(
-                        f"{row_info} {Fore.YELLOW}⚠ Low confidence cache hit ({result.confidence}), will try to improve...{Style.RESET_ALL}"
+                        f"{row_info} ⚠ Low confidence cache hit ({cached.get('confidence')}), will try to improve..."
                     )
+            else:
+                logger.info(f"{row_info} ⚠ No payee cache hit, will compute")
 
-        # First, try to identify common/well-known businesses using LLM
-        logger.info(f"{row_info} 🤖 Analyzing transaction description...")
+        # Get client profile for industry keywords if not provided
+        if not profile:
+            profile = self.profile_manager._load_profile()
+        if not industry_keywords and profile:
+            industry_keywords = profile.get("industry_keywords", {})
 
-        # Define the schema for initial analysis
-        initial_schema = {
-            "type": "object",
-            "properties": {
-                "needs_research": {"type": "boolean"},
-                "search_terms": {"type": "string"},
-                "payee": {"type": "string", "nullable": True},
-                "business_description": {"type": "string", "nullable": True},
-                "general_category": {"type": "string", "nullable": True},
-                "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
-                "reasoning": {"type": "string"},
-            },
-            "required": ["needs_research", "search_terms", "confidence", "reasoning"],
+        # Initialize result with default values
+        result = {
+            "payee": clean_desc,
+            "business_description": "Could not determine business details",
+            "general_category": "Unknown",
+            "confidence": "low",
+            "reasoning": "No vendor information found",
         }
 
         try:
-            # Get initial analysis using Response framework
-            response = self.client.responses.create(
-                model=self._get_model(),
-                input=[
-                    {
-                        "role": "system",
-                        "content": "You are a payee identification assistant that provides structured responses.",
-                    },
-                    {
-                        "role": "user",
-                        "content": f"""Analyze this transaction description and identify if this is a well-known business or needs research:
+            # Build prompt for initial analysis
+            prompt = """Analyze this transaction description and identify if this is a well-known business or needs research:
 
 Transaction: {description}
 
 Business Context:
-{profile.get('business_description', '')}
+{business_context}
 
 Industry Keywords:
-{json.dumps(industry_keywords, indent=2) if industry_keywords else 'None'}
+{industry_keywords}
 
 Rules:
 1. For well-known businesses (e.g., Walmart, Target, McDonald's, etc.), provide details directly
@@ -966,178 +1028,155 @@ Rules:
 4. Remove transaction prefixes/suffixes and focus on the actual business name
 5. Don't make assumptions based on business names alone
 6. Consider transaction context and likely business type
-7. Consider industry-specific keywords when analyzing business names""",
-                    },
-                ],
-                text={
-                    "format": {
-                        "type": "json_schema",
-                        "schema": initial_schema,
-                        "strict": True,
-                    }
-                },
+7. Consider industry-specific keywords when analyzing business names
+
+Respond with a JSON object containing:
+{{
+    "needs_research": true/false,
+    "search_terms": "terms to search if research needed",
+    "payee": "Business name if well-known, otherwise null",
+    "business_description": "Description if well-known, otherwise null",
+    "general_category": "Category if well-known, otherwise null",
+    "confidence": "high, medium, or low",
+    "reasoning": "Explanation of the identification"
+}}""".format(
+                description=description,
+                business_context=profile.get("business_description", ""),
+                industry_keywords=(
+                    json.dumps(industry_keywords, indent=2)
+                    if industry_keywords
+                    else "None"
+                ),
             )
 
-            initial_analysis = json.loads(response.output_text)
+            # Get completion from OpenAI
+            response = self.client.chat.completions.create(
+                model=self._get_model(),
+                response_format={"type": "json_object"},
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a payee identification assistant that provides JSON responses.",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+            )
+
+            # Parse response
+            initial_analysis = json.loads(response.choices[0].message.content)
 
             # If it's a well-known business, use that directly
             if not initial_analysis.get("needs_research", True):
                 logger.info(
                     f"{row_info} ✓ Identified as well-known business: {initial_analysis['payee']}"
                 )
-                return PayeeResponse(
-                    payee=initial_analysis["payee"],
-                    business_description=initial_analysis["business_description"],
-                    general_category=initial_analysis["general_category"],
-                    confidence=initial_analysis["confidence"],
-                    reasoning=initial_analysis["reasoning"],
-                )
+                result = {
+                    "payee": initial_analysis["payee"],
+                    "business_description": initial_analysis["business_description"],
+                    "general_category": initial_analysis["general_category"],
+                    "confidence": initial_analysis["confidence"],
+                    "reasoning": initial_analysis["reasoning"],
+                }
+            else:
+                # If research is needed, use the suggested search terms
+                search_terms = initial_analysis.get("search_terms", clean_desc)
+                logger.info(f"{row_info} 🔍 Looking up vendor info for: {search_terms}")
 
-            # If research is needed, use the suggested search terms
-            search_terms = initial_analysis.get("search_terms", clean_desc)
-            logger.info(f"{row_info} 🔍 Looking up vendor info for: {search_terms}")
-
-            try:
-                # Try first search with industry context
-                vendor_results = lookup_vendor_info(
-                    search_terms,
-                    max_results=15,
-                    industry_keywords=industry_keywords,
-                    search_query=(
-                        f"{search_terms} {profile.get('business_type', '')}"
-                        if profile
-                        else None
-                    ),
-                )
-
-                if vendor_results:
-                    # Analyze all search results together
-                    analysis_result = self._analyze_search_results(
-                        search_terms, vendor_results, profile
+                try:
+                    # Try first search with industry context
+                    vendor_results = lookup_vendor_info(
+                        search_terms,
+                        max_results=15,
+                        industry_keywords=industry_keywords,
+                        search_query=(
+                            f"{search_terms} {profile.get('business_type', '')}"
+                            if profile
+                            else None
+                        ),
                     )
 
-                    if analysis_result and analysis_result.get("confidence") == "high":
-                        logger.info(
-                            f"{row_info} ✓ Found and verified vendor with industry context: {analysis_result['payee']}"
-                        )
-                        logger.info(
-                            f"{row_info} 📋 Description: {analysis_result['business_description'][:200]}..."
+                    if vendor_results:
+                        # Analyze all search results together
+                        result = self._analyze_search_results(
+                            search_terms, vendor_results, profile
                         )
 
-                        # Cache the result
-                        self._cache_result(cache_key, "payee", analysis_result)
-                        return PayeeResponse(**analysis_result)
+                        if result and result.get("confidence") == "high":
+                            logger.info(
+                                f"{row_info} ✓ Found and verified vendor with industry context: {result['payee']}"
+                            )
+                            logger.info(
+                                f"{row_info} 📋 Description: {result['business_description'][:200]}..."
+                            )
+                        else:
+                            # If no high confidence match, try without industry context
+                            logger.info(
+                                f"{row_info} 🔍 Trying search without industry context..."
+                            )
+                            vendor_results_no_context = lookup_vendor_info(
+                                search_terms, max_results=15
+                            )
 
-                    # If no high confidence match, try without industry context
+                            if vendor_results_no_context:
+                                result = self._analyze_search_results(
+                                    search_terms, vendor_results_no_context, profile
+                                )
+                                if result:
+                                    logger.info(
+                                        f"{row_info} ✓ Found vendor without industry context: {result['payee']}"
+                                    )
+                                    logger.info(
+                                        f"{row_info} 📋 Description: {result['business_description'][:200]}..."
+                                    )
+
+                    if not result:
+                        logger.info(f"{row_info} ⚠ No good search matches found")
+                        # Fall back to initial analysis or cleaned description
+                        result = {
+                            "payee": clean_desc,
+                            "business_description": "Could not determine business details",
+                            "general_category": "Unknown",
+                            "confidence": "low",
+                            "reasoning": "No good vendor matches found",
+                        }
+
+                except Exception as e:
+                    logger.warning(f"{row_info} ⚠ Vendor lookup failed: {str(e)}")
+                    logger.warning(f"{row_info} ⚠ Traceback: {traceback.format_exc()}")
+                    result = {
+                        "payee": clean_desc,
+                        "business_description": "Could not determine business details",
+                        "general_category": "Unknown",
+                        "confidence": "low",
+                        "reasoning": f"Vendor lookup failed: {str(e)}",
+                    }
+
+            # Only cache if we have a new result with high/medium confidence
+            if result and result.get("confidence") in ["high", "medium"]:
+                # When caching results, use standardized key if we have a payee
+                final_key = self._get_cache_key(description, result["payee"])
+                if final_key != cache_key:
                     logger.info(
-                        f"{row_info} 🔍 Trying search without industry context..."
+                        f"{row_info} 📝 Updating cache with standardized key: {final_key}"
                     )
-                    vendor_results_no_context = lookup_vendor_info(
-                        search_terms, max_results=15
+                    self._cache_result(final_key, "payee", result)
+                else:
+                    logger.info(
+                        f"{row_info} 📝 Caching payee result with key: {cache_key}"
                     )
+                    self._cache_result(cache_key, "payee", result)
 
-                    if vendor_results_no_context:
-                        analysis_result_no_context = self._analyze_search_results(
-                            search_terms, vendor_results_no_context, profile
-                        )
+            return PayeeResponse(**result)
 
-                        if analysis_result_no_context:
-                            logger.info(
-                                f"{row_info} ✓ Found vendor without industry context: {analysis_result_no_context['payee']}"
-                            )
-                            logger.info(
-                                f"{row_info} 📋 Description: {analysis_result_no_context['business_description'][:200]}..."
-                            )
-
-                            # Cache the result
-                            self._cache_result(
-                                cache_key, "payee", analysis_result_no_context
-                            )
-                            return PayeeResponse(**analysis_result_no_context)
-
-                logger.info(f"{row_info} ⚠ No good search matches found")
-
-            except Exception as e:
-                logger.warning(f"{row_info} ⚠ Vendor lookup failed: {str(e)}")
-                logger.warning(f"{row_info} ⚠ Traceback: {traceback.format_exc()}")
-
-            # If we get here, fall back to LLM for final attempt
-            logger.info(f"{row_info} 🤖 Making final attempt with LLM...")
-
-            final_prompt = f"""Make a final attempt to identify this business:
-
-Transaction: {description}
-
-Business Context:
-{profile.get('business_description', '')}
-
-Industry Keywords:
-{json.dumps(industry_keywords, indent=2) if industry_keywords else 'None'}
-
-Rules:
-1. Use your knowledge to identify the business type and category
-2. If it's a local business, extract the business name and location
-3. If it's a chain or franchise, use the standard name
-4. Provide as much detail as possible about the business type
-5. If truly uncertain, be conservative in confidence level
-6. Don't make assumptions based on business names alone
-7. Consider transaction context and amount
-8. Consider industry-specific keywords when analyzing
-
-Respond with a JSON object containing:
-{{
-    "payee": "Best identified business name",
-    "business_description": "Detailed description of what this business does",
-    "general_category": "General business category",
-    "confidence": "high, medium, or low",
-    "reasoning": "Detailed explanation of how you identified this payee"
-}}"""
-
-            try:
-                response = self.client.chat.completions.create(
-                    model=self._get_model(),
-                    response_format={"type": "json_object"},
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": "You are a payee identification assistant that provides JSON responses.",
-                        },
-                        {"role": "user", "content": final_prompt},
-                    ],
-                )
-
-                result = json.loads(response.choices[0].message.content)
-
-                # Clean up the payee name
-                result["payee"] = re.sub(r"\s+", " ", result["payee"].strip())
-
-                # Cache the result
-                self._cache_result(cache_key, "payee", result)
-
-                logger.info(
-                    f"{row_info} ✓ Final LLM identification: {result['payee']} ({result['confidence']})"
-                )
-                return PayeeResponse(**result)
-
-            except Exception as e:
-                logger.error(f"{row_info} ❌ Final LLM identification failed: {str(e)}")
-                # Return a minimal valid response
-                return PayeeResponse(
-                    payee=clean_desc,
-                    business_description="Could not determine business details",
-                    general_category="Unknown",
-                    confidence="low",
-                    reasoning=f"Error during identification: {str(e)}",
-                )
         except Exception as e:
-            logger.error(f"{row_info} ❌ Initial analysis failed: {str(e)}")
-            # Return a minimal valid response
+            logger.error(f"{row_info} ❌ Payee identification failed: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return PayeeResponse(
                 payee=clean_desc,
                 business_description="Could not determine business details",
                 general_category="Unknown",
                 confidence="low",
-                reasoning=f"Error during initial analysis: {str(e)}",
+                reasoning=f"Error during identification: {str(e)}",
             )
 
     def _categorize_business(self, description: str) -> str:
@@ -1216,38 +1255,38 @@ Payee: {payee}"""
         if general_category:
             transaction_context += f"\nGeneral Category from Pass 1: {general_category}"
 
-        # Add IRS compliance rules
-        irs_rules = """
-IRS Compliance Rules:
-1. Fast food and restaurant meals are personal expenses unless clear business purpose documented
-2. Real estate photography and marketing are always business advertising expenses
-3. Mixed-use expenses must have documented business purpose and percentage
-4. Personal items cannot be classified as business expenses
-5. Default to personal expense if business purpose is not clearly documented
+        # Create the prompt based on model type
+        if self.model_type == "fast":
+            prompt = f"""Analyze this transaction and determine:
 
-Special Rules for Real Estate:
-1. Photography and virtual tours are Advertising expenses
-2. Marketing materials and services are Advertising expenses
-3. Property staging and presentation costs are Advertising expenses
-4. Documentation must show direct relation to property marketing"""
-
-        # Create the prompt
-        prompt = f"""{transaction_context}
-
-{irs_rules}
+{transaction_context}
 
 Available Categories:
 {', '.join(available_categories)}
 
-Respond with a JSON object containing ONLY these fields:
-{{
-    "category": "The most appropriate category from the list",
-    "expense_type": "business or personal (use business for mixed-use with appropriate percentage)",
-    "business_percentage": "0-100 (100 for fully business, 0 for personal, or appropriate percentage for mixed-use)",
-    "notes": "Brief explanation including business purpose, IRS compliance justification, and documentation requirements",
-    "confidence": "high, medium, or low",
-    "detailed_context": "Detailed business context and reasoning"
-}}"""
+Respond with a JSON object containing:
+1. category: The most appropriate category from the list
+2. expense_type: "business", "personal", or "mixed"
+3. business_percentage: 0-100 (100 for business, 0 for personal, or percentage for mixed)
+4. notes: Brief explanation of the categorization"""
+        else:
+            prompt = f"""Analyze this transaction in detail:
+
+{transaction_context}
+
+Business Context:
+{self.business_context}
+
+Available Categories:
+{', '.join(available_categories)}
+
+Respond with a JSON object containing:
+1. category: The most appropriate category from the list
+2. expense_type: "business", "personal", or "mixed"
+3. business_percentage: 0-100 (100 for business, 0 for personal, or percentage for mixed)
+4. notes: Brief explanation of the categorization
+5. confidence: "high", "medium", or "low"
+6. detailed_context: Detailed business context and reasoning"""
 
         return prompt
 
@@ -1260,206 +1299,143 @@ Respond with a JSON object containing ONLY these fields:
         business_description: str = None,
         general_category: str = None,
         force_process: bool = False,
+        row_info: str = "",
     ) -> CategoryResponse:
-        """Get category information for a transaction."""
+        """Get category for a transaction."""
         try:
-            # Check cache
+            # Generate cache key using cleaned description and payee
             cache_key = self._get_cache_key(
-                transaction_description, payee, general_category
+                self._clean_description(transaction_description),
+                self._clean_description(payee) if payee else None,
             )
+
+            # Check cache first unless forced
             if not force_process:
+                logger.info(
+                    f"{row_info} 🔍 Checking category cache with key: {cache_key}"
+                )
                 cached_result = self._get_cached_result(cache_key, "category")
                 if cached_result:
-                    return CategoryResponse(**cached_result)
-
-            # Load client profile and patterns
-            profile = self.profile_manager._load_profile()
-            if not profile:
-                logger.error("No client profile found")
-                raise ValueError("Client profile not found")
-
-            # Define the schema for category classification
-            category_schema = {
-                "type": "object",
-                "properties": {
-                    "category": {
-                        "type": "string",
-                        "description": "The most appropriate category from the list",
-                    },
-                    "expense_type": {
-                        "type": "string",
-                        "enum": ["business", "personal", "mixed"],
-                        "description": "Type of expense",
-                    },
-                    "business_percentage": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "maximum": 100,
-                        "description": "Percentage of business use",
-                    },
-                    "notes": {
-                        "type": "string",
-                        "description": "Brief explanation including business purpose",
-                    },
-                    "confidence": {
-                        "type": "string",
-                        "enum": ["high", "medium", "low"],
-                        "description": "Confidence in the classification",
-                    },
-                    "detailed_context": {
-                        "type": "string",
-                        "description": "Detailed business context and reasoning",
-                    },
-                },
-                "required": [
-                    "category",
-                    "expense_type",
-                    "business_percentage",
-                    "notes",
-                    "confidence",
-                ],
-            }
-
-            # Get category patterns and industry keywords
-            category_patterns = profile.get("category_patterns", {})
-            industry_keywords = profile.get("industry_keywords", {})
-
-            # First check for matches in category patterns
-            for category, patterns in category_patterns.items():
-                # Check in transaction description
-                if any(
-                    pattern.lower() in transaction_description.lower()
-                    for pattern in patterns
-                ):
-                    result = {
-                        "category": category,
-                        "expense_type": "business",
-                        "business_percentage": 100,
-                        "confidence": "high",
-                        "notes": f"Matched category pattern for {category}. This is a standard business expense.",
-                        "detailed_context": f"Transaction matches known patterns for {category} expenses in the client's business profile.",
+                    # Validate cached result has required fields
+                    required_fields = {
+                        "category",
+                        "expense_type",
+                        "business_percentage",
+                        "confidence",
                     }
-                    return CategoryResponse(**result)
+                    missing_fields = required_fields - set(cached_result.keys())
 
-            # Use Response framework for AI categorization
-            response = self.client.responses.create(
-                model=self._get_model(),
-                input=[
-                    {
-                        "role": "system",
-                        "content": "You are a transaction categorization assistant that provides structured responses.",
-                    },
-                    {
-                        "role": "user",
-                        "content": f"""Categorize this transaction:
+                    # Use cache if complete and high/medium confidence
+                    if not missing_fields and cached_result.get("confidence") in [
+                        "high",
+                        "medium",
+                    ]:
+                        logger.info(
+                            f"{row_info} ✓ Using cached category: {cached_result['category']} (confidence: {cached_result['confidence']})"
+                        )
+                        return CategoryResponse(**cached_result)
+                    else:
+                        logger.info(
+                            f"{row_info} ⚠ Invalid or low confidence cache hit, will recompute"
+                        )
+                else:
+                    logger.info(f"{row_info} ⚠ No category cache hit, will compute")
 
-Transaction Description: {transaction_description}
-Amount: ${amount}
-Date: {date}
-Payee: {payee or 'Unknown'}
-Business Description: {business_description or 'Not provided'}
-General Category: {general_category or 'Not provided'}
+            # Only proceed with OpenAI call if we didn't get a valid cache hit
+            logger.info(f"{row_info} 🤖 Getting category from OpenAI")
 
-Client Business Context:
-Business Type: {profile.get('business_type', '')}
-Business Description: {profile.get('business_description', '')}
-Industry Keywords: {json.dumps(industry_keywords, indent=2)}
-Category Patterns: {json.dumps(category_patterns, indent=2)}
-Industry Insights: {profile.get('industry_insights', '')}
-
-Available Categories:
-{', '.join(self._get_available_categories())}
-
-IRS Compliance Rules:
-1. Fast food and restaurant meals are personal expenses unless clear business purpose documented
-2. Real estate photography and marketing are always business advertising expenses
-3. Mixed-use expenses must have documented business purpose and percentage
-4. Personal items cannot be classified as business expenses
-5. Default to personal expense if business purpose is not clearly documented""",
-                    },
-                ],
-                text={
-                    "format": {
-                        "type": "json_schema",
-                        "schema": category_schema,
-                        "strict": True,
-                    }
-                },
+            # Build the prompt
+            prompt = self._build_category_prompt(
+                transaction_description,
+                payee or "Unknown",
+                business_description,
+                general_category,
             )
 
-            result = json.loads(response.output_text)
+            # Get response from LLM
+            response = self.client.chat.completions.create(
+                model=self._get_model(),
+                response_format={"type": "json_object"},
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a transaction categorization assistant that provides JSON responses.",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+            )
 
-            # Create CategoryResponse object and cache
+            result = json.loads(response.choices[0].message.content)
+
+            # Create CategoryResponse object
             category_response = CategoryResponse(**result)
-            self._cache_result(cache_key, "category", category_response.__dict__)
+
+            # Only cache if we have a high/medium confidence result
+            if category_response.confidence in ["high", "medium"]:
+                logger.info(
+                    f"{row_info} 📝 Caching category result with key: {cache_key}"
+                )
+                self._cache_result(cache_key, "category", category_response.__dict__)
+
             return category_response
 
         except Exception as e:
-            logger.error(f"Error in _get_category: {str(e)}")
+            logger.error(f"{row_info} ❌ Error in category assignment: {str(e)}")
             logger.error(f"Traceback: {traceback.format_exc()}")
             raise
 
     def _validate_category_response(self, category_info: CategoryResponse) -> bool:
-        """Validate and potentially override category response based on business rules."""
-        # Load client profile
-        profile = self.db.load_profile(self.client_name)
-        if not profile:
-            logger.warning(f"No profile found for client {self.client_name}")
-            return True
-
-        # Get patterns from profile
-        personal_patterns = profile.get("personal_patterns", [])
-        category_patterns = profile.get("category_patterns", {})
-        industry_keywords = profile.get("industry_keywords", {})
-
-        desc_lower = ""
-        if hasattr(category_info, "description"):
-            desc_lower = str(category_info.description or "").lower()
-        if hasattr(category_info, "business_description"):
-            desc_lower += " " + str(category_info.business_description or "").lower()
-
-        # Calculate business relevance from industry keywords
-        business_relevance = 0
-        relevant_keywords = []
-        for keyword, confidence in industry_keywords.items():
-            if keyword.lower() in desc_lower:
-                business_relevance += float(confidence)
-                relevant_keywords.append(keyword)
-
-        # Validate and potentially override categorization
+        """Validate category response with stricter business rules."""
+        # Special handling for real estate marketing expenses
         if (
-            personal_patterns
-            and any(pattern.lower() in desc_lower for pattern in personal_patterns)
-            and business_relevance < 0.8
+            category_info.business_description
+            and any(
+                kw in category_info.business_description.lower()
+                for kw in [
+                    "photography",
+                    "photo",
+                    "virtual tour",
+                    "3d tour",
+                    "marketing",
+                ]
+            )
+            and "real estate" in category_info.business_description.lower()
         ):
-            # Override to personal unless there's strong business evidence
-            if not (
-                category_info.notes
-                and "business purpose documented" in category_info.notes.lower()
-            ):
-                category_info.expense_type = "personal"
-                category_info.business_percentage = 0
-                category_info.confidence = "high"
-                category_info.notes = "Defaulted to personal expense - matches personal expense patterns and no clear business purpose documented."
-                return True
-
-        # Check against category patterns from profile
-        for category, patterns in category_patterns.items():
-            if any(pattern.lower() in desc_lower for pattern in patterns):
-                category_info.category = category
-                category_info.expense_type = "business"
-                category_info.business_percentage = 100
-                category_info.confidence = "high"
-                category_info.notes = f"Category adjusted based on client profile pattern match for {category}."
-                return True
-
-        # If high business relevance but no specific category matched
-        if business_relevance > 0.8:
+            # Override any previous classification
             category_info.expense_type = "business"
             category_info.business_percentage = 100
-            category_info.confidence = "high"
-            category_info.notes = f"Classified as business expense due to high relevance of industry keywords: {', '.join(relevant_keywords)}"
+            category_info.category = "Advertising"
+            category_info.category_confidence = "high"
+            category_info.notes = "Real estate photography and marketing services are essential business expenses."
             return True
+
+        # Regular validation rules
+        if (
+            category_info.expense_type == "business"
+            and category_info.category_confidence != "high"
+        ):
+            # Downgrade to personal if not high confidence
+            category_info.expense_type = "personal"
+            category_info.business_percentage = 0
+            category_info.notes += (
+                " [Downgraded to personal due to insufficient confidence]"
+            )
+
+        if category_info.business_percentage > 0:
+            # List of categories that are typically personal
+            personal_categories = [
+                "Groceries",
+                "Restaurants",
+                "Retail",
+                "Entertainment",
+            ]
+            if (
+                category_info.category in personal_categories
+                and category_info.category_confidence != "high"
+            ):
+                category_info.business_percentage = 0
+                category_info.expense_type = "personal"
+                category_info.notes += " [Downgraded to personal due to category type]"
 
         return True
 
@@ -1474,95 +1450,75 @@ IRS Compliance Rules:
         general_category: str = None,
         business_context: str = None,
         force_process: bool = False,
+        row_info: str = "",
     ) -> ClassificationResponse:
         """Process a single transaction and classify it for tax purposes."""
         try:
-            # Check cache first
-            cache_key = self._get_cache_key(description, payee, category)
+            # Handle personal expenses first
+            if expense_type == "personal":
+                result = {
+                    "tax_category": "Not Applicable",
+                    "tax_subcategory": "Personal Expense",
+                    "worksheet": "6A",
+                    "confidence": "high",
+                    "reasoning": "This is a personal expense and not applicable for tax deductions.",
+                }
+                return ClassificationResponse(**result)
+
+            # Generate cache key consistently using cleaned values and lowercase category
+            cache_key = self._get_cache_key(
+                self._clean_description(description),
+                self._clean_description(payee) if payee else None,
+                category.lower() if category else None,
+            )
+            logger.info(
+                f"{row_info} 🔍 Checking tax classification cache with key: {cache_key}"
+            )
+
+            # Check cache first unless forced
             if not force_process:
                 cached_result = self._get_cached_result(cache_key, "classification")
                 if cached_result:
-                    return ClassificationResponse(**cached_result)
+                    # Validate cached result has required fields
+                    required_fields = {
+                        "tax_category",
+                        "tax_subcategory",
+                        "worksheet",
+                        "confidence",
+                    }
+                    missing_fields = required_fields - set(cached_result.keys())
 
-            # Special handling for real estate photography/marketing
-            if business_description and any(
-                kw in business_description.lower()
-                for kw in [
-                    "photography",
-                    "photo",
-                    "virtual tour",
-                    "3d tour",
-                    "marketing",
-                ]
-            ):
-                if "real estate" in business_description.lower():
-                    return ClassificationResponse(
-                        tax_category="Advertising",
-                        tax_subcategory="Marketing and Photography",
-                        worksheet="6A",  # Always use 6A for advertising expenses
-                        confidence="high",
-                        reasoning="Real estate photography and marketing services are essential business expenses for property promotion and are fully deductible as advertising costs.",
+                    # Use cache if complete and high/medium confidence
+                    if not missing_fields and cached_result.get("confidence") in [
+                        "high",
+                        "medium",
+                    ]:
+                        logger.info(
+                            f"{row_info} ✓ Using cached tax classification: {cached_result['tax_category']} (confidence: {cached_result['confidence']})"
+                        )
+                        return ClassificationResponse(**cached_result)
+                    else:
+                        logger.info(
+                            f"{row_info} ⚠ Invalid or low confidence cache hit, will recompute"
+                        )
+                else:
+                    logger.info(
+                        f"{row_info} ⚠ No tax classification cache hit, will compute"
                     )
 
-            # Handle personal expenses
-            if expense_type == "personal":
-                return ClassificationResponse(
-                    tax_category="Not Applicable",
-                    tax_subcategory="Personal Expense",
-                    worksheet="6A",
-                    confidence="high",
-                    reasoning="This is a personal expense and not applicable for tax deductions.",
-                )
+            # Only proceed with OpenAI call if we didn't get a valid cache hit
+            logger.info(f"{row_info} 🤖 Getting tax classification from OpenAI")
 
-            # Define schema for tax classification
-            tax_schema = {
-                "type": "object",
-                "properties": {
-                    "tax_category": {
-                        "type": "string",
-                        "description": "IRS Schedule C category",
-                    },
-                    "tax_subcategory": {
-                        "type": "string",
-                        "description": "Specific subcategory if applicable",
-                    },
-                    "worksheet": {
-                        "type": "string",
-                        "enum": ["6A", "Vehicle", "HomeOffice"],
-                        "description": "Tax worksheet to use",
-                    },
-                    "confidence": {
-                        "type": "string",
-                        "enum": ["high", "medium", "low"],
-                        "description": "Confidence in classification",
-                    },
-                    "reasoning": {
-                        "type": "string",
-                        "description": "Detailed explanation of classification",
-                    },
-                },
-                "required": ["tax_category", "worksheet", "confidence", "reasoning"],
-            }
-
-            # Use Response framework for tax classification
-            response = self.client.responses.create(
-                model=self._get_model(),
-                input=[
-                    {
-                        "role": "system",
-                        "content": "You are a tax classification assistant that provides structured responses.",
-                    },
-                    {
-                        "role": "user",
-                        "content": f"""Classify this business expense for tax purposes:
+            # Build prompt for tax classification
+            prompt = """Classify this business expense for tax purposes:
 
 Transaction: {description}
 Payee: {payee}
 Category: {category}
 Business Percentage: {business_percentage}%
-Business Description: {business_description or 'Not provided'}
-General Category: {general_category or 'Not provided'}
-Business Context: {business_context or 'Not provided'}
+Business Description: {business_description}
+General Category: {general_category}
+Business Context: {business_context}
 
 Rules:
 1. Use IRS Schedule C (Form 1040) categories
@@ -1571,48 +1527,56 @@ Rules:
 4. Provide specific subcategory if applicable
 5. Include detailed reasoning for classification
 
-Special Rules:
-1. Real estate photography/marketing is Advertising expense on Form 6A
-2. Property management software is Office Expenses on Form 6A
-3. Real estate training is Professional Development on Form 6A
-4. Property maintenance is Repairs and Maintenance on Form 6A
-5. Real estate commissions are Commissions and Fees on Form 6A
-6. Vehicle expenses go on Vehicle worksheet
-7. Home office expenses go on HomeOffice worksheet""",
-                    },
-                ],
-                text={
-                    "format": {
-                        "type": "json_schema",
-                        "schema": tax_schema,
-                        "strict": True,
-                    }
-                },
+Return a JSON object:
+{{
+    "tax_category": "IRS Schedule C category",
+    "tax_subcategory": "Specific subcategory",
+    "worksheet": "6A, Vehicle, or HomeOffice",
+    "confidence": "high, medium, or low",
+    "reasoning": "detailed explanation"
+}}""".format(
+                description=description,
+                payee=payee,
+                category=category,
+                business_percentage=business_percentage,
+                business_description=business_description or "Not provided",
+                general_category=general_category or "Not provided",
+                business_context=business_context or "Not provided",
             )
 
-            result = json.loads(response.output_text)
+            # Get completion from OpenAI
+            response = self.client.chat.completions.create(
+                model=self._get_model(),
+                response_format={"type": "json_object"},
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a tax classification assistant that provides JSON responses.",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+            )
+
+            result = json.loads(response.choices[0].message.content)
 
             # Validate worksheet value
             if result["worksheet"] not in ["6A", "Vehicle", "HomeOffice"]:
-                # Default to 6A if invalid worksheet
                 result["worksheet"] = "6A"
                 result["reasoning"] += "\nDefaulted to Form 6A as the worksheet."
 
-            # Cache the result
-            self._cache_result(cache_key, "classification", result)
+            # Only cache if we have a high/medium confidence result
+            if result["confidence"] in ["high", "medium"]:
+                logger.info(
+                    f"{row_info} 📝 Caching tax classification result with key: {cache_key}"
+                )
+                self._cache_result(cache_key, "classification", result)
 
             return ClassificationResponse(**result)
 
         except Exception as e:
-            logger.error(f"❌ Error classifying transaction: {str(e)}")
-            traceback.print_exc()
-            return ClassificationResponse(
-                tax_category="Classification Failed",
-                tax_subcategory="Error",
-                worksheet="6A",  # Default to 6A on error
-                confidence="low",
-                reasoning=f"Error occurred during classification: {str(e)}",
-            )
+            logger.error(f"{row_info} ❌ Error in tax classification: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            raise
 
     def _get_business_context(self) -> str:
         """Get formatted business context for AI prompts."""
@@ -1963,7 +1927,9 @@ Return a JSON object with:
             # Pass 1: Payee identification
             logger.info(f"{Fore.GREEN}▶ PASS 1: Payee Identification{Style.RESET_ALL}")
             payee_info = self._get_payee(
-                transaction["description"], row_number, force_process
+                transaction["description"],
+                row_info=f"[Row {row_number}]",
+                force_process=force_process,
             )
 
             # Update transaction with payee info
@@ -2004,6 +1970,7 @@ Return a JSON object with:
                 business_description=payee_info.business_description,
                 general_category=payee_info.general_category,
                 force_process=force_process,
+                row_info=f"[Row {row_number}]",
             )
 
             # Update transaction with category info
@@ -2051,7 +2018,7 @@ Return a JSON object with:
             # Skip personal expenses from detailed tax classification
             if category_info.expense_type == "personal":
                 logger.info(
-                    f"[Row {row_number}] ℹ Personal expense, setting minimal tax classification"
+                    f"{Fore.GREEN}ℹ Personal expense, setting minimal tax classification{Style.RESET_ALL}"
                 )
                 classification_info = ClassificationResponse(
                     tax_category="Not Applicable",
@@ -2063,7 +2030,7 @@ Return a JSON object with:
             else:
                 # Get classification info from LLM
                 logger.info(
-                    f"[Row {row_number}] 🤖 Getting tax classification for: {category_info.category}"
+                    f"{Fore.GREEN}🤖 Getting tax classification for: {category_info.category}{Style.RESET_ALL}"
                 )
                 classification_info = self._get_classification(
                     transaction["description"],
@@ -2074,7 +2041,8 @@ Return a JSON object with:
                     payee_info.business_description,
                     payee_info.general_category,
                     category_info.detailed_context,
-                    force_process,
+                    force_process=force_process,
+                    row_info=f"[Row {row_number}]",
                 )
 
             # Update transaction with classification info
@@ -2129,41 +2097,6 @@ Return a JSON object with:
             # Check if prompt contains JSON request
             needs_json = "Return JSON" in prompt or "JSON response" in prompt
 
-            if needs_json:
-                # Extract the JSON schema from the prompt
-                schema_match = re.search(
-                    r"Return.*JSON.*object.*?{(.*?)}", prompt, re.DOTALL
-                )
-                if schema_match:
-                    schema_str = "{" + schema_match.group(1) + "}"
-                    try:
-                        schema = json.loads(schema_str)
-                        response = self.client.responses.create(
-                            model=self._get_model(),
-                            input=[
-                                {
-                                    "role": "system",
-                                    "content": "You are a transaction analysis assistant that provides structured responses.",
-                                },
-                                {"role": "user", "content": prompt},
-                            ],
-                            text={
-                                "format": {
-                                    "type": "json_schema",
-                                    "schema": schema,
-                                    "strict": True,
-                                }
-                            },
-                        )
-                        return response.output_text.strip()
-                    except json.JSONDecodeError:
-                        # Fall back to regular completion if schema parsing fails
-                        logger.warning(
-                            "Failed to parse JSON schema from prompt, falling back to regular completion"
-                        )
-                        pass
-
-            # Regular completion for non-JSON responses or if schema parsing failed
             response = self.client.chat.completions.create(
                 model=self._get_model(),
                 messages=[
