@@ -923,8 +923,33 @@ class TransactionClassifier:
         # First, try to identify common/well-known businesses using LLM
         logger.info(f"{row_info} 🤖 Analyzing transaction description...")
 
-        # Build prompt for initial analysis
-        prompt = f"""Analyze this transaction description and identify if this is a well-known business or needs research:
+        # Define the schema for initial analysis
+        initial_schema = {
+            "type": "object",
+            "properties": {
+                "needs_research": {"type": "boolean"},
+                "search_terms": {"type": "string"},
+                "payee": {"type": "string", "nullable": True},
+                "business_description": {"type": "string", "nullable": True},
+                "general_category": {"type": "string", "nullable": True},
+                "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+                "reasoning": {"type": "string"},
+            },
+            "required": ["needs_research", "search_terms", "confidence", "reasoning"],
+        }
+
+        try:
+            # Get initial analysis using Response framework
+            response = self.client.responses.create(
+                model=self._get_model(),
+                input=[
+                    {
+                        "role": "system",
+                        "content": "You are a payee identification assistant that provides structured responses.",
+                    },
+                    {
+                        "role": "user",
+                        "content": f"""Analyze this transaction description and identify if this is a well-known business or needs research:
 
 Transaction: {description}
 
@@ -941,35 +966,19 @@ Rules:
 4. Remove transaction prefixes/suffixes and focus on the actual business name
 5. Don't make assumptions based on business names alone
 6. Consider transaction context and likely business type
-7. Consider industry-specific keywords when analyzing business names
-
-Respond with a JSON object containing:
-{{
-    "needs_research": true/false,
-    "search_terms": "terms to search if research needed",
-    "payee": "Business name if well-known, otherwise null",
-    "business_description": "Description if well-known, otherwise null",
-    "general_category": "Category if well-known, otherwise null",
-    "confidence": "high, medium, or low",
-    "reasoning": "Explanation of the identification"
-}}"""
-
-        try:
-            # Get completion from OpenAI
-            response = self.client.chat.completions.create(
-                model=self._get_model(),
-                response_format={"type": "json_object"},
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are a payee identification assistant that provides JSON responses.",
+7. Consider industry-specific keywords when analyzing business names""",
                     },
-                    {"role": "user", "content": prompt},
                 ],
+                text={
+                    "format": {
+                        "type": "json_schema",
+                        "schema": initial_schema,
+                        "strict": True,
+                    }
+                },
             )
 
-            # Parse response
-            initial_analysis = json.loads(response.choices[0].message.content)
+            initial_analysis = json.loads(response.output_text)
 
             # If it's a well-known business, use that directly
             if not initial_analysis.get("needs_research", True):
@@ -1269,6 +1278,48 @@ Respond with a JSON object containing ONLY these fields:
                 logger.error("No client profile found")
                 raise ValueError("Client profile not found")
 
+            # Define the schema for category classification
+            category_schema = {
+                "type": "object",
+                "properties": {
+                    "category": {
+                        "type": "string",
+                        "description": "The most appropriate category from the list",
+                    },
+                    "expense_type": {
+                        "type": "string",
+                        "enum": ["business", "personal", "mixed"],
+                        "description": "Type of expense",
+                    },
+                    "business_percentage": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 100,
+                        "description": "Percentage of business use",
+                    },
+                    "notes": {
+                        "type": "string",
+                        "description": "Brief explanation including business purpose",
+                    },
+                    "confidence": {
+                        "type": "string",
+                        "enum": ["high", "medium", "low"],
+                        "description": "Confidence in the classification",
+                    },
+                    "detailed_context": {
+                        "type": "string",
+                        "description": "Detailed business context and reasoning",
+                    },
+                },
+                "required": [
+                    "category",
+                    "expense_type",
+                    "business_percentage",
+                    "notes",
+                    "confidence",
+                ],
+            }
+
             # Get category patterns and industry keywords
             category_patterns = profile.get("category_patterns", {})
             industry_keywords = profile.get("industry_keywords", {})
@@ -1280,124 +1331,63 @@ Respond with a JSON object containing ONLY these fields:
                     pattern.lower() in transaction_description.lower()
                     for pattern in patterns
                 ):
-                    return CategoryResponse(
-                        category=category,
-                        expense_type="business",
-                        business_percentage=100,
-                        confidence="high",
-                        notes=f"Matched category pattern for {category}. This is a standard business expense.",
-                        detailed_context=f"Transaction matches known patterns for {category} expenses in the client's business profile.",
-                    )
+                    result = {
+                        "category": category,
+                        "expense_type": "business",
+                        "business_percentage": 100,
+                        "confidence": "high",
+                        "notes": f"Matched category pattern for {category}. This is a standard business expense.",
+                        "detailed_context": f"Transaction matches known patterns for {category} expenses in the client's business profile.",
+                    }
+                    return CategoryResponse(**result)
 
-                # Check in business description if available
-                if business_description and any(
-                    pattern.lower() in business_description.lower()
-                    for pattern in patterns
-                ):
-                    return CategoryResponse(
-                        category=category,
-                        expense_type="business",
-                        business_percentage=100,
-                        confidence="high",
-                        notes=f"Business description matches pattern for {category}. This is a standard business expense.",
-                        detailed_context=f"Business description matches known patterns for {category} expenses.",
-                    )
+            # Use Response framework for AI categorization
+            response = self.client.responses.create(
+                model=self._get_model(),
+                input=[
+                    {
+                        "role": "system",
+                        "content": "You are a transaction categorization assistant that provides structured responses.",
+                    },
+                    {
+                        "role": "user",
+                        "content": f"""Categorize this transaction:
 
-            # Check for personal expense patterns
-            personal_patterns = [
-                "fast food",
-                "fastfood",
-                "restaurant",
-                "dining",
-                "grocery",
-                "supermarket",
-                "clothing",
-                "personal",
-            ]
-            if any(
-                pattern in transaction_description.lower()
-                for pattern in personal_patterns
-            ):
-                return CategoryResponse(
-                    category="Personal Expense",
-                    expense_type="personal",
-                    business_percentage=0,
-                    confidence="high",
-                    notes="Transaction matches known personal expense patterns.",
-                    detailed_context="This type of transaction is typically personal unless specific business purpose is documented.",
-                )
+Transaction Description: {transaction_description}
+Amount: ${amount}
+Date: {date}
+Payee: {payee or 'Unknown'}
+Business Description: {business_description or 'Not provided'}
+General Category: {general_category or 'Not provided'}
 
-            # Use industry keywords to determine business relevance
-            business_relevance = 0
-            relevant_keywords = []
-            desc_lower = (
-                transaction_description + " " + (business_description or "")
-            ).lower()
-
-            for keyword, confidence in industry_keywords.items():
-                if keyword.lower() in desc_lower:
-                    business_relevance += float(confidence)
-                    relevant_keywords.append(keyword)
-
-            # If strong business relevance found
-            if business_relevance > 0.8 and relevant_keywords:
-                # Determine most appropriate category based on keywords
-                if any(
-                    kw in ["photography", "virtual tour", "marketing", "advertising"]
-                    for kw in relevant_keywords
-                ):
-                    return CategoryResponse(
-                        category="Advertising",
-                        expense_type="business",
-                        business_percentage=100,
-                        confidence="high",
-                        notes=f"Matches business marketing/advertising patterns: {', '.join(relevant_keywords)}",
-                        detailed_context="Marketing and advertising expenses for real estate business.",
-                    )
-                elif any(
-                    kw in ["mls", "subscription", "dues"] for kw in relevant_keywords
-                ):
-                    return CategoryResponse(
-                        category="Dues and Subscriptions",
-                        expense_type="business",
-                        business_percentage=100,
-                        confidence="high",
-                        notes=f"Professional subscription/dues: {', '.join(relevant_keywords)}",
-                        detailed_context="Professional memberships and subscriptions necessary for business.",
-                    )
-
-            # Build the prompt for AI categorization as last resort
-            prompt = self._build_category_prompt(
-                transaction_description,
-                payee or "Unknown",
-                business_description,
-                general_category,
-            )
-
-            # Add client-specific context from profile
-            prompt += f"""
 Client Business Context:
 Business Type: {profile.get('business_type', '')}
 Business Description: {profile.get('business_description', '')}
 Industry Keywords: {json.dumps(industry_keywords, indent=2)}
 Category Patterns: {json.dumps(category_patterns, indent=2)}
 Industry Insights: {profile.get('industry_insights', '')}
-"""
 
-            # Get response from LLM
-            response = self.client.chat.completions.create(
-                model=self._get_model(),
-                response_format={"type": "json_object"},
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are a transaction categorization assistant that provides JSON responses.",
+Available Categories:
+{', '.join(self._get_available_categories())}
+
+IRS Compliance Rules:
+1. Fast food and restaurant meals are personal expenses unless clear business purpose documented
+2. Real estate photography and marketing are always business advertising expenses
+3. Mixed-use expenses must have documented business purpose and percentage
+4. Personal items cannot be classified as business expenses
+5. Default to personal expense if business purpose is not clearly documented""",
                     },
-                    {"role": "user", "content": prompt},
                 ],
+                text={
+                    "format": {
+                        "type": "json_schema",
+                        "schema": category_schema,
+                        "strict": True,
+                    }
+                },
             )
 
-            result = json.loads(response.choices[0].message.content)
+            result = json.loads(response.output_text)
 
             # Create CategoryResponse object and cache
             category_response = CategoryResponse(**result)
@@ -1524,8 +1514,47 @@ Industry Insights: {profile.get('industry_insights', '')}
                     reasoning="This is a personal expense and not applicable for tax deductions.",
                 )
 
-            # Build prompt for tax classification
-            prompt = f"""Classify this business expense for tax purposes:
+            # Define schema for tax classification
+            tax_schema = {
+                "type": "object",
+                "properties": {
+                    "tax_category": {
+                        "type": "string",
+                        "description": "IRS Schedule C category",
+                    },
+                    "tax_subcategory": {
+                        "type": "string",
+                        "description": "Specific subcategory if applicable",
+                    },
+                    "worksheet": {
+                        "type": "string",
+                        "enum": ["6A", "Vehicle", "HomeOffice"],
+                        "description": "Tax worksheet to use",
+                    },
+                    "confidence": {
+                        "type": "string",
+                        "enum": ["high", "medium", "low"],
+                        "description": "Confidence in classification",
+                    },
+                    "reasoning": {
+                        "type": "string",
+                        "description": "Detailed explanation of classification",
+                    },
+                },
+                "required": ["tax_category", "worksheet", "confidence", "reasoning"],
+            }
+
+            # Use Response framework for tax classification
+            response = self.client.responses.create(
+                model=self._get_model(),
+                input=[
+                    {
+                        "role": "system",
+                        "content": "You are a tax classification assistant that provides structured responses.",
+                    },
+                    {
+                        "role": "user",
+                        "content": f"""Classify this business expense for tax purposes:
 
 Transaction: {description}
 Payee: {payee}
@@ -1549,31 +1578,19 @@ Special Rules:
 4. Property maintenance is Repairs and Maintenance on Form 6A
 5. Real estate commissions are Commissions and Fees on Form 6A
 6. Vehicle expenses go on Vehicle worksheet
-7. Home office expenses go on HomeOffice worksheet
-
-Respond with a JSON object:
-{{
-    "tax_category": "IRS Schedule C category",
-    "tax_subcategory": "Specific subcategory",
-    "worksheet": "6A, Vehicle, or HomeOffice",
-    "confidence": "high, medium, or low",
-    "reasoning": "Detailed explanation"
-}}"""
-
-            # Get completion from OpenAI
-            response = self.client.chat.completions.create(
-                model=self._get_model(),
-                response_format={"type": "json_object"},
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are a tax classification assistant that provides JSON responses.",
+7. Home office expenses go on HomeOffice worksheet""",
                     },
-                    {"role": "user", "content": prompt},
                 ],
+                text={
+                    "format": {
+                        "type": "json_schema",
+                        "schema": tax_schema,
+                        "strict": True,
+                    }
+                },
             )
 
-            result = json.loads(response.choices[0].message.content)
+            result = json.loads(response.output_text)
 
             # Validate worksheet value
             if result["worksheet"] not in ["6A", "Vehicle", "HomeOffice"]:
@@ -2112,6 +2129,41 @@ Return a JSON object with:
             # Check if prompt contains JSON request
             needs_json = "Return JSON" in prompt or "JSON response" in prompt
 
+            if needs_json:
+                # Extract the JSON schema from the prompt
+                schema_match = re.search(
+                    r"Return.*JSON.*object.*?{(.*?)}", prompt, re.DOTALL
+                )
+                if schema_match:
+                    schema_str = "{" + schema_match.group(1) + "}"
+                    try:
+                        schema = json.loads(schema_str)
+                        response = self.client.responses.create(
+                            model=self._get_model(),
+                            input=[
+                                {
+                                    "role": "system",
+                                    "content": "You are a transaction analysis assistant that provides structured responses.",
+                                },
+                                {"role": "user", "content": prompt},
+                            ],
+                            text={
+                                "format": {
+                                    "type": "json_schema",
+                                    "schema": schema,
+                                    "strict": True,
+                                }
+                            },
+                        )
+                        return response.output_text.strip()
+                    except json.JSONDecodeError:
+                        # Fall back to regular completion if schema parsing fails
+                        logger.warning(
+                            "Failed to parse JSON schema from prompt, falling back to regular completion"
+                        )
+                        pass
+
+            # Regular completion for non-JSON responses or if schema parsing failed
             response = self.client.chat.completions.create(
                 model=self._get_model(),
                 messages=[
