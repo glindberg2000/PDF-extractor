@@ -435,11 +435,14 @@ class TransactionClassifier:
                         if category_info.notes:
                             # Extract expense type
                             expense_type_match = re.search(
-                                r"Expense type:\s*(business|personal|mixed)",
+                                r"Expense type:\s*(business|personal|mixed-use)",
                                 category_info.notes.lower(),
                             )
                             if expense_type_match:
                                 expense_type = expense_type_match.group(1)
+                                # Convert 'mixed-use' to 'mixed' to match database constraint
+                                if expense_type == "mixed-use":
+                                    expense_type = "mixed"
 
                             # Extract business percentage
                             percentage_match = re.search(
@@ -470,19 +473,15 @@ class TransactionClassifier:
                             "category": str(category_info.category),
                             "category_confidence": str(category_info.confidence),
                             "category_reasoning": str(category_info.notes),
-                            "expense_type": str(category_info.expense_type),
-                            "business_percentage": int(
-                                category_info.business_percentage
-                            ),
-                            "business_context": str(
-                                category_info.detailed_context or ""
-                            ),
+                            "expense_type": str(expense_type),
+                            "business_percentage": int(business_percentage),
+                            "business_context": str(business_context or ""),
                             "classification": str(
                                 "Business"
-                                if category_info.expense_type == "business"
+                                if expense_type == "business"
                                 else (
                                     "Personal"
-                                    if category_info.expense_type == "personal"
+                                    if expense_type == "personal"
                                     else "Unclassified"  # Map 'mixed' to 'Unclassified'
                                 )
                             ),
@@ -507,15 +506,11 @@ class TransactionClassifier:
                             "category",
                             {
                                 "category": str(category_info.category),
-                                "expense_type": str(category_info.expense_type),
-                                "business_percentage": int(
-                                    category_info.business_percentage
-                                ),
+                                "expense_type": str(expense_type),
+                                "business_percentage": int(business_percentage),
                                 "notes": str(category_info.notes),
                                 "confidence": str(category_info.confidence),
-                                "detailed_context": str(
-                                    category_info.detailed_context or ""
-                                ),
+                                "detailed_context": str(business_context or ""),
                             },
                         )
 
@@ -531,7 +526,7 @@ class TransactionClassifier:
                     )
 
                     logger.info(
-                        f"{Fore.GREEN}✓ Pass 2 complete: {category_info.category} ({category_info.expense_type}){Style.RESET_ALL}"
+                        f"{Fore.GREEN}✓ Pass 2 complete: {category_info.category} ({expense_type}){Style.RESET_ALL}"
                     )
                     processed_count[2] += 1
 
