@@ -97,6 +97,45 @@ class ExcelReportFormatter:
                 "Other",
             ]
 
+    def _normalize_tax_category(self, category: str) -> str:
+        """Normalize tax category names to prevent duplicates."""
+        if not category:
+            return "Other expenses"
+
+        # Convert to lowercase for comparison
+        category = category.lower().strip()
+
+        # Remove common variations
+        category = category.replace("expense", "").replace("expenses", "").strip()
+
+        # Standard mappings
+        mappings = {
+            "advertising": "Advertising",
+            "car and truck": "Car and truck expenses",
+            "commissions and fee": "Commissions and fees",
+            "contract labor": "Contract labor",
+            "employee benefit": "Employee benefit programs",
+            "insurance": "Insurance (other than health)",
+            "interest": "Interest",
+            "legal and professional": "Legal and professional services",
+            "office": "Office expenses",
+            "rent or lease": "Rent or lease",
+            "repairs and maintenance": "Repairs and maintenance",
+            "supplies": "Supplies",
+            "taxes and license": "Taxes and licenses",
+            "travel and meal": "Travel and meals",
+            "utilities": "Utilities",
+            "wages": "Wages",
+            "other": "Other expenses",
+        }
+
+        # Find the best match
+        for key, value in mappings.items():
+            if key in category:
+                return value
+
+        return "Other expenses"
+
     def create_report(self, data: pd.DataFrame, output_path: str, client_name: str):
         """Create Excel report with validation and charts."""
         # Get categories from business profile
@@ -306,12 +345,12 @@ class ExcelReportFormatter:
                 class_col = get_column_letter(all_columns.index("classification") + 1)
                 last_row = len(data) + 1
 
-                # Get unique tax categories
+                # Get unique tax categories and normalize them
                 tax_categories = set()
                 for i in range(len(data)):
                     tax_cat = data.iloc[i].get("tax_category")
                     if tax_cat and str(tax_cat).lower() != "nan":
-                        tax_categories.add(tax_cat)
+                        tax_categories.add(self._normalize_tax_category(tax_cat))
 
                 # Add "Other expenses" if not present
                 if not tax_categories:
@@ -325,7 +364,7 @@ class ExcelReportFormatter:
                     tax_summary.cell(row=row, column=1, value=category)
 
                     # Total Amount (SUMIFS - only business expenses with this tax category)
-                    total_formula = f'=SUMIFS(Transactions!{amount_col}2:{amount_col}{last_row},Transactions!{tax_col}2:{tax_col}{last_row},"{category}",Transactions!{class_col}2:{class_col}{last_row},"Business")'
+                    total_formula = f'=SUMIFS(Transactions!{amount_col}2:{amount_col}{last_row},Transactions!{tax_col}2:{tax_col}{last_row},"*{category}*",Transactions!{class_col}2:{class_col}{last_row},"Business")'
                     tax_summary.cell(
                         row=row, column=2, value=total_formula
                     ).number_format = '"$"#,##0.00'

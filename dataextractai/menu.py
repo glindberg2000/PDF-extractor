@@ -604,11 +604,7 @@ def start_menu():
                     continue
 
                 # Initialize classifier
-                classifier = TransactionClassifier(
-                    client_name=client_name,
-                    db=db,
-                    model_type="precise" if "Precise" in action else "fast",
-                )
+                classifier = TransactionClassifier(client_name=client_name)
 
                 # Determine processing parameters
                 start_row = None

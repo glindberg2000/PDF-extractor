@@ -31,7 +31,7 @@ async def process_transactions(
 
         # Initialize database and classifier
         db = ClientDB()
-        classifier = TransactionClassifier(client_name, db, model_type)
+        classifier = TransactionClassifier(client_name)
 
         # Process transactions
         print(f"\nProcessing transactions for {client_name}...")

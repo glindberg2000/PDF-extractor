@@ -4,7 +4,7 @@ from dataextractai.db.client_db import ClientDB
 
 def main():
     db = ClientDB()
-    classifier = TransactionClassifier("Tim_Valenti", db, model_type="fast")
+    classifier = TransactionClassifier("Tim_Valenti")
     result = classifier.test_structured_output()
     print(f"Test completed successfully: {result}")
 

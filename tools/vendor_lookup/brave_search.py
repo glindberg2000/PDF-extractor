@@ -32,6 +32,7 @@ import os
 import json
 import time
 import requests
+import re
 from typing import Dict, List, Optional, TypedDict, Union
 from dotenv import load_dotenv
 
@@ -94,95 +95,165 @@ def lookup_vendor_info(
         "LA": "Los Angeles",
         "SF": "San Francisco",
         "PHX": "Phoenix",
+        "NM": "New Mexico",  # Added New Mexico
+        "AZ": "Arizona",  # Added more states
+        "CA": "California",
+        "TX": "Texas",
+        "CO": "Colorado",
     }
 
     # Clean vendor name and extract location
     vendor_parts = vendor_name.split()
     location = None
     if len(vendor_parts) > 1:
-        possible_abbrev = vendor_parts[-1].upper()
-        if possible_abbrev in location_abbreviations:
-            location = location_abbreviations[possible_abbrev]
+        # Check for state abbreviation at the end
+        possible_state = vendor_parts[-1].upper()
+        if possible_state in location_abbreviations:
+            location = location_abbreviations[possible_state]
+            # Remove state from vendor name for search
+            vendor_parts = vendor_parts[:-1]
 
-    # Use provided search query or just vendor name
-    query = search_query if search_query else vendor_name
+        # Check for city name before state
+        if len(vendor_parts) > 2:
+            possible_city = " ".join(vendor_parts[-2:])
+            if any(
+                city.lower() in possible_city.lower()
+                for city in location_abbreviations.values()
+            ):
+                # Found a city, remove it from vendor name
+                vendor_parts = vendor_parts[:-2]
 
-    url = "https://api.search.brave.com/res/v1/web/search"
-    headers = {
-        "Accept": "application/json",
-        "Accept-Encoding": "gzip",
-        "X-Subscription-Token": brave_api_key,
+    # Clean the vendor name - remove store numbers and common suffixes
+    clean_vendor = " ".join(vendor_parts)
+    clean_vendor = re.sub(r"\s*#?\d+\s*", " ", clean_vendor)  # Remove store numbers
+    clean_vendor = re.sub(r"\s+", " ", clean_vendor).strip()  # Clean up whitespace
+
+    # First search: Get basic info about the business
+    initial_query = f"{clean_vendor}"
+    if location:
+        initial_query += f" {location}"
+
+    # Business type keywords to look for in results
+    business_types = {
+        "gas_station": [
+            "gas station",
+            "fuel",
+            "gasoline",
+            "petroleum",
+            "convenience store",
+        ],
+        "retail": ["retail", "store", "supermarket", "department store", "shopping"],
+        "restaurant": ["restaurant", "food", "dining", "cafe", "eatery"],
+        "pharmacy": ["pharmacy", "drug store", "prescription", "medications"],
+        "service": ["service", "repair", "maintenance", "professional"],
     }
-    params = {
-        "q": query,
-        "count": max_results,
-        "text_format": "html",
-    }
 
-    try:
-        response = requests.get(url, headers=headers, params=params)
-        response.raise_for_status()
-        results = response.json()
-    except requests.exceptions.RequestException as e:
-        if response := getattr(e, "response", None):
-            if response.status_code == 429:
-                raise RuntimeError(
-                    "Rate limit exceeded. Wait 1 second between requests."
+    # Add retry logic for rate limits
+    max_retries = 3
+    retry_delay = 1  # Start with 1 second delay
+
+    for attempt in range(max_retries):
+        try:
+            url = "https://api.search.brave.com/res/v1/web/search"
+            headers = {
+                "Accept": "application/json",
+                "Accept-Encoding": "gzip",
+                "X-Subscription-Token": brave_api_key,
+            }
+            params = {
+                "q": initial_query,
+                "count": max_results,
+                "text_format": "html",
+            }
+
+            response = requests.get(url, headers=headers, params=params)
+            response.raise_for_status()
+            results = response.json()
+
+            # Process and score results
+            business_results: List[VendorInfo] = []
+
+            if "web" in results and "results" in results["web"]:
+                # First pass: Identify business type from results
+                business_type_scores = {btype: 0 for btype in business_types}
+
+                for result in results["web"]["results"]:
+                    content = (
+                        result["title"] + " " + result.get("description", "")
+                    ).lower()
+
+                    # Score each business type based on keyword matches
+                    for btype, keywords in business_types.items():
+                        for keyword in keywords:
+                            if keyword in content:
+                                business_type_scores[btype] += 1
+
+                # Get the most likely business type
+                likely_type = (
+                    max(business_type_scores.items(), key=lambda x: x[1])[0]
+                    if any(business_type_scores.values())
+                    else None
                 )
-            error_detail = f"Status: {response.status_code}, Response: {response.text}"
-        else:
-            error_detail = str(e)
-        raise RuntimeError(f"Brave Search API error: {error_detail}")
 
-    # Process and score results
-    business_results: List[VendorInfo] = []
+                # Second pass: Score results with business type context
+                for result in results["web"]["results"]:
+                    relevance_score = 0
+                    title = result["title"]
+                    description = result.get("description", "")
+                    url = result["url"]
+                    content = (title + " " + description).lower()
 
-    if "web" in results and "results" in results["web"]:
-        for result in results["web"]["results"]:
-            relevance_score = 0
-            title = result["title"]
-            description = result.get("description", "")
-            url = result["url"]
+                    # Basic relevance scoring
+                    if clean_vendor.lower() in title.lower():
+                        relevance_score += 5
 
-            # Exact match bonus
-            if vendor_name.lower() == title.lower():
-                relevance_score += 10
+                    # Domain relevance
+                    domain = url.lower().split("//")[-1].split("/")[0]
+                    if clean_vendor.lower().replace(" ", "") in domain:
+                        relevance_score += 3
 
-            # Domain name match
-            domain = url.lower().split("//")[-1].split("/")[0]
-            vendor_domain = vendor_name.lower().replace(" ", "")
-            if vendor_domain in domain:
-                relevance_score += 8
+                    # Location match
+                    if location and location.lower() in content:
+                        relevance_score += 2
 
-            # Partial name match in title
-            if vendor_name.lower() in title.lower():
-                relevance_score += 5
+                    # Business type relevance
+                    if likely_type:
+                        for keyword in business_types[likely_type]:
+                            if keyword in content:
+                                relevance_score += 2
 
-            # Location match
-            if location:
-                if location.lower() in (title + description + url).lower():
-                    relevance_score += 4
+                    if relevance_score > 0:
+                        vendor_info: VendorInfo = {
+                            "title": title,
+                            "url": url,
+                            "description": description.replace("\n", " ").strip(),
+                            "last_updated": result.get("age"),
+                            "relevance_score": relevance_score,
+                        }
+                        business_results.append(vendor_info)
 
-            # Industry-specific keyword scoring
-            if industry_keywords:
-                content = (title + " " + description).lower()
-                for keyword, score in industry_keywords.items():
-                    if keyword.lower() in content:
-                        relevance_score += score
+            # Sort by relevance score
+            business_results.sort(key=lambda x: x["relevance_score"], reverse=True)
+            return business_results
 
-            if relevance_score > 0:
-                vendor_info: VendorInfo = {
-                    "title": title,
-                    "url": url,
-                    "description": description.replace("\n", " ").strip(),
-                    "last_updated": result.get("age"),
-                    "relevance_score": relevance_score,
-                }
-                business_results.append(vendor_info)
+        except requests.exceptions.RequestException as e:
+            if response := getattr(e, "response", None):
+                if response.status_code == 429:
+                    if attempt < max_retries - 1:
+                        time.sleep(retry_delay)
+                        retry_delay *= 2  # Exponential backoff
+                        continue
+                    raise RuntimeError(
+                        "Rate limit exceeded. Wait 1 second between requests."
+                    )
+                error_detail = (
+                    f"Status: {response.status_code}, Response: {response.text}"
+                )
+            else:
+                error_detail = str(e)
+            raise RuntimeError(f"Brave Search API error: {error_detail}")
 
-    # Sort by relevance score
-    business_results.sort(key=lambda x: x["relevance_score"], reverse=True)
-    return business_results
+    return []  # Return empty list if all retries failed
 
 
 def format_vendor_results(vendor_results: List[VendorInfo], vendor_name: str) -> str:

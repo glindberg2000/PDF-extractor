@@ -1,0 +1,14 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+ CRITICAL DATABASE SAFETY RULES:
+   1. NEVER move, delete, or modify database files without explicit user permission
+   2. NEVER assume a database is empty/corrupted just because of file size or read issues
+   3. ALWAYS create backups before any database operations
+   4. ALWAYS verify data integrity before making changes
+   5. ALWAYS have a rollback plan
+   6. ALWAYS back up the database on every commit
+
+   

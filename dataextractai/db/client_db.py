@@ -7,6 +7,7 @@ from typing import Dict, Optional, List, Any
 import logging
 import os
 import pandas as pd
+from dataextractai.utils.tax_categories import TAX_WORKSHEET_CATEGORIES
 
 logger = logging.getLogger(__name__)
 
@@ -151,23 +152,6 @@ class ClientDB:
                 """
             )
 
-            # Transaction classification cache
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS transaction_cache (
-                    id INTEGER PRIMARY KEY,
-                    client_id INTEGER NOT NULL,
-                    cache_key TEXT NOT NULL,
-                    pass_type TEXT NOT NULL CHECK(pass_type IN ('payee', 'category', 'classification')),
-                    result JSON NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY(client_id) REFERENCES clients(id),
-                    UNIQUE(client_id, cache_key, pass_type)
-                )
-            """
-            )
-
             # Client-specific expense categories
             conn.execute(
                 """
@@ -190,12 +174,28 @@ class ClientDB:
             """
             )
 
+            # Tax categories table
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS tax_categories (
+                    id INTEGER PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    description TEXT,
+                    worksheet TEXT CHECK(worksheet IN ('6A', 'Vehicle', 'HomeOffice')) NOT NULL,
+                    line_number TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(name)
+                )
+            """
+            )
+
             # Modify transaction_classifications table - add columns one at a time
             for column_def in [
                 "base_category TEXT",
                 "base_category_confidence TEXT CHECK(base_category_confidence IN ('high', 'medium', 'low'))",
                 "worksheet TEXT CHECK(worksheet IN ('6A', 'Vehicle', 'HomeOffice'))",
-                "tax_category TEXT",
+                "tax_category_id INTEGER REFERENCES tax_categories(id)",
                 "tax_subcategory TEXT",
                 "tax_year INTEGER",
                 "tax_worksheet_line_number TEXT",
@@ -533,7 +533,7 @@ class ClientDB:
                         c.classification_reasoning,
                         c.tax_implications,
                         c.expense_type,
-                        c.tax_category,
+                        c.tax_category_id,
                         c.tax_subcategory,
                         c.tax_year,
                         c.tax_worksheet_line_number,
@@ -1348,4 +1348,56 @@ class ClientDB:
                     """,
                     (is_reviewed, client_id, *transaction_ids),
                 )
+            conn.commit()
+
+    def execute_query(self, query: str, params: tuple = None) -> List[tuple]:
+        """Execute a SQL query and return the results.
+
+        Args:
+            query: SQL query to execute
+            params: Query parameters (optional)
+
+        Returns:
+            List of tuples containing the query results
+        """
+        conn = None
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute(query, params or ())
+            results = cursor.fetchall()
+
+            # Explicitly commit for write operations
+            if any(
+                keyword in query.upper() for keyword in ["INSERT", "UPDATE", "DELETE"]
+            ):
+                conn.commit()
+
+            return results
+
+        except Exception as e:
+            if conn and any(
+                keyword in query.upper() for keyword in ["INSERT", "UPDATE", "DELETE"]
+            ):
+                conn.rollback()
+            raise e
+
+        finally:
+            if conn:
+                conn.close()
+
+    def populate_tax_categories(self):
+        """
+        Populate the tax_categories table with predefined categories.
+        """
+        with self.get_connection() as conn:
+            for worksheet, categories in TAX_WORKSHEET_CATEGORIES.items():
+                for category in categories:
+                    conn.execute(
+                        """
+                        INSERT OR IGNORE INTO tax_categories (name, worksheet)
+                        VALUES (?, ?)
+                        """,
+                        (category, worksheet),
+                    )
             conn.commit()

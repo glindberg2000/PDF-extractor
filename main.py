@@ -50,7 +50,7 @@ def process_transactions(
         from dataextractai.db.client_db import ClientDB
 
         db = ClientDB()
-        classifier = TransactionClassifier(client_name, db, model_type)
+        classifier = TransactionClassifier(client_name)
 
         # Process transactions
         print(f"\nProcessing transactions for {client_name}...")

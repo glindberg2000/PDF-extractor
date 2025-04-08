@@ -466,3 +466,57 @@ Implemented stricter IRS-compliant business expense classification with:
 - Confidence levels properly assigned
 - Documentation requirements captured
 - Cache management improved 
+
+# Active Development Context
+
+## Current Task
+Debugging transaction classifier caching mechanism in `dataextractai/agents/transaction_classifier.py`.
+
+### Issue
+- Cache mechanism in `_get_payee` method is not working effectively
+- Initial implementation tried to use standardized payee names for cache keys
+- Multiple attempts to fix have caused various issues including:
+  - NoneType errors from accessing undefined variables
+  - Control flow issues with cache checking
+  - Inconsistent cache key generation
+
+### Recent Changes
+1. Attempted to use standardized payee names from LLM analysis for cache keys
+2. Modified control flow to check cache earlier in process
+3. Fixed variable scope and error handling
+4. Implemented consistent cache key generation using `_get_cache_key` method
+
+### Current State
+- Code has been modified to:
+  1. Check cache early with description-only key
+  2. Use `_get_cache_key` consistently throughout
+  3. Handle errors gracefully
+  4. Cache results with appropriate payee names when available
+
+### Next Steps
+1. Verify cache effectiveness through logs
+2. Ensure cache keys are consistent
+3. Optimize cache hit rate for similar transactions
+4. Consider additional improvements to caching strategy if needed
+
+## Technical Details
+Key methods involved:
+- `_get_payee`: Main method for payee identification
+- `_get_cache_key`: Generates cache keys from description/payee
+- `_get_cached_result`: Retrieves cached results
+- `_cache_result`: Stores results in cache
+
+Cache key strategy:
+1. First try with cleaned description
+2. If standardized payee available, use that for more precise matching
+3. Fall back to description-only if no standardized payee
+
+## Dependencies
+- SQLite database for caching
+- OpenAI API for LLM analysis
+- Brave Search API for vendor lookups
+
+## Notes
+- Cache effectiveness needs verification through logs
+- Balance needed between cache hit rate and accuracy
+- Consider impact of cache key strategy on performance 

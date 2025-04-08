@@ -1,0 +1,7 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# Github rules
+Never commit anything until its fully tested and the user has given the ok to commit
