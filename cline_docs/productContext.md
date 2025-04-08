@@ -1,75 +1,56 @@
 # Product Context
 
 ## Purpose
-The PDF Extractor is a specialized tool designed to automate the extraction and processing of financial data from various bank statements and financial documents. It serves as a bridge between raw financial documents and structured financial data, making it easier to analyze and manage financial records.
+The PDF Extractor is a specialized tool designed to automate the extraction, processing, and classification of financial data from various bank statements (PDF, CSV) and other financial documents. It serves as a bridge between raw financial documents and structured, categorized financial data suitable for tax preparation and financial analysis. The primary goal is to produce clean, categorized data separated into relevant tax worksheets (6A, Auto, HomeOffice) and a Personal worksheet.
 
 ## Problems Solved
-1. **Manual Data Entry Elimination**: Automates the extraction of transaction data from PDF and CSV files, reducing manual data entry errors and time consumption.
-2. **Multi-Format Support**: Handles various file formats from different financial institutions, providing a unified interface for data processing.
-3. **Client-Specific Processing**: Supports multiple clients with separate data directories, allowing for organized and isolated data processing.
-4. **Standardized Output**: Converts diverse financial data formats into a standardized structure, facilitating easier analysis and reporting.
-5. **Batch Processing**: Enables processing of multiple files simultaneously, improving efficiency for large datasets.
+1. **Manual Data Entry Elimination**: Automates transaction data extraction, reducing errors and time.
+2. **Multi-Format Support**: Handles diverse file formats, providing a unified processing interface.
+3. **Client-Specific Processing**: Supports multiple clients with unique business profiles and custom categories.
+4. **Intelligent Classification**: Uses AI, informed by the client's business profile, to categorize transactions and determine their relevance for different tax worksheets (6A, Auto, HomeOffice, Personal).
+5. **Consistent Classification**: Aims to classify identical transactions consistently using matching logic, even with minor variations in descriptions.
+6. **Tax Worksheet Preparation**: Organizes classified business expenses into specific worksheets (6A, Auto, HomeOffice), separating personal expenses.
 
-## How It Works
-1. **Input Processing**:
-   - Accepts PDF and CSV files from various financial institutions
-   - Supports both default and client-specific directory structures
-   - Validates input files and formats
-
-2. **Data Extraction**:
-   - Parses PDF files using PyPDF2
-   - Processes CSV files using pandas
-   - Extracts relevant transaction data based on institution-specific patterns
-
-3. **Data Transformation**:
-   - Converts extracted data into a standardized format
-   - Applies institution-specific transformations
-   - Handles date formats and numerical values consistently
-
+## How It Should Work (Ideal Flow)
+1. **Input Processing**: Accepts PDF/CSV files, routes them based on client configuration.
+2. **Data Extraction & Normalization**: Parses documents, extracts core transaction data (Date, Description, Amount). Normalizes payee names by removing extraneous details (store #, location) for consistent matching.
+3. **AI-Driven Classification (Multi-Pass)**:
+   * **Pass 1 (Payee ID)**: Identifies payee using AI and normalized description. Stores normalized payee.
+   * **Pass 2 (Category Assignment)**: Assigns a general expense category (e.g., "Software", "Meals") using AI, transaction details, payee, and business profile context.
+   * **Pass 3 (Tax/Worksheet Classification)**:
+      * Determines final tax category (e.g., "Office expenses", "Meals and entertainment") based on Pass 2 category, business profile, and predefined tax rules/categories.
+      * Assigns transaction to a specific worksheet ('6A', 'Auto', 'HomeOffice', 'Personal') based on the tax category, business profile rules (e.g., vehicle expenses relevant only if business uses a vehicle), and business percentage.
+      * Leverages matching logic: Looks for previously classified transactions with the same normalized payee or similar description. If found, copies existing classification (Tax Category, Worksheet, Business %) for consistency. Otherwise, uses AI.
 4. **Output Generation**:
-   - Creates CSV and Excel files with processed data
-   - Generates consolidated reports
-   - Maintains state tracking for batch processing
-
-5. **Client Management**:
-   - Supports multiple clients with isolated data directories
-   - Allows client-specific configurations
-   - Maintains separate input and output directories per client
+   * Stores all processed data in a database.
+   * Generates an Excel file with separate sheets:
+      * `6A`: Contains only transactions classified under standard 6A tax categories and client-specific 'Other Expenses' for Schedule 6A.
+      * `Auto`: Contains relevant vehicle expenses.
+      * `HomeOffice`: Contains relevant home office expenses.
+      * `Personal`: Contains all transactions classified as personal.
+      * `All Transactions`: (Optional) A sheet with all raw/processed data.
+      * `Summary`: A summary sheet reflecting the categorized totals.
+   * (Optional) Uploads data to Google Sheets.
 
 ## Key Features
 - Multi-format support (PDF, CSV)
-- Client-specific processing
-- Automated data extraction
-- Standardized data transformation
-- Batch processing capabilities
-- Comprehensive output generation
-- Configurable processing options
-
-## Core Functionality
-1. Document Processing
-   - PDF parsing for multiple institutions
-   - CSV import support
-   - Batch processing capabilities
-
-2. AI Integration
-   - OpenAI-powered categorization
-   - Multiple AI assistants (Bookkeeper & CPA)
-   - Context-aware processing
-
-3. Data Export
-   - CSV/Excel output
-   - Google Sheets integration
-   - Structured for accounting use
+- Client-specific processing via Business Profiles
+- AI-driven classification (Payee, Category, Tax Worksheet)
+- Payee Normalization
+- Consistent classification via matching logic
+- Tax worksheet separation (6A, Auto, HomeOffice, Personal)
+- Batch processing (Row-by-row)
+- Database storage
+- Excel & Google Sheets export
 
 ## Target Users
-- Accountants/Bookkeepers
-- Small Business Owners
-- Financial Advisors
-- Individual Users
+- Accountants/Bookkeepers preparing tax documents (esp. Schedule 6A)
+- Small Business Owners managing finances
 
 ## Success Criteria
-1. Accurate extraction of transaction data
-2. Correct categorization of expenses
-3. Efficient batch processing
-4. Reliable Google Sheets integration
-5. Support for multiple clients 
+1. Accurate extraction of transaction data.
+2. Correct AI-driven classification leveraging business profiles.
+3. Consistent classification of recurring vendor transactions.
+4. Accurate separation of transactions into 6A, Auto, HomeOffice, and Personal worksheets.
+5. Clean and usable Excel export formatted for tax preparation.
+6. Efficient row-by-row processing. 

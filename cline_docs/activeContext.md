@@ -1,76 +1,61 @@
 # Active Context
 
 ## Current Focus
-- Implementing and testing the multi-pass transaction classification system
-- Ensuring proper data population across all passes
-- Preparing for final Schedule 6A report generation
+Refining the transaction classification system to achieve the core goal: producing tax-ready Excel reports with transactions accurately separated into 6A, Auto, HomeOffice, and Personal worksheets, ensuring consistency through enhanced matching logic.
 
 ## Current State
-- Successfully implemented multi-client parser system
-- Fixed client name handling with spaces
-- Standardized directory structure for clients
-- Implemented basic client configuration system
+- The multi-pass classification framework (`transaction_classifier.py`) is operational but requires significant enhancements.
+- It processes transactions row-by-row, using AI and basic database lookups/matching.
+- Payee normalization is missing.
+- Matching logic (`_find_matching_transaction`) is basic and needs improvement (use normalized payee, ensure full field copying).
+- Worksheet assignment relies heavily on AI fallback or defaults ('6A') due to missing business rule integration and handling for 'Personal' category.
+- Excel export (`excel_formatter.py`) generates only a combined transaction list, not the required separate worksheets.
+- Recent debugging resolved numerous errors related to DB initialization, category mapping, variable names, and type hints (Commit `4a5cce5`).
+- Explicit caching seems removed, replaced by DB lookups/matching.
 
-## Recent Changes
-- Enhanced transaction processing with smart caching strategy
-  - Only performs fresh lookups when fields are missing
-  - Preserves high-confidence cached data
-  - Merges new data with existing cache entries
-- Added business_description and general_category to PayeeResponse
-- Updated load_normalized_transactions to include all columns
-- Expanded Excel export with comprehensive column set
-- Fixed fuzz import to use thefuzz package
-- Pass 1 is now running with proper payee identification and caching
-- Modified transaction_classifier.py:
-  - Added stricter business rules
-  - Implemented confidence-based validation
-  - Fixed prompt template formatting
-  - Added documentation requirements
-  - Improved cache management
-- Database Updates:
-  - Purged category cache while preserving payee cache
-  - Reset Pass 2 status for reprocessing
-  - Maintained transaction_cache table structure with pass_type
+## Recent Changes (Post-Debugging)
+- Codebase is stable after fixing multiple runtime errors in classification logic.
+- `tax_categories` table initialization is working correctly.
+- Basic transaction flow (Pass 1 -> 2 -> 3) completes for test cases.
+- Committed all current changes (including potentially unrelated ones) in commit `4a5cce5`.
 
-## Next Steps
-1. Verify Pass 2 functionality
-   - Ensure business vs personal classification works correctly
-   - Check that business percentages are being assigned
-   - Verify business context is being populated
-   
-2. Verify Pass 3 functionality
-   - Confirm tax category assignments
-   - Check worksheet assignments
-   - Validate tax implications
-
-3. Generate and validate Schedule 6A report
-   - Ensure all required columns are present
-   - Verify calculations and summaries
-   - Check formatting and readability
-
-4. Pass 3 Enhancement Ideas:
-   - AI-driven business expense optimization
-   - Historical pattern analysis (6A guidelines)
-   - Smart distribution of business expenses
-   - Risk-aware adjustments
-   - Documentation generation
-
-5. Potential Features:
-   - Chatbot interface for rule generation
-   - Pattern-based expense distribution
-   - Category-specific confidence thresholds
-   - Audit risk assessment
-   - Documentation requirement tracking
+## Next Steps (Refined Plan)
+1.  **Implement Payee Normalization**:
+    *   Define normalization rules (regex for store #, state, zip, etc.).
+    *   Add logic (e.g., in `TransactionNormalizer` or parser stage) to create and store a `normalized_payee` field (likely needs DB schema update).
+    *   Update Pass 1 AI prompt to potentially use/generate this.
+2.  **Enhance Matching Logic (`_find_matching_transaction`)**:
+    *   Modify to query using `normalized_payee`.
+    *   Ensure it reliably copies *all* relevant classification fields (Tax Category ID, Worksheet, Business %, Reasoning, Confidence) from the matched transaction.
+3.  **Develop Worksheet Assignment Logic (Pass 3)**:
+    *   Decide how to handle 'Personal' classification (e.g., add to DB CHECK constraint, use a separate field/flag, filter during export).
+    *   Implement rules within Pass 3 (`_get_tax_classification` or a new dedicated step/function) to determine the correct worksheet ('6A', 'Auto', 'HomeOffice', 'Personal').
+    *   This logic should consider:
+        *   The assigned tax category.
+        *   Business profile details (e.g., does the business use a vehicle? have a home office?).
+        *   Business percentage.
+    *   Update the `transaction_classifications` table update in `_commit_pass` to store the determined worksheet.
+4.  **Update Excel Formatter (`excel_formatter.py`)**:
+    *   Modify `create_report` to:
+        *   Read the final assigned `worksheet` for each transaction from the database.
+        *   Create separate sheets named '6A', 'Auto', 'HomeOffice', 'Personal'.
+        *   Populate each sheet only with transactions assigned to that worksheet.
+        *   Adjust the 'Summary' sheet if needed to reflect this separation.
+5.  **Testing**: After implementing the above, test thoroughly with diverse transactions to verify:
+    *   Payee normalization works.
+    *   Matching is consistent and prevents unnecessary AI calls.
+    *   Worksheet assignment rules are correct.
+    *   Excel output has the correct sheets and data separation.
 
 ## Current Issues/Challenges
-- Need to verify that Pass 2 and 3 handle the expanded dataset correctly
-- Need to ensure all passes maintain data consistency
-- Need to validate final report format matches requirements
+- Lack of payee normalization hinders consistent matching.
+- Rudimentary worksheet assignment logic prevents correct output separation.
+- Excel export doesn't meet the primary goal of separate tax worksheets.
+- Robustness of matching and classification needs validation.
 
 ## Dependencies
-- Pass 1 must complete successfully before running Pass 2
-- Pass 2 must complete successfully before running Pass 3
-- All passes must complete before generating final report
+- Payee normalization is required for effective matching.
+- Correct worksheet assignment is required for meaningful Excel export.
 
 ## Notes
 - Currently monitoring Pass 1 execution with new caching strategy

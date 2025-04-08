@@ -4,10 +4,16 @@
 
 ### Core Technologies
 - Python 3.8+
-- pandas for data processing
-- PyPDF2 for PDF parsing
-- OpenAI API for AI processing
-- Google Sheets API for data storage
+- **SQLite**: Primary database for storing client data, transactions, classifications, and profiles.
+- **pandas**: Core library for data manipulation and processing.
+- **OpenAI API (GPT-4o-mini, etc.)**: Used for AI-driven classification tasks (Payee ID, Category Assignment, Tax Classification).
+- **PyPDF2 / pdfplumber / PyMuPDF**: Used by various parsers for PDF text extraction.
+- **Typer / Click**: Framework for the command-line interface (`menu.py`).
+- **openpyxl**: Used for generating `.xlsx` Excel reports.
+- **thefuzz**: Used for fuzzy string matching (potentially in `_find_matching_transaction`).
+- **Questionary**: Used for interactive prompts in the CLI.
+- **Colorama**: Used for colored terminal output.
+- **python-dotenv**: For managing environment variables (API keys, model names).
 
 ### CLI Frameworks
 1. Legacy System (grok.py):
@@ -500,3 +506,51 @@ pytest tests/parsers/test_wellsfargo.py
 2. Local testing
 3. Status verification
 4. Pull requests 
+
+## Key Technical Implementation Details
+
+1.  **Database (`client_db.py`)**:
+    *   Uses SQLite via Python's built-in `sqlite3` module.
+    *   Defines tables for `clients`, `business_profiles`, `normalized_transactions`, `transaction_classifications`, `transaction_status`, `client_expense_categories`, `tax_categories`, etc.
+    *   `transaction_classifications` stores results from all 3 passes.
+    *   `tax_categories` stores the predefined list of tax categories (currently loaded with '6A' as the worksheet for standard items).
+    *   Worksheet column constraints exist on `tax_categories` and `transaction_classifications` (allow '6A', 'Vehicle', 'HomeOffice').
+
+2.  **Transaction Classifier (`transaction_classifier.py`)**:
+    *   Orchestrates the 3-pass process row-by-row.
+    *   Uses `ClientProfileManager` to load business profile context.
+    *   Uses `ClientDB` for database interactions (lookups, updates).
+    *   Constructs prompts for OpenAI API calls (`_build_..._prompt` methods).
+    *   Parses JSON responses from OpenAI using Pydantic models (`PayeeResponse`, `CategoryResponse`, `ClassificationResponse`).
+    *   Contains matching logic (`_find_matching_transaction`) which likely uses `thefuzz` on raw descriptions.
+    *   Handles fallback logic (match -> map -> AI).
+
+3.  **Excel Formatter (`excel_formatter.py`)**:
+    *   Uses `openpyxl` to create Excel files.
+    *   Currently creates only "Transactions" and "Summary" sheets.
+    *   Reads data directly from the database for formatting.
+    *   Needs modification to read the assigned `worksheet` from the DB and create separate sheets.
+
+4.  **Payee Normalization (Planned)**:
+    *   This logic is currently missing. It would likely involve regex or string manipulation to clean payee names before Pass 1 and before matching.
+    *   Could potentially be added to `TransactionNormalizer` or within the parsing stage.
+
+## Technical Constraints & Considerations
+- **Worksheet Handling**: The current database schema and classification logic strictly enforce '6A', 'Vehicle', 'HomeOffice'. Handling 'Personal' expenses requires changes (either add 'Personal' to CHECK constraint, use a separate flag/table, or handle purely in export logic).
+- **Matching Robustness**: `_find_matching_transaction` needs review/enhancement to be reliable, especially concerning the use of raw vs normalized payee/description and the fields being copied.
+- **AI Costs/Rate Limits**: Multiple AI calls per transaction (potentially up to 3 if no matches occur) can impact cost and speed. Rate limits need handling.
+- **Scalability**: SQLite performance might become a bottleneck with very large numbers of clients or transactions.
+- **Parser Maintenance**: PDF formats change, requiring parser updates.
+
+## Dependencies (Key Ones)
+```
+pandas>=2.0.0
+openai>=1.0.0
+PyPDF2>=3.0.0 # (or other PDF libs depending on parser)
+typer>=0.9.0
+openpyxl>=3.0.0
+python-dotenv>=0.19.0
+questionary>=1.10.0
+thefuzz>=0.19.0
+colorama>=0.4.4
+``` 

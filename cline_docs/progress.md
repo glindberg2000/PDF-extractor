@@ -1,5 +1,62 @@
 # Progress Status
 
+## Overall Goal
+Process financial documents, classify transactions using AI and client profiles, and generate tax-ready Excel reports with expenses separated into 6A, Auto, HomeOffice, and Personal worksheets.
+
+## Current Status (April 2024)
+- Core parsing and multi-pass classification framework is functional.
+- Transactions are processed row-by-row.
+- AI is used for Payee ID, Category Assignment, and Tax Classification (as fallback).
+- Basic matching logic exists but needs enhancement (payee normalization, consistency).
+- Database stores transaction and classification data.
+- Explicit caching system has been removed in favor of DB lookups/matching.
+- Excel export exists but only creates combined "Transactions" and "Summary" sheets.
+- Worksheet assignment logic is rudimentary (defaults to '6A' or uses AI result limited by DB constraints) and lacks robust rules/Personal handling.
+
+## What Works
+- ✅ PDF/CSV Parsing for several banks.
+- ✅ Client configuration system (`client_config.yaml`, `business_profile.json`).
+- ✅ SQLite Database setup (`client_db.py`) for storing data.
+- ✅ Multi-pass transaction processing framework (`transaction_classifier.py`).
+- ✅ Row-by-row processing via menu option.
+- ✅ AI integration for classification passes (using OpenAI API).
+- ✅ Basic transaction matching (`_find_matching_transaction`).
+- ✅ Basic Excel export (`excel_formatter.py`) with combined data.
+- ✅ Tax category initialization in DB.
+- ✅ CLI Menu (`menu.py`) for triggering processing and export.
+
+## What's Left / Needs Improvement
+- ⏳ **Payee Normalization**: Implement logic to clean payee names (remove store #, etc.) and use it in Pass 1 and matching.
+- ⏳ **Matching Logic Enhancement**: Update `_find_matching_transaction` to use normalized payees and ensure consistent copying of *all* classification fields.
+- ⏳ **Worksheet Assignment Logic**: Implement rules (using Business Profile?) to assign transactions correctly to '6A', 'Auto', 'HomeOffice', or 'Personal'. Requires deciding how to handle 'Personal' (DB constraint update or export-time filtering).
+- ⏳ **Excel Report Formatting**: Modify `excel_formatter.py` to create separate sheets for each worksheet category (6A, Auto, HomeOffice, Personal).
+- ⏳ **Business Profile Integration**: Integrate profile rules more deeply into worksheet assignment (beyond just AI context).
+- ⚠️ **Robustness Testing**: Thoroughly test the classification consistency and accuracy with a larger, more diverse dataset.
+- ❌ **Cache Removal Verification**: Double-check codebase for any remaining explicit cache logic/references.
+
+## Recent Debugging (April 2024)
+- Resolved several errors in `transaction_classifier.py` related to:
+    - Database initialization (CHECK constraints on `worksheet`).
+    - Tax category mapping and lookups.
+    - Variable name errors (`force_process`, `logger`).
+    - Incorrect table queries.
+    - Type hints (`TransactionInfo`).
+    - Iteration logic (`ai_responses.py`, `_load_standard_categories`).
+- Committed fixes (Commit `4a5cce5`).
+
+## Next Steps (Immediate Focus)
+1.  **Implement Payee Normalization**: Add cleaning logic and integrate it.
+2.  **Enhance Matching Logic**: Update `_find_matching_transaction`.
+3.  **Develop Worksheet Assignment Rules**: Define and implement logic for assigning 6A/Auto/HomeOffice/Personal.
+4.  **Update Excel Formatter**: Add multi-sheet generation.
+5.  **Test Thoroughly**: Verify consistency and accuracy with more data.
+
+Legend:
+✅ = Works
+⏳ = Needs Implementation/Improvement
+⚠️ = Needs Verification/Testing
+❌ = Not Started / Missing
+
 ## Completed Features
 
 ### Core System
@@ -60,12 +117,6 @@
 - Pass 1 showing good performance with new caching strategy
 - All new columns being properly tracked in database
 - Excel export updated with comprehensive column set
-
-Legend:
-✅ = Complete
-⏳ = In Progress
-❌ = Not Started
-⚠️ = Has Issues
 
 ## To Do
 1. Cache Management

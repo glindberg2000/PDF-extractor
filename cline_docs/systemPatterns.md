@@ -2,7 +2,55 @@
 
 ## Architecture Overview
 
-### Current Structure
+The application processes financial documents (PDF, CSV) for multiple clients, extracts transactions, classifies them using AI and business rules, and outputs structured data suitable for tax preparation.
+
+### Core Components
+1.  **Client Manager**: Handles client-specific configurations (`client_config.yaml`) and business profiles (`business_profile.json`).
+2.  **Document Parsers**: Extract raw transaction data (Date, Description, Amount) from various bank statement formats.
+3.  **Transaction Normalizer**: Cleans transaction data, specifically aiming to normalize payee names (e.g., remove store numbers, locations) for consistent matching. (**Note: Payee normalization is planned but not yet implemented.**)
+4.  **Database (`client_db.py`)**: Stores client info, business profiles, normalized transactions (`normalized_transactions` table), and classification results (`transaction_classifications` table).
+5.  **Transaction Classifier (`transaction_classifier.py`)**: Orchestrates the multi-pass classification process.
+    *   **Pass 1 (Payee ID)**: Uses AI to identify payee from description. Stores result.
+    *   **Pass 2 (Category Assignment)**: Uses AI (+ payee, desc, business profile) to assign a general expense category. Stores result.
+    *   **Pass 3 (Tax/Worksheet Classification)**: Attempts to determine the final tax category and worksheet.
+        *   **Matching Logic**: Attempts to find previous transactions with similar descriptions (`_find_matching_transaction`). (**Note: Currently uses raw description, needs update for normalized payee. Needs to ensure all relevant fields are copied.**).
+        *   **Direct Mapping**: If no match, attempts to map Pass 2 category name directly to a `tax_categories` entry.
+        *   **AI Fallback**: If no match or direct map, uses AI (+ context) to determine `tax_category_id`, `business_percentage`, and `worksheet`. (**Note: Current AI prompt requests worksheet, but DB constraint limits it to '6A', 'Vehicle', 'HomeOffice'. Logic for 'Personal' assignment and using business profile rules for Auto/HomeOffice is missing.**)
+6.  **Output Formatter (`excel_formatter.py`)**: Generates output files.
+    *   **Excel**: Creates an Excel report. (**Note: Currently creates only 'Transactions' and 'Summary' sheets. Logic to create separate sheets for 6A, Auto, HomeOffice, Personal is missing.**)
+    *   **Google Sheets**: (Optional) Uploads data.
+7.  **Menu System (`menu.py`)**: Provides CLI interface for triggering processing (primarily row-by-row). (**Note: Row-by-row processing seems to be the standard now.**)
+
+### Data Flow
+1.  User selects client and triggers processing via `menu.py`.
+2.  Parsers extract transactions.
+3.  (Planned) Transactions are normalized (payee cleaning).
+4.  Transactions are saved to `normalized_transactions` table.
+5.  `transaction_classifier.py` processes each transaction row-by-row:
+    *   Pass 1 -> Pass 2 -> Pass 3.
+    *   Each pass attempts lookup/matching before potentially using AI.
+    *   Results are stored/updated in the `transaction_classifications` table.
+6.  User triggers export via `menu.py`.
+7.  `excel_formatter.py` reads data from DB and generates the Excel file (currently needs worksheet separation logic).
+
+## Key Design Patterns & Decisions
+
+1.  **Multi-Pass Processing**: Breaks down classification into logical steps (Payee -> Category -> Tax/Worksheet).
+2.  **Client-Specific Context**: Leverages business profiles stored per client to guide AI classification.
+3.  **Database as Source of Truth**: Classification results and transaction data are stored centrally in SQLite.
+4.  **Row-by-Row Processing**: Ensures each transaction is fully processed through all passes before moving to the next.
+5.  **Fallback Logic**: Uses matching/mapping first, then resorts to AI, aiming for consistency and efficiency.
+6.  **Modular Components**: Separates parsing, classification, DB interaction, and output formatting.
+
+## Areas for Improvement / Gaps
+- **Payee Normalization**: Needs implementation in the normalization/parsing stage and integration into matching logic.
+- **Matching Logic**: Enhance `_find_matching_transaction` to use normalized payees and copy all relevant fields consistently.
+- **Worksheet Assignment Logic**: Implement rules (potentially using business profile) to assign transactions to 'Auto', 'HomeOffice', or 'Personal' worksheets. Update DB constraints/handling if 'Personal' needs to be stored differently.
+- **Excel Formatting**: Add logic to `excel_formatter.py` to create separate sheets based on the final assigned worksheet.
+- **Business Profile Rules**: Integrate business profile rules more directly into Pass 3 worksheet assignment (beyond just AI context).
+- **Cache Removal Verification**: While explicit caching code seems gone, ensure no remnants interfere with the DB lookup/matching approach.
+
+## Current Structure
 1. Client-Based Organization:
    ```
    data/clients/
