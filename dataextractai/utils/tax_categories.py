@@ -46,8 +46,52 @@ T776_CATEGORIES = [
     "Other expenses",
 ]
 
+# 6A - Main Business Expense Categories
+SCHEDULE_6A_CATEGORIES = [
+    # Main Expenses
+    "Advertising",
+    "Car and truck expenses",
+    "Parking fees and tolls",
+    "Commissions and fees",
+    "Contract labor",
+    "Employee benefit programs and health insurance",
+    "Insurance (other than health)",
+    "Interest - mortgage (paid to banks, etc.)",
+    "Interest - other",
+    "Legal and professional fees",
+    "Office expense",
+    "Pension and profit-sharing plans",
+    "Rent or lease - vehicles, machinery and equipment",
+    "Rent or lease - other business property",
+    "Repairs and maintenance",
+    "Supplies (not included in Cost of Goods Sold)",
+    "Taxes and licenses",
+    "Travel",
+    "Meals",
+    "Entertainment",
+    "Utilities",
+    "Wages",
+    "Dependent care benefits",
+    # Other Expenses (from custom categories)
+    "Due and Subscriptions",
+    "MLS Dues",
+    "Open House Expense",
+    "Staging",
+    "Computer & Internet",
+]
+
 # Dictionary mapping worksheet identifiers to their categories
-TAX_WORKSHEET_CATEGORIES = {"T2125": T2125_CATEGORIES, "T776": T776_CATEGORIES}
+TAX_WORKSHEET_CATEGORIES = {
+    "T2125": T2125_CATEGORIES,
+    "T776": T776_CATEGORIES,
+    "6A": SCHEDULE_6A_CATEGORIES,
+}
+
+# List of categories that should be excluded from 6A worksheet
+# (e.g., spouse's wages incorrectly categorized)
+EXCLUDED_FROM_6A = [
+    "Wages",  # Exclude wages as requested (sole prop, spouse wages not business expense)
+]
 
 
 def get_worksheet_for_category(category: str) -> str:
@@ -111,3 +155,10 @@ def get_category_info(category: str) -> Dict:
                 if category in section:
                     return section[category]
     return {}
+
+
+def should_exclude_from_worksheet(category: str, worksheet: str) -> bool:
+    """Check if a category should be excluded from a specific worksheet."""
+    if worksheet == "6A" and category in EXCLUDED_FROM_6A:
+        return True
+    return False

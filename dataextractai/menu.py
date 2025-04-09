@@ -106,79 +106,84 @@ def handle_sheets_menu(client_name: str):
 
 
 def handle_excel_export(client_name: str):
-    """Handle Excel report generation, allowing for row range selection."""
+    """Handle Excel report generation."""
     try:
-        # Get transactions from database
+        # Initialize the formatter
+        formatter = ExcelReportFormatter()
+
+        # Load transactions
         db = ClientDB()
         transactions_df = db.load_normalized_transactions(client_name)
 
         if transactions_df.empty:
-            click.echo("No transactions found for client")
+            click.echo("No transactions found to export.")
             return
 
-        total_rows = len(transactions_df)
-        click.echo(f"Total transactions found: {total_rows}")
-
-        # Ask user for export range
-        export_option = questionary.select(
-            "Export Range:", choices=["Export All Rows", "Export Specific Row Range"]
+        # Check if the user wants to export a specific row range
+        export_type = questionary.select(
+            "What would you like to export?",
+            choices=[
+                "All rows (standard Excel)",
+                "All rows (with linked formulas)",
+                "Specific row range",
+            ],
         ).ask()
 
-        start_row_idx = 0
-        end_row_idx = total_rows
+        if export_type == "Specific row range":
+            # Get row range from user
+            total_rows = len(transactions_df)
+            click.echo(f"Total rows available: {total_rows}")
 
-        if export_option == "Export Specific Row Range":
             start_row = questionary.text(
-                "Enter start row number to export (1-based index):",
+                "Enter start row (1-based index):",
                 validate=lambda x: x.isdigit() and 1 <= int(x) <= total_rows,
             ).ask()
+
             end_row = questionary.text(
-                f"Enter end row number to export ({start_row}-{total_rows}):",
+                f"Enter end row ({start_row}-{total_rows}):",
                 validate=lambda x: x.isdigit()
                 and int(start_row) <= int(x) <= total_rows,
             ).ask()
 
             if not start_row or not end_row:
-                click.echo("Invalid row range provided. Exporting all rows.")
-            else:
-                start_row_idx = (
-                    int(start_row) - 1
-                )  # Convert to 0-based index for slicing
-                end_row_idx = int(end_row)  # Exclusive index for slicing
-                click.echo(f"Exporting rows {start_row} to {end_row}.")
-        else:
-            click.echo("Exporting all rows.")
+                click.echo("Invalid row range provided. Aborting.")
+                return
 
-        # Filter DataFrame based on selected range
-        # Use .iloc for positional slicing
-        filtered_df = transactions_df.iloc[start_row_idx:end_row_idx].copy()
+            # Convert to 0-based indexing and filter DataFrame
+            start_idx = int(start_row) - 1
+            end_idx = int(end_row)
+            transactions_df = transactions_df.iloc[start_idx:end_idx]
 
-        if filtered_df.empty:
-            click.echo("No transactions found in the selected range.")
-            return
+            click.echo(f"Selected {len(transactions_df)} rows for export.")
 
-        # Create Excel report using the filtered data
-        output_dir = os.path.join("data", "clients", client_name, "output")
-        os.makedirs(output_dir, exist_ok=True)
+        # Set up the export path
+        reports_dir = os.path.join("data", "clients", client_name, "reports")
+        os.makedirs(reports_dir, exist_ok=True)
+
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        excel_output = os.path.join(
-            output_dir, f"{client_name}_report_{timestamp}.xlsx"
+        export_filename = f"{client_name}_transactions_{timestamp}.xlsx"
+        export_path = os.path.join(reports_dir, export_filename)
+
+        # Create the report
+        use_linked_formulas = export_type == "All rows (with linked formulas)"
+
+        click.echo(
+            f"Generating Excel report{' with linked formulas' if use_linked_formulas else ''}..."
         )
-
-        from .sheets.excel_formatter import ExcelReportFormatter
-
-        formatter = ExcelReportFormatter()
-
-        click.echo(f"Generating report for {len(filtered_df)} transactions...")
         formatter.create_report(
-            data=filtered_df,  # Pass the filtered DataFrame
-            output_path=excel_output,
-            client_name=client_name,
+            transactions_df,
+            export_path,
+            client_name,
+            use_linked_formulas=use_linked_formulas,
         )
-        # The create_report function now also handles CSV generation based on this filtered_df
+
+        click.echo(f"Excel report generated successfully at: {export_path}")
+        click.echo(
+            f"CSV files are available in: {os.path.join(reports_dir, 'csv_sheets')}"
+        )
 
     except Exception as e:
-        click.echo(f"Error creating Excel/CSV report: {e}")
+        click.echo(f"Error generating Excel report: {e}")
         import traceback
 
         traceback.print_exc()
