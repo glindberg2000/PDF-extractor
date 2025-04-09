@@ -106,7 +106,7 @@ def handle_sheets_menu(client_name: str):
 
 
 def handle_excel_export(client_name: str):
-    """Handle Excel report generation."""
+    """Handle Excel report generation, allowing for row range selection."""
     try:
         # Get transactions from database
         db = ClientDB()
@@ -116,23 +116,72 @@ def handle_excel_export(client_name: str):
             click.echo("No transactions found for client")
             return
 
-        # Create Excel report
+        total_rows = len(transactions_df)
+        click.echo(f"Total transactions found: {total_rows}")
+
+        # Ask user for export range
+        export_option = questionary.select(
+            "Export Range:", choices=["Export All Rows", "Export Specific Row Range"]
+        ).ask()
+
+        start_row_idx = 0
+        end_row_idx = total_rows
+
+        if export_option == "Export Specific Row Range":
+            start_row = questionary.text(
+                "Enter start row number to export (1-based index):",
+                validate=lambda x: x.isdigit() and 1 <= int(x) <= total_rows,
+            ).ask()
+            end_row = questionary.text(
+                f"Enter end row number to export ({start_row}-{total_rows}):",
+                validate=lambda x: x.isdigit()
+                and int(start_row) <= int(x) <= total_rows,
+            ).ask()
+
+            if not start_row or not end_row:
+                click.echo("Invalid row range provided. Exporting all rows.")
+            else:
+                start_row_idx = (
+                    int(start_row) - 1
+                )  # Convert to 0-based index for slicing
+                end_row_idx = int(end_row)  # Exclusive index for slicing
+                click.echo(f"Exporting rows {start_row} to {end_row}.")
+        else:
+            click.echo("Exporting all rows.")
+
+        # Filter DataFrame based on selected range
+        # Use .iloc for positional slicing
+        filtered_df = transactions_df.iloc[start_row_idx:end_row_idx].copy()
+
+        if filtered_df.empty:
+            click.echo("No transactions found in the selected range.")
+            return
+
+        # Create Excel report using the filtered data
         output_dir = os.path.join("data", "clients", client_name, "output")
         os.makedirs(output_dir, exist_ok=True)
-        excel_output = os.path.join(output_dir, f"{client_name}_report.xlsx")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        excel_output = os.path.join(
+            output_dir, f"{client_name}_report_{timestamp}.xlsx"
+        )
 
-        # Create Excel report
         from .sheets.excel_formatter import ExcelReportFormatter
 
         formatter = ExcelReportFormatter()
-        formatter.create_report(
-            data=transactions_df, output_path=excel_output, client_name=client_name
-        )
 
-        click.echo(f"Successfully created Excel report at: {excel_output}")
+        click.echo(f"Generating report for {len(filtered_df)} transactions...")
+        formatter.create_report(
+            data=filtered_df,  # Pass the filtered DataFrame
+            output_path=excel_output,
+            client_name=client_name,
+        )
+        # The create_report function now also handles CSV generation based on this filtered_df
 
     except Exception as e:
-        click.echo(f"Error creating Excel report: {e}")
+        click.echo(f"Error creating Excel/CSV report: {e}")
+        import traceback
+
+        traceback.print_exc()
 
 
 def sync_transactions_to_db(client_name: str):
@@ -491,51 +540,44 @@ def start_menu():
                 "Create/Update Business Profile",
                 "Run Parsers",
                 "Normalize Transactions",
-                "\nTransaction Classification (Three-Pass Process):",
-                "Pass 1: Identify Payees (Fast Mode)",
-                "Pass 1: Identify Payees (Precise Mode)",
-                "Pass 2: Assign Categories (Fast Mode)",
-                "Pass 2: Assign Categories (Precise Mode)",
-                "Pass 3: Classify Transactions (Fast Mode)",
-                "Pass 3: Classify Transactions (Precise Mode)",
-                "\nBatch Processing Options:",
-                "Process All Passes (Fast Mode)",
-                "Process All Passes (Precise Mode)",
-                "Process Row Range (Fast Mode)",
-                "Process Row Range (Precise Mode)",
+                "\n--- Processing ---",
+                "Process All Transactions (Fast)",
+                "Process All Transactions (Precise)",
+                "Process Row Range (Fast)",
+                "Process Row Range (Precise)",
                 "Resume Processing from Pass",
-                "\nTransaction Management:",
+                "Reprocess Failed Transactions",
+                "Reprocess Specific Pass for All",
+                "\n--- Data Management & Review ---",
                 "List Transactions",
                 "View Transaction Status",
-                "Force Process Transactions",
                 "Reset Transaction Status",
-                "Reprocess Failed Transactions",
-                "Reprocess Pass for All Transactions",
-                "\nData Management:",
                 "Sync Transactions to Database",
-                "Purge Classification Cache",
-                "Export to Excel Report",
+                "Export to Excel Report (+CSVs)",
                 "Upload to Google Sheets",
                 "Review Pass 2 Results",
                 "Exit",
             ],
         ).ask()
 
-        if action == "Exit":
+        if action == "Exit" or action is None:
             break
 
-        elif action == "List Clients":
+        if action == "List Clients":
             list_clients()
             continue
 
-        # Get client selection for other actions
-        clients = get_client_list()
-        if not clients:
-            click.echo("No clients found. Please create a client first.")
-            continue
+        # --- Client Selection (for most actions) ---
+        if not action.startswith("---") and action != "Exit":
+            clients = get_client_list()
+            if not clients:
+                click.echo("No clients found. Please create a client first.")
+                continue
+            client_name = questionary.select("Select a client:", choices=clients).ask()
+            if client_name is None:
+                continue  # Handle user cancelling
 
-        client_name = questionary.select("Select a client:", choices=clients).ask()
-
+        # --- Menu Actions ---
         if action == "Create/Update Business Profile":
             try:
                 create_or_update_profile(client_name)
@@ -544,7 +586,6 @@ def start_menu():
 
         elif action == "Run Parsers":
             try:
-                # Get client configuration
                 config = get_client_config(client_name)
                 run_all_parsers(client_name, config)
             except Exception as e:
@@ -561,196 +602,227 @@ def start_menu():
             except Exception as e:
                 click.echo(f"Error normalizing transactions: {e}")
 
-        elif action == "Purge Classification Cache":
+        elif action.startswith("Process All Transactions"):
             try:
-                db = ClientDB()
-                client_id = db.get_client_id(client_name)
-
-                # Ask for confirmation
-                if questionary.confirm(
-                    "Are you sure you want to purge the classification cache? This will force re-processing of all transactions, but won't delete existing classification results."
-                ).ask():
-                    with sqlite3.connect(db.db_path) as conn:
-                        # Delete all cache entries for this client
-                        conn.execute(
-                            "DELETE FROM transaction_cache WHERE client_id = ?",
-                            (client_id,),
-                        )
-                        click.echo(
-                            "Cache purged successfully! You can now re-run classification to get fresh results."
-                        )
-                else:
-                    click.echo("Cache purge cancelled.")
-
-            except Exception as e:
-                click.echo(f"Error purging cache: {e}")
-
-        elif action.startswith("Pass ") or action.startswith("Process "):
-            try:
-                # Get transactions from database
                 db = ClientDB()
                 transactions_df = db.load_normalized_transactions(client_name)
-
                 if transactions_df.empty:
-                    click.echo(
-                        "No transactions found. Please normalize transactions first."
-                    )
+                    click.echo("No transactions found to process.")
                     continue
 
-                # Get business profile
-                profile = db.load_profile(client_name)
-                if not profile:
-                    click.echo("No business profile found. Please create one first.")
-                    continue
+                model_type = "PRECISE" if "Precise" in action else "FAST"
+                force_reprocessing = questionary.confirm(
+                    "Force reprocessing ALL transactions (ignore existing classifications)?",
+                    default=False,
+                ).ask()
 
-                # Initialize classifier
-                classifier = TransactionClassifier(client_name=client_name)
-
-                # Determine processing parameters
-                start_row = None
-                end_row = None
-                resume_from_pass = None
-
-                if "Row Range" in action:
-                    start_row = questionary.text(
-                        "Start row (1-based):", default="1"
-                    ).ask()
-                    end_row = questionary.text(
-                        f"End row (1-{len(transactions_df)}):",
-                        default=str(len(transactions_df)),
-                    ).ask()
-                    try:
-                        start_row = int(start_row)
-                        end_row = int(end_row)
-                        if (
-                            start_row < 1
-                            or end_row > len(transactions_df)
-                            or start_row > end_row
-                        ):
-                            click.echo("Invalid row range")
-                            continue
-                    except ValueError:
-                        click.echo("Invalid row numbers")
-                        continue
-
-                # Process transactions based on action
-                if "Process All" in action:
-                    # Process all passes
-                    classifier.process_transactions(transactions_df, force_process=True)
-                elif "Row Range" in action:
-                    # Process each row in the range
-                    for row_num in range(start_row, end_row + 1):
-                        click.echo(f"\nProcessing row {row_num} of {end_row}...")
-                        try:
-                            classifier.process_single_row(
-                                transactions_df, row_num, force_process=True
-                            )
-                        except Exception as e:
-                            click.echo(f"Error processing row {row_num}: {str(e)}")
-                            if not questionary.confirm("Continue with next row?").ask():
-                                break
-                    click.echo("\nRow range processing complete!")
-                elif action.startswith("Pass "):
-                    # Extract pass number and process specific pass
-                    pass_num = int(action[5:6])  # "Pass 1", "Pass 2", "Pass 3"
-
-                    # Check dependencies before running passes
-                    if pass_num > 1:
-                        # Check if Pass 1 has been completed
-                        with sqlite3.connect(db.db_path) as conn:
-                            cursor = conn.execute(
-                                """
-                                SELECT COUNT(*) 
-                                FROM normalized_transactions t
-                                LEFT JOIN transaction_classifications c 
-                                    ON t.transaction_id = c.transaction_id 
-                                    AND t.client_id = c.client_id
-                                WHERE t.client_id = ? 
-                                AND (c.payee IS NULL OR c.payee = '' OR c.payee = 'Unknown Payee')
-                                """,
-                                (db.get_client_id(client_name),),
-                            )
-                            missing_payees = cursor.fetchone()[0]
-
-                            if missing_payees > 0:
-                                # Instead of blocking, warn and ask for confirmation
-                                click.echo(
-                                    f"\nWarning: {missing_payees} transactions are missing valid payees."
-                                )
-                                click.echo(
-                                    "These transactions will be skipped during Pass 2."
-                                )
-                                if not questionary.confirm(
-                                    "Do you want to continue with Pass 2?"
-                                ).ask():
-                                    continue
-
-                    if pass_num > 2:
-                        # Check if Pass 2 has been completed
-                        with sqlite3.connect(db.db_path) as conn:
-                            cursor = conn.execute(
-                                """
-                                SELECT COUNT(*) 
-                                FROM normalized_transactions t
-                                LEFT JOIN transaction_classifications c 
-                                    ON t.transaction_id = c.transaction_id 
-                                    AND t.client_id = c.client_id
-                                WHERE t.client_id = ? 
-                                AND c.payee IS NOT NULL 
-                                AND c.payee != 'Unknown Payee'
-                                AND (c.category IS NULL OR c.category = '' OR c.category = 'Unclassified')
-                                """,
-                                (db.get_client_id(client_name),),
-                            )
-                            missing_categories = cursor.fetchone()[0]
-
-                            if missing_categories > 0:
-                                click.echo(
-                                    f"Error: {missing_categories} transactions with valid payees are missing categories. Please run Pass 2 first."
-                                )
-                                continue
-
-                    # For Pass 2, check for missing payees but don't block execution
-                    if pass_num == 2:
-                        with sqlite3.connect(db.db_path) as conn:
-                            cursor = conn.execute(
-                                """
-                                SELECT COUNT(*) 
-                                FROM normalized_transactions t
-                                LEFT JOIN transaction_classifications c 
-                                    ON t.transaction_id = c.transaction_id 
-                                    AND t.client_id = c.client_id
-                                WHERE t.client_id = ? 
-                                AND (c.payee IS NULL OR c.payee = 'Unknown Payee')
-                                """,
-                                (db.get_client_id(client_name),),
-                            )
-                            missing_payees = cursor.fetchone()[0]
-
-                            if missing_payees > 0:
-                                click.echo(
-                                    f"Warning: {missing_payees} transactions have missing or unknown payees and will be skipped during Pass 2."
-                                )
-                                if not questionary.confirm(
-                                    "Do you want to continue?"
-                                ).ask():
-                                    continue
-
-                    # For individual passes, we'll use resume_from_pass to control execution
-                    # Pass 1: resume_from_pass=1 (only payee identification)
-                    # Pass 2: resume_from_pass=2 (only category assignment)
-                    # Pass 3: resume_from_pass=3 (only classification)
-                    result_df = classifier.process_transactions(
-                        transactions_df,
-                        start_row=start_row,
-                        end_row=end_row,
-                        resume_from_pass=pass_num,
-                    )
-
-                click.echo("Successfully processed transactions")
-
+                click.echo(f"\nInitializing classifier using {model_type} model...")
+                os.environ["OPENAI_MODEL_TYPE"] = model_type
+                classifier = TransactionClassifier(client_name)
+                click.echo(
+                    f"Processing ALL transactions (Force Reprocessing: {force_reprocessing})..."
+                )
+                classifier.process_transactions(
+                    transactions_df, force_process=force_reprocessing
+                )
+                click.echo("\nProcessing complete for all transactions.")
             except Exception as e:
-                click.echo(f"Error processing transactions: {e}")
+                click.echo(f"Error processing all transactions: {e}")
+                import traceback
+
+                traceback.print_exc()
+
+        elif action == "Process Row Range (Fast)":
+            process_transactions_by_range(
+                client_name, "FAST"
+            )  # Calls function with prompt
+        elif action == "Process Row Range (Precise)":
+            process_transactions_by_range(
+                client_name, "PRECISE"
+            )  # Calls function with prompt
+
+        elif action == "Resume Processing from Pass":
+            try:
+                db = ClientDB()
+                transactions_df = db.load_normalized_transactions(client_name)
+                if transactions_df.empty:
+                    click.echo("No transactions found.")
+                    continue
+
+                pass_num_str = questionary.select(
+                    "Resume from Pass:", choices=["1", "2", "3"]
+                ).ask()
+                if not pass_num_str:
+                    continue
+                pass_num = int(pass_num_str)
+
+                force_reprocessing = questionary.confirm(
+                    f"Force reprocessing from Pass {pass_num} onwards?", default=False
+                ).ask()
+                model_type = questionary.select(
+                    "Select model type:", choices=["FAST", "PRECISE"]
+                ).ask()
+                if not model_type:
+                    continue
+
+                click.echo(f"\nInitializing classifier using {model_type} model...")
+                os.environ["OPENAI_MODEL_TYPE"] = model_type
+                classifier = TransactionClassifier(client_name)
+                click.echo(
+                    f"Resuming processing from Pass {pass_num} (Force: {force_reprocessing})..."
+                )
+                classifier.process_transactions(
+                    transactions_df, force_process=force_reprocessing
+                )
+                click.echo("\nResumed processing complete.")
+            except Exception as e:
+                click.echo(f"Error resuming processing: {e}")
+                import traceback
+
+                traceback.print_exc()
+
+        elif action == "Reprocess Failed Transactions":
+            try:
+                db = ClientDB()
+                transactions_df = db.load_normalized_transactions(client_name)
+                if transactions_df.empty:
+                    click.echo("No transactions found.")
+                    continue
+
+                failed_ids = db.get_transactions_by_status(client_name, "error")
+                if not failed_ids:
+                    click.echo("No transactions with status 'error' found.")
+                    continue
+
+                click.echo(f"Found {len(failed_ids)} transactions with status 'error'.")
+                model_type = questionary.select(
+                    "Select model type:", choices=["FAST", "PRECISE"]
+                ).ask()
+                if not model_type:
+                    continue
+
+                if questionary.confirm(
+                    f"Reprocess these {len(failed_ids)} transactions (will force reclassification)?"
+                ).ask():
+                    click.echo(f"\nInitializing classifier using {model_type} model...")
+                    os.environ["OPENAI_MODEL_TYPE"] = model_type
+                    classifier = TransactionClassifier(client_name)
+                    failed_df = transactions_df[
+                        transactions_df["transaction_id"].isin(failed_ids)
+                    ]
+                    click.echo(
+                        f"Reprocessing {len(failed_df)} failed transactions (Forced)..."
+                    )
+                    classifier.process_transactions(
+                        transactions_df, force_process=True
+                    )  # Force is implicit here
+                    click.echo("\nReprocessing of failed transactions complete.")
+                else:
+                    click.echo("Reprocessing cancelled.")
+            except Exception as e:
+                click.echo(f"Error reprocessing failed transactions: {e}")
+                import traceback
+
+                traceback.print_exc()
+
+        elif action == "Reprocess Specific Pass for All":
+            try:
+                db = ClientDB()
+                transactions_df = db.load_normalized_transactions(client_name)
+                if transactions_df.empty:
+                    click.echo("No transactions found.")
+                    continue
+
+                pass_num_str = questionary.select(
+                    "Which Pass to reprocess for ALL transactions?",
+                    choices=["1", "2", "3"],
+                ).ask()
+                if not pass_num_str:
+                    continue
+                pass_num = int(pass_num_str)
+
+                model_type = questionary.select(
+                    "Select model type:", choices=["FAST", "PRECISE"]
+                ).ask()
+                if not model_type:
+                    continue
+
+                if questionary.confirm(
+                    f"This will FORCE re-run Pass {pass_num} for ALL transactions. Continue?"
+                ).ask():
+                    click.echo(f"\nInitializing classifier using {model_type} model...")
+                    os.environ["OPENAI_MODEL_TYPE"] = model_type
+                    classifier = TransactionClassifier(client_name)
+                    click.echo(
+                        f"Reprocessing Pass {pass_num} for ALL transactions (Forced)..."
+                    )
+                    # We use resume_from_pass to effectively target the specific pass, and force=True
+                    classifier.process_transactions(transactions_df, force_process=True)
+                    click.echo(f"\nReprocessing of Pass {pass_num} complete.")
+                else:
+                    click.echo("Reprocessing cancelled.")
+            except Exception as e:
+                click.echo(f"Error reprocessing pass: {e}")
+                import traceback
+
+                traceback.print_exc()
+
+        elif action == "List Transactions":
+            list_transactions(client_name)
+
+        elif action == "View Transaction Status":
+            try:
+                db = ClientDB()
+                db.display_transaction_status_summary(client_name)
+                # Add option to view details if needed
+            except Exception as e:
+                click.echo(f"Error viewing transaction status: {e}")
+
+        elif action == "Reset Transaction Status":
+            try:
+                db = ClientDB()
+                transactions_df = db.load_normalized_transactions(client_name)
+                if transactions_df.empty:
+                    click.echo("No transactions found.")
+                    continue
+                transaction_id = questionary.text(
+                    "Enter transaction ID to reset (or leave blank to cancel):"
+                ).ask()
+                if not transaction_id:
+                    continue
+
+                current_status = db.get_transaction_status_details(
+                    client_name, transaction_id
+                )
+                if not current_status:
+                    click.echo("Transaction ID not found.")
+                    continue
+
+                click.echo("Current Status:")
+                for p, details in current_status.items():
+                    click.echo(
+                        f"  {p.upper()}: {details['status']} (Error: {details['error'] or 'None'}) @ {details['processed_at'] or 'N/A'}"
+                    )
+
+                passes_to_reset = questionary.checkbox(
+                    "Select passes to reset to 'pending':",
+                    choices=["Pass 1", "Pass 2", "Pass 3"],
+                ).ask()
+                if not passes_to_reset:
+                    click.echo("No passes selected.")
+                    continue
+
+                if questionary.confirm(
+                    f"Reset status for {transaction_id} for {', '.join(passes_to_reset)}?"
+                ).ask():
+                    db.reset_transaction_status(
+                        client_name, transaction_id, [p[5:6] for p in passes_to_reset]
+                    )
+                    click.echo("Transaction status reset.")
+                else:
+                    click.echo("Reset cancelled.")
+            except Exception as e:
+                click.echo(f"Error resetting status: {e}")
 
         elif action == "Sync Transactions to Database":
             try:
@@ -758,443 +830,11 @@ def start_menu():
             except Exception as e:
                 click.echo(f"Error syncing transactions: {e}")
 
-        elif action == "Export to Excel Report":
+        elif action == "Export to Excel Report (+CSVs)":
             handle_excel_export(client_name)
 
         elif action == "Upload to Google Sheets":
             handle_sheets_menu(client_name)
-
-        elif action == "List Transactions":
-            list_transactions(client_name)
-
-        elif action == "View Transaction Status":
-            try:
-                # Get transactions from database
-                db = ClientDB()
-                transactions_df = db.load_normalized_transactions(client_name)
-
-                if transactions_df.empty:
-                    click.echo("No transactions found.")
-                    continue
-
-                # Show transaction summary
-                with sqlite3.connect(db.db_path) as conn:
-                    # Define status colors
-                    status_colors = {
-                        "completed": "green",
-                        "processing": "yellow",
-                        "pending": "blue",
-                        "error": "red",
-                        "skipped": "magenta",
-                        "force_required": "bright_red",
-                    }
-
-                    # Function to format status with color
-                    def format_status(status, count):
-                        color = status_colors.get(status, "white")
-                        return click.style(
-                            f"  {status}: {count} transactions", fg=color
-                        )
-
-                    # Pass 1 Status
-                    cursor = conn.execute(
-                        """
-                        SELECT 
-                            pass_1_status, COUNT(*) as count
-                        FROM transaction_status
-                        WHERE client_id = ?
-                        GROUP BY pass_1_status
-                        ORDER BY 
-                            CASE pass_1_status
-                                WHEN 'completed' THEN 1
-                                WHEN 'processing' THEN 2
-                                WHEN 'pending' THEN 3
-                                WHEN 'error' THEN 4
-                                WHEN 'skipped' THEN 5
-                                WHEN 'force_required' THEN 6
-                            END
-                        """,
-                        (db.get_client_id(client_name),),
-                    )
-                    click.echo("\nPass 1 (Payee Identification) Status:")
-                    for status, count in cursor:
-                        click.echo(format_status(status, count))
-
-                    # Pass 2 Status
-                    cursor = conn.execute(
-                        """
-                        SELECT 
-                            pass_2_status, COUNT(*) as count
-                        FROM transaction_status
-                        WHERE client_id = ?
-                        GROUP BY pass_2_status
-                        ORDER BY 
-                            CASE pass_2_status
-                                WHEN 'completed' THEN 1
-                                WHEN 'processing' THEN 2
-                                WHEN 'pending' THEN 3
-                                WHEN 'error' THEN 4
-                                WHEN 'skipped' THEN 5
-                                WHEN 'force_required' THEN 6
-                            END
-                        """,
-                        (db.get_client_id(client_name),),
-                    )
-                    click.echo("\nPass 2 (Category Assignment) Status:")
-                    for status, count in cursor:
-                        click.echo(format_status(status, count))
-
-                    # Pass 3 Status
-                    cursor = conn.execute(
-                        """
-                        SELECT 
-                            pass_3_status, COUNT(*) as count
-                        FROM transaction_status
-                        WHERE client_id = ?
-                        GROUP BY pass_3_status
-                        ORDER BY 
-                            CASE pass_3_status
-                                WHEN 'completed' THEN 1
-                                WHEN 'processing' THEN 2
-                                WHEN 'pending' THEN 3
-                                WHEN 'error' THEN 4
-                                WHEN 'skipped' THEN 5
-                                WHEN 'force_required' THEN 6
-                            END
-                        """,
-                        (db.get_client_id(client_name),),
-                    )
-                    click.echo("\nPass 3 (Classification) Status:")
-                    for status, count in cursor:
-                        click.echo(format_status(status, count))
-
-                    # Show legend
-                    click.echo("\nStatus Legend:")
-                    for status, color in status_colors.items():
-                        click.echo(click.style(f"  {status}", fg=color))
-
-                # Allow viewing details of specific transactions
-                while questionary.confirm("\nView specific transaction details?").ask():
-                    transaction_id = questionary.text("Enter transaction ID:").ask()
-                    status = db.get_transaction_status(client_name, transaction_id)
-                    if status:
-                        click.echo("\nTransaction Status:")
-                        for pass_num, details in status.items():
-                            click.echo(f"\n{pass_num.upper()}:")
-                            status_color = status_colors.get(details["status"], "white")
-                            click.echo(
-                                click.style(
-                                    f"  Status: {details['status']}", fg=status_color
-                                )
-                            )
-                            if details["error"]:
-                                click.echo(
-                                    click.style(
-                                        f"  Error: {details['error']}", fg="red"
-                                    )
-                                )
-                            if details["processed_at"]:
-                                click.echo(
-                                    f"  Last Processed: {details['processed_at']}"
-                                )
-                    else:
-                        click.echo("Transaction not found.")
-
-            except Exception as e:
-                click.echo(f"Error viewing transaction status: {e}")
-
-        elif action == "Force Process Transactions":
-            try:
-                # Get transactions from database
-                db = ClientDB()
-                transactions_df = db.load_normalized_transactions(client_name)
-
-                if transactions_df.empty:
-                    click.echo("No transactions found.")
-                    continue
-
-                # Show options for transaction selection
-                selection_method = questionary.select(
-                    "How would you like to select transactions?",
-                    choices=[
-                        "Enter Transaction IDs",
-                        "Select by Status",
-                        "Select by Date Range",
-                        "Select All",
-                    ],
-                ).ask()
-
-                transactions_to_process = []
-                if selection_method == "Enter Transaction IDs":
-                    # Allow entering multiple transaction IDs
-                    while True:
-                        transaction_id = questionary.text(
-                            "Enter transaction ID (or leave empty to finish):"
-                        ).ask()
-                        if not transaction_id:
-                            break
-                        if transaction_id in transactions_df["transaction_id"].values:
-                            transactions_to_process.append(transaction_id)
-                        else:
-                            click.echo("Transaction ID not found.")
-
-                elif selection_method == "Select by Status":
-                    status_choice = questionary.select(
-                        "Select transactions with status:",
-                        choices=["error", "pending", "force_required", "skipped"],
-                    ).ask()
-
-                    # Get transactions with selected status
-                    with sqlite3.connect(db.db_path) as conn:
-                        cursor = conn.execute(
-                            """
-                            SELECT transaction_id 
-                            FROM transaction_status 
-                            WHERE client_id = ? 
-                            AND (pass_1_status = ? OR pass_2_status = ? OR pass_3_status = ?)
-                            """,
-                            (
-                                db.get_client_id(client_name),
-                                status_choice,
-                                status_choice,
-                                status_choice,
-                            ),
-                        )
-                        transactions_to_process = [row[0] for row in cursor.fetchall()]
-
-                elif selection_method == "Select by Date Range":
-                    start_date = questionary.text(
-                        "Enter start date (YYYY-MM-DD):"
-                    ).ask()
-                    end_date = questionary.text("Enter end date (YYYY-MM-DD):").ask()
-
-                    # Filter transactions by date range
-                    mask = (transactions_df["transaction_date"] >= start_date) & (
-                        transactions_df["transaction_date"] <= end_date
-                    )
-                    transactions_to_process = transactions_df[mask][
-                        "transaction_id"
-                    ].tolist()
-
-                else:  # Select All
-                    transactions_to_process = transactions_df["transaction_id"].tolist()
-
-                if not transactions_to_process:
-                    click.echo("No transactions selected.")
-                    continue
-
-                # Select pass to force
-                pass_to_force = questionary.select(
-                    "Which pass would you like to force?",
-                    choices=[
-                        "Pass 1: Payee Identification",
-                        "Pass 2: Category Assignment",
-                        "Pass 3: Classification",
-                        "All Passes",
-                    ],
-                ).ask()
-
-                # Get model type
-                model_type = questionary.select(
-                    "Select processing mode:",
-                    choices=["fast", "precise"],
-                ).ask()
-
-                # Confirm processing
-                if questionary.confirm(
-                    f"Are you sure you want to process {len(transactions_to_process)} transactions?"
-                ).ask():
-                    # Initialize classifier
-                    classifier = TransactionClassifier(
-                        client_name=client_name,
-                        db=db,
-                        model_type=model_type,
-                    )
-
-                    # Process each transaction
-                    for transaction_id in transactions_to_process:
-                        click.echo(f"\nProcessing transaction {transaction_id}...")
-
-                        # Process the transaction
-                        if "Pass 1" in pass_to_force:
-                            result_df = classifier.process_transactions(
-                                transactions_df[
-                                    transactions_df["transaction_id"] == transaction_id
-                                ],
-                                resume_from_pass=1,
-                                force_process=True,
-                            )
-                        elif "Pass 2" in pass_to_force:
-                            result_df = classifier.process_transactions(
-                                transactions_df[
-                                    transactions_df["transaction_id"] == transaction_id
-                                ],
-                                resume_from_pass=2,
-                                force_process=True,
-                            )
-                        elif "Pass 3" in pass_to_force:
-                            result_df = classifier.process_transactions(
-                                transactions_df[
-                                    transactions_df["transaction_id"] == transaction_id
-                                ],
-                                resume_from_pass=3,
-                                force_process=True,
-                            )
-                        else:  # All Passes
-                            result_df = classifier.process_transactions(
-                                transactions_df[
-                                    transactions_df["transaction_id"] == transaction_id
-                                ],
-                                force_process=True,
-                            )
-
-                    click.echo("\nSuccessfully processed all selected transactions")
-                else:
-                    click.echo("Processing cancelled")
-
-            except Exception as e:
-                click.echo(f"Error processing transactions: {e}")
-                import traceback
-
-                traceback.print_exc()
-
-        elif action == "Reset Transaction Status":
-            try:
-                # Get transactions from database
-                db = ClientDB()
-                transactions_df = db.load_normalized_transactions(client_name)
-
-                if transactions_df.empty:
-                    click.echo("No transactions found.")
-                    continue
-
-                # Get transaction ID
-                transaction_id = questionary.text(
-                    "Enter transaction ID to reset:"
-                ).ask()
-
-                # Get current status
-                status = db.get_transaction_status(client_name, transaction_id)
-                if not status:
-                    click.echo("Transaction not found.")
-                    continue
-
-                # Show current status
-                click.echo("\nCurrent Status:")
-                for pass_num, details in status.items():
-                    click.echo(f"{pass_num.upper()}: {details['status']}")
-
-                # Select passes to reset
-                passes_to_reset = questionary.checkbox(
-                    "Select passes to reset:",
-                    choices=[
-                        "Pass 1: Payee Identification",
-                        "Pass 2: Category Assignment",
-                        "Pass 3: Classification",
-                    ],
-                ).ask()
-
-                if not passes_to_reset:
-                    click.echo("No passes selected.")
-                    continue
-
-                # Confirm reset
-                if questionary.confirm(
-                    "This will reset the selected passes to 'pending' status. Continue?"
-                ).ask():
-                    with sqlite3.connect(db.db_path) as conn:
-                        updates = []
-                        params = []
-                        for pass_choice in passes_to_reset:
-                            pass_num = pass_choice[5:6]  # Extract number from "Pass X:"
-                            updates.append(f"pass_{pass_num}_status = ?")
-                            updates.append(f"pass_{pass_num}_error = ?")
-                            updates.append(f"pass_{pass_num}_processed_at = ?")
-                            params.extend(["pending", None, None])
-
-                        query = f"""
-                        UPDATE transaction_status 
-                        SET {", ".join(updates)},
-                            updated_at = CURRENT_TIMESTAMP
-                        WHERE client_id = ? AND transaction_id = ?
-                        """
-                        params.extend([db.get_client_id(client_name), transaction_id])
-
-                        conn.execute(query, params)
-                        click.echo("Successfully reset transaction status")
-                else:
-                    click.echo("Reset cancelled")
-
-            except Exception as e:
-                click.echo(f"Error resetting transaction status: {e}")
-
-        elif action == "Reprocess Failed Transactions":
-            try:
-                # Get transactions from database
-                db = ClientDB()
-                transactions_df = db.load_normalized_transactions(client_name)
-
-                if transactions_df.empty:
-                    click.echo("No transactions found.")
-                    continue
-
-                # Get transaction IDs of failed transactions
-                failed_transactions = [
-                    id
-                    for id, status in db.get_transaction_status(client_name).items()
-                    if status["status"] == "error"
-                ]
-
-                if not failed_transactions:
-                    click.echo("No failed transactions found.")
-                    continue
-
-                # Confirm reprocessing
-                if questionary.confirm(
-                    f"Are you sure you want to reprocess {len(failed_transactions)} failed transactions? This will force re-processing of these transactions, but won't delete existing classification results."
-                ).ask():
-                    for transaction_id in failed_transactions:
-                        # Process the transaction
-                        result_df = classifier.process_transactions(
-                            transactions_df[
-                                transactions_df["transaction_id"] == transaction_id
-                            ],
-                            resume_from_pass=1,
-                            force_process=True,
-                        )
-                    click.echo("Successfully reprocessed failed transactions")
-                else:
-                    click.echo("Reprocessing cancelled")
-
-            except Exception as e:
-                click.echo(f"Error reprocessing failed transactions: {e}")
-
-        elif action == "Reprocess Pass for All Transactions":
-            try:
-                # Get transactions from database
-                db = ClientDB()
-                transactions_df = db.load_normalized_transactions(client_name)
-
-                if transactions_df.empty:
-                    click.echo("No transactions found.")
-                    continue
-
-                # Confirm reprocessing
-                if questionary.confirm(
-                    "Are you sure you want to reprocess all transactions? This will force re-processing of all transactions, but won't delete existing classification results."
-                ).ask():
-                    # Process all transactions
-                    result_df = classifier.process_transactions(
-                        transactions_df,
-                        start_row=0,
-                        end_row=len(transactions_df),
-                    )
-                    click.echo("Successfully reprocessed all transactions")
-                else:
-                    click.echo("Reprocessing cancelled")
-
-            except Exception as e:
-                click.echo(f"Error reprocessing all transactions: {e}")
 
         elif action == "Review Pass 2 Results":
             review_pass2_results(client_name)
@@ -1861,6 +1501,67 @@ def create_or_update_profile(client_name: str):
 
     except Exception as e:
         click.echo(f"Error updating business profile: {e}")
+
+
+def process_transactions_by_range(client_name: str, model_type: str):
+    """Process transactions within a specific row range using the specified model."""
+    try:
+        # Load transactions from the database
+        db = ClientDB()
+        transactions_df = db.load_normalized_transactions(client_name)
+        if transactions_df.empty:
+            click.echo("No transactions found to process.")
+            return
+
+        total_rows = len(transactions_df)
+        click.echo(f"Total transactions found: {total_rows}")
+
+        # Get row range from user
+        start_row = questionary.text(
+            "Enter start row number (1-based index):",
+            validate=lambda x: x.isdigit() and 1 <= int(x) <= total_rows,
+        ).ask()
+        end_row = questionary.text(
+            f"Enter end row number ({start_row}-{total_rows}):",
+            validate=lambda x: x.isdigit() and int(start_row) <= int(x) <= total_rows,
+        ).ask()
+
+        if not start_row or not end_row:
+            click.echo("Invalid row range provided. Aborting.")
+            return
+
+        start_row_idx = int(start_row) - 1  # Convert to 0-based index
+        end_row_idx = int(end_row)  # end_row is exclusive for slicing
+
+        # *** ADD CONFIRMATION STEP ***
+        force_reprocessing = questionary.confirm(
+            "Force reprocessing (ignore existing classifications)?", default=False
+        ).ask()
+
+        # Initialize classifier
+        click.echo(f"\nInitializing classifier using {model_type} model...")
+        # Set environment variable for model selection within classifier
+        os.environ["OPENAI_MODEL_TYPE"] = model_type
+        classifier = TransactionClassifier(client_name)
+
+        # Process the selected range
+        click.echo(
+            f"Processing rows {start_row} to {end_row} (Force Reprocessing: {force_reprocessing})..."
+        )
+        classifier.process_transactions(
+            transactions_df,
+            force_process=force_reprocessing,
+            start_row=start_row_idx,
+            end_row=end_row_idx,
+        )
+
+        click.echo("\nProcessing complete for the selected range.")
+
+    except Exception as e:
+        click.echo(f"Error processing transactions by range: {e}")
+        import traceback
+
+        traceback.print_exc()  # Print traceback for detailed debugging
 
 
 if __name__ == "__main__":

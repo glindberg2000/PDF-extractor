@@ -3,9 +3,10 @@ Pydantic models for AI classification responses.
 """
 
 from pydantic import BaseModel, Field
-from typing import Optional, Literal, List, Dict
+from typing import Optional, Literal, List, Dict, Any
 from dataclasses import dataclass
 from ..utils.tax_categories import TAX_WORKSHEET_CATEGORIES
+from enum import Enum, auto
 
 
 class PayeeResponse(BaseModel):
@@ -23,6 +24,15 @@ class PayeeResponse(BaseModel):
         None, description="General expense category for this transaction"
     )
 
+    def as_dict(self, prefix: str = "") -> Dict[str, Any]:
+        return {
+            f"{prefix}_payee": self.payee,
+            f"{prefix}_confidence": self.confidence,
+            f"{prefix}_reasoning": self.reasoning,
+            f"{prefix}_business_description": self.business_description,
+            f"{prefix}_general_category": self.general_category,
+        }
+
 
 @dataclass
 class CategoryResponse:
@@ -35,6 +45,18 @@ class CategoryResponse:
     # Optional fields for precise mode
     confidence: str = "medium"
     detailed_context: str = ""
+
+    def as_dict(self, prefix: str = "") -> Dict[str, Any]:
+        """Convert to dictionary with optional prefix for key names."""
+        prefix = f"{prefix}_" if prefix else ""
+        return {
+            f"{prefix}category": self.category,
+            f"{prefix}expense_type": self.expense_type,
+            f"{prefix}business_percentage": self.business_percentage,
+            f"{prefix}category_reasoning": self.notes,
+            f"{prefix}category_confidence": self.confidence,
+            f"{prefix}business_context": self.detailed_context,
+        }
 
 
 # Build numbered tax categories mapping
@@ -70,7 +92,7 @@ class ClassificationResponse(BaseModel):
     business_percentage: int = Field(
         ..., description="Business use percentage", ge=0, le=100
     )
-    worksheet: Literal["6A", "Vehicle", "HomeOffice"] = Field(
+    worksheet: Literal["6A", "Vehicle", "HomeOffice", "Personal"] = Field(
         ..., description="Tax worksheet designation"
     )
     confidence: Literal["high", "medium", "low"] = Field(

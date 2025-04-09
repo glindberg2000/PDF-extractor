@@ -13,7 +13,7 @@ when needed. It also provides reasoning for all classifications.
 import os
 import json
 import pandas as pd
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from openai import OpenAI
 from ..utils.config import (
     ASSISTANTS_CONFIG,
@@ -45,6 +45,12 @@ import traceback
 from dataclasses import dataclass
 from thefuzz import fuzz
 import re
+import time
+from collections import defaultdict
+from pydantic import ValidationError as PydanticValidationError
+import hashlib
+from ..utils.constants import CATEGORY_MAPPING, CATEGORY_ID_TO_NAME, ALLOWED_WORKSHEETS
+import uuid
 
 # Initialize colorama
 init(autoreset=True)
@@ -83,22 +89,6 @@ if not logger.handlers:
 
 
 @dataclass
-class TransactionInfo:
-    """Class to hold transaction information during processing."""
-
-    transaction_id: str
-    description: str
-    amount: float
-    transaction_date: str
-    payee_info: Optional[PayeeResponse] = None
-    category_info: Optional[CategoryResponse] = None
-    tax_info: Optional[ClassificationResponse] = None
-
-    def __str__(self):
-        return f"[Transaction {self.transaction_id}]"
-
-
-@dataclass
 class TaxInfo:
     """Tax classification information for a transaction."""
 
@@ -108,104 +98,102 @@ class TaxInfo:
     worksheet: str
     confidence: str
     reasoning: str
+    tax_implications: str = ""
+
+    def as_dict(self, prefix: str = "") -> Dict[str, Any]:
+        """Convert to dictionary with optional prefix for key names."""
+        prefix = f"{prefix}_" if prefix else ""
+        return {
+            f"{prefix}tax_category_id": self.tax_category_id,
+            f"{prefix}tax_category": self.tax_category,
+            f"{prefix}business_percentage": self.business_percentage,
+            f"{prefix}worksheet": self.worksheet,
+            f"{prefix}confidence": self.confidence,
+            f"{prefix}reasoning": self.reasoning,
+            f"{prefix}tax_implications": self.tax_implications,
+        }
+
+
+@dataclass
+class TransactionInfo:
+    """Class to hold transaction information during processing."""
+
+    transaction_id: str
+    description: str
+    amount: float
+    transaction_date: str
+    payee_info: Optional[PayeeResponse] = None
+    category_info: Optional[CategoryResponse] = None
+    tax_info: Optional[TaxInfo] = None
+
+    def __str__(self):
+        return f"[Transaction {self.transaction_id}]"
 
 
 class TransactionClassifier:
+    """Classify transactions with caching."""
+
+    # Define allowed worksheets as a class constant
+    ALLOWED_WORKSHEETS = ALLOWED_WORKSHEETS
+
     def __init__(self, client_name: str):
         """Initialize the transaction classifier."""
         self.client = OpenAI()
         self.client_name = client_name
-        self.profile_manager = ClientProfileManager(client_name)
+        self.db = ClientDB()
+        self.client_id = self.db.get_client_id(client_name)
+        if not self.client_id:
+            raise ValueError(f"Failed to get or create client ID for '{client_name}'.")
 
-        # Initialize database connection management
+        self.business_profile = self.db.load_profile(client_name)
+        if not self.business_profile:
+            logger.warning(
+                f"No business profile found for client '{client_name}'. Context will be limited."
+            )
+
         self._persistent_conn = None
         self._transaction_active = False
 
-        # Ensure client exists in database
-        if not self.profile_manager.db.execute_query(
-            "SELECT id FROM clients WHERE name = ?", (client_name,)
-        ):
-            # Create client if doesn't exist
-            self.profile_manager.db.execute_query(
-                "INSERT INTO clients (name) VALUES (?)", (client_name,)
-            )
-            logger.info(f"Created new client record for '{client_name}'")
-
-        self.business_profile = self.profile_manager._load_profile()
-
-        if not self.business_profile:
-            raise ValueError(
-                f"No business profile found for client '{client_name}'. Please create a profile first."
-            )
-
-        # Get client ID from the database
-        self.client_id = self.profile_manager.db.get_client_id(client_name)
-        if not self.client_id:
-            raise ValueError(
-                f"No client ID found for client '{client_name}'. Please ensure the client exists in the database."
-            )
-
         self.business_context = self._get_business_context()
-        self._load_standard_categories()
-        self._load_client_categories()
 
-    def _load_standard_categories(self) -> None:
-        """Load standard tax categories."""
-        try:
-            # Load standard categories from config
-            self.standard_categories = STANDARD_CATEGORIES
+        self.business_categories_by_id: Dict[int, Tuple[str, str]] = {}
+        self.business_category_id_by_name_ws: Dict[Tuple[str, str], int] = {}
+        self.personal_category_id: Optional[int] = None
+        self._load_category_mappings()
 
-            # Load tax worksheet categories
-            self.tax_categories = TAX_WORKSHEET_CATEGORIES
+        self.client_categories = {}
 
-            # Initialize tax categories in the database using '6A' as the default worksheet
-            for worksheet_key, categories in TAX_WORKSHEET_CATEGORIES.items():
-                # Handle categories as a list
-                if isinstance(categories, list):
-                    for category in categories:
-                        # Insert the category if it doesn't exist, using '6A' as the worksheet
-                        self.profile_manager.db.execute_query(
-                            """INSERT OR IGNORE INTO tax_categories 
-                               (name, worksheet) VALUES (?, ?)""",
-                            (category, "6A"),  # Use '6A' instead of worksheet_key
-                        )
+    def _load_category_mappings(self):
+        """Load tax category mappings from the database."""
+        logger.info("Loading tax category mappings from database...")
+        all_categories = self.db.execute_query(
+            "SELECT id, name, worksheet, is_personal FROM tax_categories ORDER BY id"
+        )
 
-            # Verify tax categories were initialized
-            result = self.profile_manager.db.execute_query(
-                "SELECT COUNT(*) FROM tax_categories"
-            )
-            count = result[0][0] if result else 0
-
-            if count == 0:
-                logger.warning(
-                    "No tax categories found in database after initialization"
-                )
-                # Force insert of categories using '6A' worksheet
-                for worksheet_key, categories in TAX_WORKSHEET_CATEGORIES.items():
-                    if isinstance(categories, list):
-                        for category in categories:
-                            self.profile_manager.db.execute_query(
-                                """INSERT INTO tax_categories 
-                                   (name, worksheet) VALUES (?, ?)""",
-                                (category, "6A"),  # Use '6A' instead of worksheet_key
-                            )
-                logger.info("Forced initialization of tax categories")
+        found_personal = False
+        for cat_id, name, worksheet, is_personal in all_categories:
+            if is_personal:
+                if name == "Personal Expense":
+                    self.personal_category_id = cat_id
+                    logger.info(f"Found Personal Expense category with ID: {cat_id}")
+                    found_personal = True
+                # else: ignore other personal categories if any
             else:
-                logger.info(f"Found {count} tax categories in database")
+                # Business category
+                self.business_categories_by_id[cat_id] = (name, worksheet)
+                self.business_category_id_by_name_ws[(name, worksheet)] = cat_id
 
-            # Log all categories for debugging
-            categories = self.profile_manager.db.execute_query(
-                "SELECT id, name, worksheet FROM tax_categories ORDER BY id"
+        if not found_personal:
+            logger.error(
+                "CRITICAL: 'Personal Expense' category not found in the database!"
             )
-            if categories:
-                logger.debug("Tax Categories:")
-                for cat in categories:
-                    logger.debug(f"  ID {cat[0]}: {cat[1]} ({cat[2]})")
+            # Handle this error appropriately - maybe raise an exception?
 
-        except Exception as e:
-            logger.error(f"Error loading standard categories: {str(e)}")
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            raise
+        logger.info(
+            f"Loaded {len(self.business_categories_by_id)} business category mappings."
+        )
+        if not self.business_categories_by_id:
+            logger.warning("No business categories found in the database!")
 
     def _get_business_context(self) -> str:
         """Get business context from profile for AI prompts."""
@@ -230,11 +218,13 @@ class TransactionClassifier:
                 f"Industry Insights: {self.business_profile['industry_insights']}"
             )
 
-        # Add any custom categories
-        if self.business_profile.get("custom_categories"):
-            categories = self.business_profile["custom_categories"]
-            if isinstance(categories, list):
-                context_parts.append(f"Custom Categories: {', '.join(categories)}")
+        # Add any custom categories (consider if these are relevant for context)
+        # if self.business_profile.get("custom_categories"):
+        #     categories = self.business_profile["custom_categories"]
+        #     if isinstance(categories, list):
+        #         context_parts.append(f"Custom Categories: {', '.join(categories)}")
+
+        # TODO: Add custom business rules from profile if available and relevant
 
         return "\n".join(context_parts)
 
@@ -266,9 +256,7 @@ class TransactionClassifier:
                 ORDER BY nt.transaction_date DESC
                 LIMIT 1
             """
-            result = self.profile_manager.db.execute_query(
-                query, (self.client_id, description)
-            )
+            result = self.db.execute_query(query, (self.client_id, description))
 
             if result:
                 logger.info(f"✅ Found exact match for description: {description}")
@@ -310,9 +298,7 @@ class TransactionClassifier:
                         ORDER BY nt.transaction_date DESC
                         LIMIT 1
                     """
-                    result = self.profile_manager.db.execute_query(
-                        query, (self.client_id, pattern)
-                    )
+                    result = self.db.execute_query(query, (self.client_id, pattern))
 
                     if result:
                         # Calculate similarity score between descriptions
@@ -363,10 +349,16 @@ class TransactionClassifier:
         self, description: str, force_process: bool = False
     ) -> PayeeResponse:
         """Get the payee for a transaction description."""
-        if not force_process:
+        # When force_process is True, skip all matching and go directly to AI
+        if force_process:
+            logger.info(f"🧠 FORCED AI payee identification for: {description}")
+        else:
             # Only check for matches if not forcing LLM processing
             match_data = self._find_matching_transaction(description)
             if match_data:
+                logger.info(
+                    f"✓ Using existing payee from matching transaction: {match_data['payee']}"
+                )
                 return PayeeResponse(
                     payee=match_data["payee"],
                     confidence="high",
@@ -376,6 +368,7 @@ class TransactionClassifier:
                 )
 
         # If force_process=True or no match found, use LLM
+        logger.info(f"🧠 Using AI for payee identification")
         prompt = self._build_payee_prompt(description)
         response = self.client.chat.completions.create(
             model=self._get_model(),
@@ -392,6 +385,7 @@ class TransactionClassifier:
         )
 
         result = json.loads(response.choices[0].message.content)
+        logger.info(f"✓ AI Payee Identified: {result.get('payee', 'Unknown')}")
         return PayeeResponse(**result)
 
     def _get_classification(
@@ -453,7 +447,7 @@ class TransactionClassifier:
     def _start_batch_processing(self):
         """Start batch processing by establishing a persistent connection."""
         if not self._persistent_conn:
-            self._persistent_conn = sqlite3.connect(self.profile_manager.db.db_path)
+            self._persistent_conn = sqlite3.connect(self.db.db_path)
             # Configure connection for optimal performance and reliability
             self._persistent_conn.execute("PRAGMA journal_mode=WAL")
             self._persistent_conn.execute("PRAGMA synchronous=NORMAL")
@@ -504,7 +498,7 @@ class TransactionClassifier:
         """Commit the results of a pass to the database."""
         try:
             if pass_num == 1:
-                self.profile_manager.db.execute_query(
+                self.db.execute_query(
                     """UPDATE transaction_classifications 
                        SET payee = ?, payee_confidence = ?, payee_reasoning = ?,
                            business_description = ?, general_category = ?
@@ -523,7 +517,7 @@ class TransactionClassifier:
                 )
 
             elif pass_num == 2:
-                self.profile_manager.db.execute_query(
+                self.db.execute_query(
                     """UPDATE transaction_classifications 
                        SET category = ?, category_confidence = ?, category_reasoning = ?
                        WHERE transaction_id = ?""",
@@ -539,7 +533,27 @@ class TransactionClassifier:
                 )
 
             elif pass_num == 3:
-                self.profile_manager.db.execute_query(
+                # Ensure worksheet value is valid before committing to database
+                worksheet = transaction.tax_info.worksheet
+                if isinstance(worksheet, list):
+                    logger.warning(
+                        f"Worksheet is still a list in commit: {worksheet}, using first value or '6A'"
+                    )
+                    worksheet = (
+                        worksheet[0]
+                        if worksheet and isinstance(worksheet[0], str)
+                        else "6A"
+                    )
+
+                # Ensure it's one of the allowed values for the database constraint
+                if worksheet not in self.ALLOWED_WORKSHEETS:
+                    logger.warning(
+                        f"Invalid worksheet '{worksheet}' at commit time, forcing to '6A'"
+                    )
+                    worksheet = "6A"
+
+                # Use the validated worksheet value
+                self.db.execute_query(
                     """UPDATE transaction_classifications 
                        SET tax_category_id = ?, business_percentage = ?, 
                            worksheet = ?, classification_confidence = ?,
@@ -548,7 +562,7 @@ class TransactionClassifier:
                     (
                         transaction.tax_info.tax_category_id,  # Using ID instead of name
                         transaction.tax_info.business_percentage,
-                        transaction.tax_info.worksheet,
+                        worksheet,  # Use the validated worksheet value
                         transaction.tax_info.confidence,
                         transaction.tax_info.reasoning,
                         transaction.transaction_id,
@@ -556,7 +570,7 @@ class TransactionClassifier:
                 )
                 # Get tax category name from ID for logging
                 tax_cat_query = "SELECT name FROM tax_categories WHERE id = ?"
-                tax_cat_result = self.profile_manager.db.execute_query(
+                tax_cat_result = self.db.execute_query(
                     tax_cat_query, (transaction.tax_info.tax_category_id,)
                 )
                 tax_category_name = (
@@ -572,7 +586,7 @@ class TransactionClassifier:
                 self._persistent_conn.commit()
             else:
                 # If no persistent connection, commit using the profile manager's connection
-                self.profile_manager.db.execute_query("COMMIT")
+                self.db.execute_query("COMMIT")
 
         except Exception as e:
             logger.error(f"Error committing pass {pass_num}: {str(e)}")
@@ -582,7 +596,7 @@ class TransactionClassifier:
 
     def _load_client_categories(self) -> List[str]:
         """Load client-specific categories from the database."""
-        with sqlite3.connect(self.profile_manager.db.db_path) as conn:
+        with sqlite3.connect(self.db.db_path) as conn:
             cursor = conn.execute(
                 """
                 SELECT category_name 
@@ -634,8 +648,12 @@ class TransactionClassifier:
         if not store_name:
             store_name = description.upper()
 
+        # Clean the description to remove common noise
+        clean_desc = re.sub(r"[^A-Za-z0-9\s]", "", description.upper())
+        clean_desc = re.sub(r"\s+", " ", clean_desc).strip()
+
         # Build key parts
-        key_parts = [store_name]
+        key_parts = [clean_desc]  # Use more of the description for uniqueness
         if payee:
             key_parts.append(payee.upper())
         if category:
@@ -644,7 +662,12 @@ class TransactionClassifier:
             key_parts.append(pass_type.upper())
 
         # Join with pipe delimiter for consistency
-        return "|".join(key_parts)
+        result = "|".join(key_parts)
+        # Generate a reproducible hash to shorten long keys
+        if len(result) > 200:
+            result = hashlib.md5(result.encode()).hexdigest()
+
+        return result
 
     def _get_cached_result(
         self, cache_key: str, pass_type: str = None
@@ -668,7 +691,7 @@ class TransactionClassifier:
 
             query += " ORDER BY created_at DESC LIMIT 1"
 
-            result = self.profile_manager.db.execute_query(query, params)
+            result = self.db.execute_query(query, params)
             if result and result[0]:
                 cached = json.loads(result[0][0])
                 logger.debug(f"Found cache entry: {cached}")
@@ -700,7 +723,7 @@ class TransactionClassifier:
                     result = excluded.result
             """
 
-            self.profile_manager.db.execute_query(
+            self.db.execute_query(
                 upsert_query, (self.client_id, cache_key, result_json, pass_type)
             )
             logger.info(f"💾 Cache write successful for key: {cache_key}")
@@ -717,166 +740,493 @@ class TransactionClassifier:
 
     def process_transactions(
         self,
-        transactions: pd.DataFrame,
-        resume_from_pass: int = 1,
+        transactions_df: pd.DataFrame,
+        process_passes: Tuple[bool, bool, bool] = (True, True, True),
         force_process: bool = False,
-        batch_size: int = 10,
-        start_row: Optional[int] = None,
-        end_row: Optional[int] = None,
-    ) -> None:
-        """Process transactions through multiple passes."""
+        batch_size: int = 50,
+        start_row: int = 0,
+        end_row: int = None,
+    ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+        """Process transactions through multiple classification passes."""
         try:
             # Start batch processing with persistent connection
             self._start_batch_processing()
 
-            if not isinstance(transactions, pd.DataFrame):
+            if not isinstance(transactions_df, pd.DataFrame):
                 raise ValueError("transactions must be a pandas DataFrame")
 
-            if resume_from_pass < 1 or resume_from_pass > 3:
-                raise ValueError("resume_from_pass must be between 1 and 3")
+            # Respect row limits
+            if end_row is None:
+                end_row = len(transactions_df)
 
-            # Handle row range
-            start_row = start_row if start_row is not None else 0
-            end_row = end_row if end_row is not None else len(transactions)
+            # Slice the DataFrame to the requested range
+            transactions_to_process = transactions_df.iloc[start_row:end_row].copy()
 
-            if start_row < 0 or end_row > len(transactions) or start_row >= end_row:
-                raise ValueError("Invalid row range specified")
-
-            total_transactions = end_row - start_row
-            pass_desc = {
-                1: "Payee identification",
-                2: "Category assignment",
-                3: "Final classification & tax mapping",
-            }
-
-            logger.info(f"\n{Fore.GREEN}{'='*80}{Style.RESET_ALL}")
-            logger.info(
-                f"{Fore.GREEN}▶ Starting transaction processing for {self.client_name}{Style.RESET_ALL}"
-            )
-            logger.info(
-                f"  • Processing {total_transactions} transactions (rows {start_row+1}-{end_row})"
-            )
-            logger.info(
-                f"  • Starting from pass {resume_from_pass}: {pass_desc.get(resume_from_pass, '')}"
-            )
-            logger.info(f"  • Force processing: {force_process}")
-            logger.info(f"{Fore.GREEN}{'='*80}{Style.RESET_ALL}\n")
-
-            # Stats counters
             stats = {
+                "total_transactions": len(transactions_to_process),
+                "processed": 0,
                 "pass1_processed": 0,
+                "pass1_completed": 0,
+                "pass1_errors": 0,
+                "pass1_skipped": 0,
+                "pass1_time": 0,
                 "pass2_processed": 0,
+                "pass2_completed": 0,
+                "pass2_errors": 0,
+                "pass2_skipped": 0,
+                "pass2_time": 0,
                 "pass3_processed": 0,
-                "errors": [],
+                "pass3_completed": 0,
+                "pass3_errors": 0,
+                "pass3_skipped": 0,
+                "pass3_time": 0,
             }
+            status_updates = defaultdict(dict)
+            processed_rows = []
 
-            # Process transactions row by row
-            for idx in range(start_row, end_row):
-                row = transactions.iloc[idx]
-                row_number = idx + 1
+            total_batches = (
+                len(transactions_to_process) + batch_size - 1
+            ) // batch_size
 
-                try:
-                    # Create TransactionInfo object
-                    transaction = TransactionInfo(
-                        transaction_id=str(row.transaction_id),
-                        description=row.description,
-                        amount=float(row.amount),
-                        transaction_date=row.transaction_date.strftime("%Y-%m-%d"),
-                    )
+            for batch_num, i in enumerate(
+                range(0, len(transactions_to_process), batch_size)
+            ):
+                batch_df = transactions_to_process.iloc[i : i + batch_size]
+                logger.info(f"--- Processing Batch {batch_num + 1}/{total_batches} ---")
 
-                    # Log separator for visual clarity
-                    logger.info(f"\n{Fore.CYAN}{'─'*80}{Style.RESET_ALL}")
+                for index, row in batch_df.iterrows():
+                    transaction_id = str(row["transaction_id"])
+                    row_info = f"[ID: {transaction_id}]"
+                    actual_row_num = index + 1  # For user-friendly display (1-indexed)
                     logger.info(
-                        f"{Fore.CYAN}[Row {row_number}] Transaction: {transaction.description}{Style.RESET_ALL}"
+                        f"Processing transaction {actual_row_num} (ID: {transaction_id}) - {stats['processed'] + 1}/{len(transactions_to_process)}"
+                    )
+                    stats["processed"] += 1
+
+                    # Get current status
+                    status = (
+                        self.db.get_transaction_status(self.client_name, transaction_id)
+                        or {}
+                    )
+                    status_updates[transaction_id][
+                        "client_id"
+                    ] = self.client_id  # Ensure client_id is set
+
+                    transaction = TransactionInfo(
+                        transaction_id=transaction_id,
+                        description=row["description"],
+                        amount=row["amount"],
+                        transaction_date=str(row["transaction_date"]),
                     )
 
-                    # Pass 1: Payee identification
-                    if resume_from_pass <= 1:
+                    # --- Pass 1: Payee Identification --- #
+                    if process_passes[0] and (
+                        force_process
+                        or status.get("pass_1_status", "pending") != "completed"
+                    ):
                         logger.info(
-                            f"{Fore.GREEN}▶ PASS 1: Payee Identification{Style.RESET_ALL}"
+                            f"🔄 Starting Pass 1: Payee Identification... {row_info}"
                         )
-
-                        # Get payee info - using simplified signature
-                        payee_info = self._get_payee(
-                            transaction.description, force_process=force_process
-                        )
-                        transaction.payee_info = payee_info
-                        stats["pass1_processed"] += 1
-
-                        # After Pass 1
-                        if resume_from_pass == 1:
+                        start_time_pass1 = time.time()
+                        try:
+                            transaction.payee_info = self._get_payee(
+                                row["description"], force_process=force_process
+                            )
                             self._commit_pass(1, transaction)
+                            stats["pass1_completed"] += 1
+                            status_updates[transaction_id][
+                                "pass_1_status"
+                            ] = "completed"
+                            status_updates[transaction_id]["pass_1_error"] = None
+                            status_updates[transaction_id][
+                                "pass_1_processed_at"
+                            ] = datetime.now().isoformat()
+                        except Exception as e_p1:
+                            logger.error(
+                                f"❌ Error during Pass 1 for transaction {transaction_id}: {str(e_p1)}"
+                            )
+                            logger.error(traceback.format_exc())
+                            stats["pass1_errors"] += 1
+                            status_updates[transaction_id]["pass_1_status"] = "error"
+                            status_updates[transaction_id]["pass_1_error"] = str(e_p1)
+                            status_updates[transaction_id][
+                                "pass_1_processed_at"
+                            ] = datetime.now().isoformat()
+                            # Optionally assign default PayeeInfo on error
+                            if not transaction.payee_info:
+                                transaction.payee_info = PayeeResponse(
+                                    payee="Error",
+                                    confidence="low",
+                                    reasoning=f"Pass 1 Error: {str(e_p1)}",
+                                )
 
-                    # Pass 2: Category assignment
-                    if resume_from_pass <= 2:
+                        stats["pass1_processed"] += 1
+                        stats["pass1_time"] += time.time() - start_time_pass1
+                    else:
                         logger.info(
-                            f"{Fore.GREEN}▶ PASS 2: Category Assignment{Style.RESET_ALL}"
+                            f"⏭️ Skipping Pass 1 (already completed or not requested). {row_info}"
                         )
+                        stats["pass1_skipped"] += 1
+                        # Load existing Pass 1 data if needed for subsequent passes
+                        if not transaction.payee_info:
+                            existing_class = self.db.get_transaction_classification(
+                                transaction_id
+                            )
+                            if existing_class and existing_class.get("payee"):
+                                transaction.payee_info = PayeeResponse(
+                                    payee=existing_class["payee"],
+                                    confidence=existing_class.get(
+                                        "payee_confidence", "medium"
+                                    ),
+                                    reasoning=existing_class.get(
+                                        "payee_reasoning", "Loaded existing"
+                                    ),
+                                )
 
-                        # Get category info
-                        category_info = self._get_category(
-                            transaction.description,
-                            transaction.amount,
-                            transaction.transaction_date,
-                            force_process=force_process,
-                            row_info=str(transaction),
+                    # --- Pass 2: Category Assignment --- #
+                    if process_passes[1] and (
+                        force_process
+                        or status.get("pass_2_status", "pending") != "completed"
+                    ):
+                        logger.info(
+                            f"🔄 Starting Pass 2: Category Assignment... {row_info}"
                         )
-                        transaction.category_info = category_info
-                        stats["pass2_processed"] += 1
-
-                        # After Pass 2
-                        if resume_from_pass == 2:
+                        start_time_pass2 = time.time()
+                        try:
+                            transaction.category_info = self._get_category(
+                                description=row["description"],
+                                amount=row["amount"],
+                                date=str(row["transaction_date"]),
+                                force_process=force_process,
+                                row_info=row_info,
+                            )
                             self._commit_pass(2, transaction)
+                            stats["pass2_completed"] += 1
+                            status_updates[transaction_id][
+                                "pass_2_status"
+                            ] = "completed"
+                            status_updates[transaction_id]["pass_2_error"] = None
+                            status_updates[transaction_id][
+                                "pass_2_processed_at"
+                            ] = datetime.now().isoformat()
+                        except Exception as e_p2:
+                            logger.error(
+                                f"❌ Error during Pass 2 for transaction {transaction_id}: {str(e_p2)}"
+                            )
+                            logger.error(traceback.format_exc())
+                            stats["pass2_errors"] += 1
+                            status_updates[transaction_id]["pass_2_status"] = "error"
+                            status_updates[transaction_id]["pass_2_error"] = str(e_p2)
+                            status_updates[transaction_id][
+                                "pass_2_processed_at"
+                            ] = datetime.now().isoformat()
+                            # Optionally assign default CategoryInfo on error
+                            if not transaction.category_info:
+                                transaction.category_info = CategoryResponse(
+                                    category="Error",
+                                    expense_type="unknown",
+                                    business_percentage=-1,
+                                    notes=f"Pass 2 Error: {str(e_p2)}",
+                                    confidence="low",
+                                    detailed_context="",
+                                )
 
-                    # Pass 3: Tax Classification
-                    if resume_from_pass <= 3:
+                        stats["pass2_processed"] += 1
+                        stats["pass2_time"] += time.time() - start_time_pass2
+                    else:
                         logger.info(
-                            f"{Fore.GREEN}▶ PASS 3: Tax Classification{Style.RESET_ALL}"
+                            f"⏭️ Skipping Pass 2 (already completed or not requested). {row_info}"
+                        )
+                        stats["pass2_skipped"] += 1
+                        # Load existing Pass 2 data if needed for subsequent passes
+                        if not transaction.category_info:
+                            existing_class = self.db.get_transaction_classification(
+                                transaction_id
+                            )
+                            if existing_class and existing_class.get("category"):
+                                transaction.category_info = CategoryResponse(
+                                    category=existing_class["category"],
+                                    expense_type=existing_class.get(
+                                        "expense_type", "unknown"
+                                    ),
+                                    business_percentage=existing_class.get(
+                                        "business_percentage", -1
+                                    ),
+                                    notes=existing_class.get(
+                                        "category_reasoning", "Loaded existing"
+                                    ),
+                                    confidence=existing_class.get(
+                                        "category_confidence", "medium"
+                                    ),
+                                    detailed_context=existing_class.get(
+                                        "business_context", ""
+                                    ),
+                                )
+
+                    # --- Pass 3: Tax Classification --- #
+                    if process_passes[2] and (
+                        force_process
+                        or status.get("pass_3_status", "pending") != "completed"
+                    ):
+                        logger.info(
+                            f"🔄 Starting Pass 3: Tax Classification... {row_info}"
+                        )
+                        start_time_pass3 = time.time()
+                        pass3_processed = False
+                        pass3_error = None
+                        try:
+                            # ===>>> LOGIC SPLIT START <<<===
+                            # Check if Pass 2 determined it was personal
+                            if (
+                                transaction.category_info
+                                and transaction.category_info.expense_type == "personal"
+                            ):
+                                logger.info(
+                                    f"✓ Skipping Pass 3 AI: Marked as Personal in Pass 2. {row_info}"
+                                )
+                                # Ensure personal_category_id was loaded
+                                if self.personal_category_id is None:
+                                    logger.error(
+                                        "CRITICAL: Personal Category ID not loaded! Cannot assign personal expense."
+                                    )
+                                    pass3_error = "Personal Category ID not loaded"
+                                    # Assign error TaxInfo
+                                    transaction.tax_info = TaxInfo(
+                                        tax_category_id=0,
+                                        tax_category="Error",
+                                        business_percentage=0,
+                                        worksheet="Unknown",
+                                        confidence="low",
+                                        reasoning=pass3_error,
+                                    )
+                                else:
+                                    # Assign Personal TaxInfo directly
+                                    transaction.tax_info = TaxInfo(
+                                        tax_category_id=self.personal_category_id,
+                                        tax_category="Personal Expense",
+                                        business_percentage=0,
+                                        worksheet="Personal",
+                                        confidence="high",  # High confidence as it was determined in Pass 2
+                                        reasoning="Classified as Personal based on Pass 2 (Category Assignment)",
+                                    )
+                                pass3_processed = (
+                                    True  # Mark as processed for status update
+                                )
+                            elif not transaction.category_info:
+                                # Handle case where Pass 2 failed or was skipped but Pass 3 is requested
+                                logger.warning(
+                                    f"⚠️ Pass 2 info missing, cannot reliably determine Personal/Business for Pass 3. Skipping tax classification. {row_info}"
+                                )
+                                pass3_error = "Pass 2 info missing"
+                                transaction.tax_info = TaxInfo(
+                                    tax_category_id=0,
+                                    tax_category="Skipped",
+                                    business_percentage=0,
+                                    worksheet="Unknown",
+                                    confidence="low",
+                                    reasoning=pass3_error,
+                                )
+                                # Don't set pass3_processed = True, let status remain pending or error if it was already error
+                                status_updates[transaction_id][
+                                    "pass_3_status"
+                                ] = "skipped"
+                                status_updates[transaction_id][
+                                    "pass_3_error"
+                                ] = pass3_error
+                                status_updates[transaction_id][
+                                    "pass_3_processed_at"
+                                ] = datetime.now().isoformat()
+
+                            else:
+                                # Proceed with business tax classification (AI or matching)
+                                logger.debug(
+                                    f"Proceeding with Pass 3 Business Tax Classification. {row_info}"
+                                )
+                                transaction.tax_info = self._get_tax_classification(
+                                    transaction, force_process=force_process
+                                )
+                                pass3_processed = True  # Mark as processed
+                            # ===>>> LOGIC SPLIT END <<<===
+
+                            # Commit result after successful processing or direct assignment
+                            if pass3_processed:
+                                self._commit_pass(3, transaction)
+                                stats["pass3_completed"] += 1
+                                status_updates[transaction_id][
+                                    "pass_3_status"
+                                ] = "completed"
+                                status_updates[transaction_id]["pass_3_error"] = None
+                                status_updates[transaction_id][
+                                    "pass_3_processed_at"
+                                ] = datetime.now().isoformat()
+
+                        except Exception as e_p3:
+                            logger.error(
+                                f"❌ Error during Pass 3 for transaction {transaction_id}: {str(e_p3)}"
+                            )
+                            logger.error(traceback.format_exc())
+                            stats["pass3_errors"] += 1
+                            pass3_error = str(e_p3)
+                            status_updates[transaction_id]["pass_3_status"] = "error"
+                            status_updates[transaction_id]["pass_3_error"] = pass3_error
+                            status_updates[transaction_id][
+                                "pass_3_processed_at"
+                            ] = datetime.now().isoformat()
+                            # Optionally, assign a default error TaxInfo
+                            if not transaction.tax_info:
+                                transaction.tax_info = TaxInfo(
+                                    tax_category_id=0,
+                                    tax_category="Error",
+                                    business_percentage=0,
+                                    worksheet="Unknown",
+                                    confidence="low",
+                                    reasoning=f"Pass 3 Error: {pass3_error}",
+                                )
+
+                        stats[
+                            "pass3_processed"
+                        ] += 1  # Count even if skipped due to missing Pass 2
+                        stats["pass3_time"] += time.time() - start_time_pass3
+                    else:
+                        logger.info(
+                            f"⏭️ Skipping Pass 3 (already completed or not requested). {row_info}"
+                        )
+                        stats["pass3_skipped"] += 1
+                        # Load existing Pass 3 data if needed
+                        if not transaction.tax_info:
+                            existing_class = self.db.get_transaction_classification(
+                                transaction_id
+                            )
+                            if (
+                                existing_class
+                                and existing_class.get("tax_category_id") is not None
+                            ):
+                                # Need category name and worksheet from ID mapping
+                                cat_id = existing_class["tax_category_id"]
+                                if cat_id == self.personal_category_id:
+                                    cat_name = "Personal Expense"
+                                    ws_name = "Personal"
+                                elif cat_id in self.business_categories_by_id:
+                                    cat_name, ws_name = self.business_categories_by_id[
+                                        cat_id
+                                    ]
+                                else:
+                                    cat_name = "Unknown Category (Loaded)"
+                                    ws_name = "Unknown"
+
+                                transaction.tax_info = TaxInfo(
+                                    tax_category_id=cat_id,
+                                    tax_category=cat_name,
+                                    business_percentage=existing_class.get(
+                                        "business_percentage", 0
+                                    ),
+                                    worksheet=existing_class.get("worksheet", ws_name),
+                                    confidence=existing_class.get(
+                                        "classification_confidence", "medium"
+                                    ),
+                                    reasoning=existing_class.get(
+                                        "classification_reasoning", "Loaded existing"
+                                    ),
+                                )
+
+                    # Append results (ensure all relevant fields are populated)
+                    processed_row_data = row.to_dict()
+                    if transaction.payee_info:
+                        processed_row_data.update(
+                            transaction.payee_info.as_dict("payee")
+                        )
+                    if transaction.category_info:
+                        processed_row_data.update(
+                            transaction.category_info.as_dict("category")
+                        )
+                    if transaction.tax_info:
+                        # Log the field names for debugging
+                        tax_fields = transaction.tax_info.as_dict("tax")
+                        logger.debug(f"Tax info fields: {list(tax_fields.keys())}")
+                        processed_row_data.update(tax_fields)
+
+                        # Make sure we're using names, not IDs for display
+                        # If tax_category is an ID, get the readable name from the business_categories_by_id mapping
+                        if isinstance(processed_row_data.get("tax_category_id"), int):
+                            tax_id = processed_row_data.get("tax_category_id")
+
+                            # Handle Personal Expense specially
+                            if tax_id == self.personal_category_id:
+                                processed_row_data["tax_category"] = "Personal Expense"
+                            # Otherwise look up business category name
+                            elif tax_id in self.business_categories_by_id:
+                                processed_row_data["tax_category"] = (
+                                    self.business_categories_by_id[tax_id][0]
+                                )
+                            else:
+                                processed_row_data["tax_category"] = (
+                                    f"Unknown Category ({tax_id})"
+                                )
+
+                        # Check for personal expense
+                        is_personal = (
+                            transaction.category_info
+                            and transaction.category_info.expense_type == "personal"
                         )
 
-                        # Get tax classification
-                        tax_info = self._get_tax_classification(
-                            transaction, force_process=force_process
-                        )
-                        transaction.tax_info = tax_info
-                        stats["pass3_processed"] += 1
+                        # CRITICAL: Ensure Personal expenses always go to Personal worksheet
+                        if is_personal:
+                            logger.debug(
+                                f"Found personal expense, worksheet: {processed_row_data.get('tax_worksheet', processed_row_data.get('worksheet', 'Unknown'))}"
+                            )
+                            # Try both possible field names
+                            if processed_row_data.get("tax_worksheet") != "Personal":
+                                processed_row_data["tax_worksheet"] = "Personal"
+                                logger.warning(f"⚠️ Corrected tax_worksheet to Personal")
+                            if processed_row_data.get("worksheet") != "Personal":
+                                processed_row_data["worksheet"] = "Personal"
+                                logger.warning(f"⚠️ Corrected worksheet to Personal")
 
-                        # After Pass 3
-                        if resume_from_pass <= 3:
-                            self._commit_pass(3, transaction)
+                            # Try both possible business percentage field names
+                            if (
+                                processed_row_data.get("tax_business_percentage", 100)
+                                != 0
+                            ):
+                                processed_row_data["tax_business_percentage"] = 0
+                                logger.warning(
+                                    f"⚠️ Corrected tax_business_percentage to 0%"
+                                )
+                            if processed_row_data.get("business_percentage", 100) != 0:
+                                processed_row_data["business_percentage"] = 0
+                                logger.warning(f"⚠️ Corrected business_percentage to 0%")
 
-                except Exception as e:
-                    error_msg = (
-                        f"[Row {row_number}] ❌ Error processing transaction: {str(e)}"
-                    )
-                    logger.error(error_msg)
-                    stats["errors"].append(error_msg)
-                    continue
+                    processed_rows.append(processed_row_data)
 
-            # Log final statistics
-            logger.info(f"\n{Fore.GREEN}{'='*80}{Style.RESET_ALL}")
-            logger.info(f"{Fore.GREEN}▶ Processing Complete{Style.RESET_ALL}")
-            logger.info(f"\nPass 1 Statistics:")
-            logger.info(f"  • Processed: {stats['pass1_processed']}")
-            logger.info(f"\nPass 2 Statistics:")
-            logger.info(f"  • Processed: {stats['pass2_processed']}")
-            logger.info(f"\nPass 3 Statistics:")
-            logger.info(f"  • Processed: {stats['pass3_processed']}")
-            if stats["errors"]:
-                logger.info(f"\nErrors:")
-                for error in stats["errors"]:
-                    logger.info(f"  • {error}")
-            logger.info(f"\n{Fore.GREEN}{'='*80}{Style.RESET_ALL}")
+                # This block should be aligned with the 'for index, row...' loop start
+                logger.info(
+                    f"Updating status for {len(status_updates)} transactions in batch {batch_num + 1}..."
+                )
+                for tx_id, updates in status_updates.items():
+                    self.db.update_transaction_status(tx_id, updates)
+                status_updates.clear()  # Clear updates for next batch
 
+            logger.info("--- Batch processing complete ---")
+
+        except Exception as e:
+            logger.error(f"Unhandled error during batch processing: {str(e)}")
+            logger.error(traceback.format_exc())
+            # Ensure transaction rollback if active
+            # self._rollback_batch_processing()
+            raise  # Re-raise the exception
         finally:
-            # Always ensure we close the connection
+            # Ensure connection is closed and transaction ended
             self._end_batch_processing()
 
-        return stats
+        # Final DataFrame construction
+        processed_df = pd.DataFrame(processed_rows)
+        # Ensure correct column order or select specific columns if needed
+
+        logger.info(f"Transaction processing finished. Stats: {stats}")
+        return processed_df, stats
 
     def _check_previous_pass_completion(self, pass_number: int) -> bool:
         """Check if the previous pass was completed for all transactions."""
-        with sqlite3.connect(self.profile_manager.db.db_path) as conn:
+        with sqlite3.connect(self.db.db_path) as conn:
             cursor = conn.execute(
                 """
                 SELECT COUNT(*) 
@@ -916,7 +1266,7 @@ class TransactionClassifier:
                 )
 
                 # Save to database
-                self.profile_manager.db.save_transaction_classification(
+                self.db.save_transaction_classification(
                     self.client_name,
                     transaction["transaction_id"],
                     {
@@ -956,7 +1306,7 @@ class TransactionClassifier:
                 )
 
                 # Save to database
-                self.profile_manager.db.save_transaction_classification(
+                self.db.save_transaction_classification(
                     self.client_name,
                     transaction["transaction_id"],
                     {
@@ -1065,73 +1415,59 @@ class TransactionClassifier:
 
     def _get_category(
         self,
-        transaction_description: str,
+        description: str,
         amount: float,
         date: str,
-        payee: str = None,
-        business_description: str = None,
-        general_category: str = None,
         force_process: bool = False,
         row_info: str = "",
     ) -> CategoryResponse:
-        """Get category for a transaction."""
-        try:
-            # First try to find a matching transaction
-            match_data = self._find_matching_transaction(transaction_description)
+        """Assign a category to the transaction using AI."""
+        # When force_process is True, skip all matching and caching and go directly to AI
+        if force_process:
+            logger.info(f"🧠 FORCED AI categorization for {row_info}")
+        else:
+            # Only try to find matches if we're not forcing AI processing
+            match_data = self._find_matching_transaction(description)
             if match_data:
-                logger.info(
-                    f"{row_info} ✓ Using existing category: {match_data['category']}"
-                )
-                # Include all required fields for CategoryResponse
-                return CategoryResponse(
-                    category=match_data["category"],
-                    confidence=match_data["category_confidence"],
-                    notes=match_data.get(
-                        "category_reasoning", "Using existing classification"
-                    ),
-                    expense_type=match_data.get(
-                        "expense_type", "business"
-                    ),  # Default to business if not found
-                    business_percentage=match_data.get(
-                        "business_percentage", 100
-                    ),  # Default to 100% if not found
-                )
+                logger.info(f"✅ Found exact match for description... {row_info}")
+                # Use existing category if available and seems valid
+                if match_data.get("category"):
+                    logger.info(f"✓ Using existing category: {match_data['category']}")
+                    return CategoryResponse(
+                        category=match_data["category"],
+                        expense_type=match_data.get("expense_type", "business"),
+                        business_percentage=match_data.get("business_percentage", 100),
+                        notes=match_data.get(
+                            "category_reasoning", "Using matched category"
+                        ),
+                        confidence=match_data.get("category_confidence", "high"),
+                        detailed_context=match_data.get("business_context", ""),
+                    )
+                else:
+                    logger.warning(
+                        f"⚠️ Match found, but no category available. Proceeding with AI."
+                    )
 
-            # Build the prompt
-            prompt = self._build_category_prompt(
-                transaction_description,
-                payee or "Unknown",
-                business_description,
-                general_category,
-            )
-
-            # Get response from LLM
-            response = self.client.chat.completions.create(
-                model=self._get_model(),
-                response_format={"type": "json_object"},
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are a transaction categorization assistant that provides JSON responses.",
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-            )
-
-            result = json.loads(response.choices[0].message.content)
-
-            # Ensure required fields are present
-            if "expense_type" not in result:
-                result["expense_type"] = "business"  # Default to business
-            if "business_percentage" not in result:
-                result["business_percentage"] = 100  # Default to 100%
-
-            return CategoryResponse(**result)
-
-        except Exception as e:
-            logger.error(f"{row_info} ❌ Error in category assignment: {str(e)}")
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            raise
+        # Proceed with AI classification if no match or if force_process is True
+        logger.info(f"🧠 Using AI for category assignment... {row_info}")
+        prompt = self._build_category_prompt(description, amount, date)
+        response = self.client.chat.completions.create(
+            model=self._get_model(),
+            response_format={"type": "json_object"},
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a transaction categorization assistant providing JSON responses.",
+                },
+                {"role": "user", "content": prompt},
+            ],
+        )
+        result = json.loads(response.choices[0].message.content)
+        category_response = CategoryResponse(**result)
+        logger.info(
+            f"✓ AI Category Assigned: {category_response.category} ({category_response.confidence})"
+        )
+        return category_response
 
     def process_single_row(
         self, transactions_df: pd.DataFrame, row_num: int, force_process: bool = False
@@ -1172,47 +1508,45 @@ class TransactionClassifier:
 
     def _build_category_prompt(
         self,
-        transaction_description: str,
-        payee: str,
-        business_description: str = None,
-        general_category: str = None,
+        description: str,
+        amount: float,
+        date: str,
     ) -> str:
-        """Build a prompt for the LLM to determine the transaction category.
+        """Build a prompt for the LLM to determine the transaction category with clear ID and name pairs.
 
         Args:
-            transaction_description: The raw transaction description
-            payee: The standardized payee name
-            business_description: Optional description of the business
-            general_category: Optional general category from payee identification
+            description: The raw transaction description
+            amount: Transaction amount
+            date: Transaction date
 
         Returns:
             A formatted prompt string for the LLM.
         """
-        # Include business context and available categories
+        # Include transaction details
         prompt = (
             f"Given this transaction information:\n"
-            f"Description: {transaction_description}\n"
-            f"Payee: {payee}\n"
+            f"Description: {description}\n"
+            f"Amount: ${amount:.2f}\n"
+            f"Date: {date}\n"
         )
-
-        if business_description:
-            prompt += f"Business Type: {business_description}\n"
-        if general_category:
-            prompt += f"General Category: {general_category}\n"
 
         # Add business context
         if self.business_context:
             prompt += f"\nBusiness Context:\n{self.business_context}\n"
 
-        # Add available categories
-        prompt += "\nAvailable Categories:\n"
-        for category in self.standard_categories:
-            prompt += f"- {category}\n"
+        # Add available categories with their IDs
+        prompt += "\nAvailable Categories (ID: Category Name):\n"
+        # Sort by ID for consistent ordering
+        sorted_categories = sorted(CATEGORY_MAPPING.items(), key=lambda x: x[1])
+        for category_name, category_id in sorted_categories:
+            prompt += f"{category_id}: {category_name}\n"
 
+        # Clear instructions on response format
         prompt += (
-            "\nPlease categorize this transaction and provide your reasoning. "
+            "\nPLEASE SELECT ONE CATEGORY from the list above.\n"
+            "You MUST return the category NAME, not the ID number.\n\n"
             "Format your response as JSON with these fields:\n"
-            "- category: The most appropriate category from the list above\n"
+            "- category: The exact name of the chosen category (NOT the ID)\n"
             "- confidence: 'high' if very certain, 'medium' if somewhat certain, 'low' if uncertain\n"
             "- notes: Brief explanation of why this category was chosen\n"
             "- expense_type: 'business' or 'personal'\n"
@@ -1230,13 +1564,24 @@ class TransactionClassifier:
         amount: float,
         date: str,
     ) -> str:
-        """Build a prompt for the LLM to determine tax classification."""
+        """Build a prompt for the LLM to determine tax classification.
+
+        Args:
+            transaction_description: Transaction description
+            payee: The payee name
+            category: Category from Pass 2
+            amount: Transaction amount
+            date: Transaction date
+
+        Returns:
+            A formatted prompt string for the LLM.
+        """
         # Include transaction details and business context
         prompt = (
             f"Given this transaction information:\n"
             f"Description: {transaction_description}\n"
             f"Payee: {payee}\n"
-            f"Category: {category}\n"
+            f"Category (from prior step): {category}\n"
             f"Amount: ${amount:.2f}\n"
             f"Date: {date}\n"
         )
@@ -1245,124 +1590,318 @@ class TransactionClassifier:
         if self.business_context:
             prompt += f"\nBusiness Context:\n{self.business_context}\n"
 
-        # Add numbered tax categories with descriptions
-        prompt += "\nSelect ONE tax category by its number from this list:\n"
-        for worksheet, categories in self.tax_categories.items():
-            prompt += f"\n{worksheet} Categories:\n"
-            if isinstance(categories, list):
-                for category in categories:
-                    # Get the ID from the database
-                    tax_cat_query = (
-                        "SELECT id FROM tax_categories WHERE name = ? AND worksheet = ?"
-                    )
-                    result = self.profile_manager.db.execute_query(
-                        tax_cat_query, (category, worksheet)
-                    )
-                    if result:
-                        category_id = result[0][0]
-                        prompt += f"{category_id}. {category}\n"
+        # Add tax categories with clear headers and formatting
+        prompt += "\n## TAX CATEGORIES\n"
+        prompt += (
+            "Each category has a numeric ID and belongs to a specific worksheet.\n"
+        )
+        prompt += "ID: Category Name (Worksheet)\n"
+        prompt += "---------------------------------\n"
+
+        # Sort by ID for consistent ordering
+        sorted_business_categories = sorted(self.business_categories_by_id.items())
+
+        for cat_id, (name, worksheet) in sorted_business_categories:
+            prompt += f"{cat_id}: {name} (Worksheet: {worksheet})\n"
+
+        # Special note for Personal expenses
+        prompt += f"\nNOTE: If this is a personal expense, use category ID {self.personal_category_id}.\n\n"
 
         # Specify allowed worksheet values
-        prompt += (
-            "\nAllowed Worksheet Values (EXACT match required):\n"
-            "- '6A': For general business expenses\n"
-            "- 'Vehicle': For vehicle-related expenses\n"
-            "- 'HomeOffice': For home office expenses\n"
-        )
+        allowed_worksheets = sorted(list(self.ALLOWED_WORKSHEETS))
+        prompt += f"## WORKSHEET VALUES\n"
+        prompt += f"You MUST ONLY use one of these exact worksheet values:\n"
+        prompt += f"{', '.join(allowed_worksheets)}\n\n"
+        prompt += f"RULES:\n"
+        prompt += f"- Personal expenses MUST use 'Personal' as the worksheet\n"
+        prompt += f"- Business expenses must NEVER use 'Personal' as the worksheet\n"
+        prompt += f"- DO NOT use 'T2125', 'T776', or any other worksheet name not in the list above\n\n"
 
+        # Clear response format instructions
+        prompt += f"## RESPONSE FORMAT\n"
         prompt += (
-            "\nCRITICAL RULES:\n"
-            "1. tax_category_id MUST be a number from the list above\n"
-            "2. worksheet MUST be exactly '6A', 'Vehicle', or 'HomeOffice'\n"
-            "3. business_percentage must be 0-100\n"
-            "\nFormat your response as JSON with these fields:\n"
-            "- tax_category_id: The NUMBER of the chosen category from above\n"
-            "- business_percentage: Percentage that is business-related (0-100)\n"
-            "- worksheet: EXACT match from worksheet values above\n"
-            "- confidence: 'high' if very certain, 'medium' if somewhat certain, 'low' if uncertain\n"
-            "- reasoning: Brief explanation of the classification\n\n"
-            "Response in JSON:"
+            "You must ONLY reply in this exact JSON format:\n"
+            "{\n"
+            '  "tax_category_id": [numeric ID from the list above],\n'
+            '  "business_percentage": [0-100],\n'
+            '  "worksheet": ["6A", "Vehicle", "HomeOffice", or "Personal"],\n'
+            '  "confidence": ["high", "medium", or "low"],\n'
+            '  "reasoning": "Your explanation here"\n'
+            "}\n\n"
+            "Remember: tax_category_id must be a NUMBER, not a string!"
         )
-
         return prompt
 
-    def _determine_worksheet(
-        self, transaction: pd.Series, base_category: str
-    ) -> WorksheetAssignment:
-        """Determine which worksheet a transaction belongs to."""
+    def _get_tax_classification(
+        self, transaction: TransactionInfo, force_process: bool = False
+    ) -> TaxInfo:
+        """Get tax classification for a BUSINESS transaction."""
         try:
-            # Default values
-            worksheet = "6A"  # Default to main worksheet
-            tax_category = base_category
-            tax_subcategory = None
-            line_number = "0"
-            confidence = "medium"
-            reasoning = "Default classification based on base category"
+            # This method now assumes the transaction is NOT personal.
+            # Personal transactions should be handled earlier in process_transactions.
 
-            # Check if it's a vehicle expense
-            vehicle_keywords = [
-                "gas",
-                "fuel",
-                "parking",
-                "toll",
-                "mileage",
-                "car wash",
-                "auto",
-                "vehicle",
-            ]
-            if any(
-                keyword in transaction["description"].lower()
-                for keyword in vehicle_keywords
-            ):
-                worksheet = "Vehicle"
-                tax_category = "Car and truck expenses"
-                reasoning = "Vehicle-related expense based on description keywords"
-                confidence = "high"
+            # If force_process is True, skip matching and mapping, go directly to AI
+            if force_process:
+                logger.info(
+                    f"🧠 FORCED AI tax classification for [{transaction.transaction_id}]"
+                )
+            else:
+                # First try to find a matching transaction based on description
+                match_data = self._find_matching_transaction(transaction.description)
+                if (
+                    match_data
+                    and match_data.get("tax_category_id") is not None
+                    and match_data.get("is_personal") is False
+                ):
+                    logger.info(
+                        f"✓ Using existing BUSINESS classification from description match"
+                    )
+                    # Verify the matched ID exists in our current business categories
+                    if match_data["tax_category_id"] in self.business_categories_by_id:
+                        cat_name, ws_name = self.business_categories_by_id[
+                            match_data["tax_category_id"]
+                        ]
+                        return TaxInfo(
+                            tax_category_id=match_data["tax_category_id"],
+                            tax_category=cat_name,  # Get name from mapping
+                            business_percentage=match_data.get(
+                                "business_percentage", 100
+                            ),
+                            worksheet=match_data.get(
+                                "worksheet", ws_name
+                            ),  # Use matched or mapped worksheet
+                            confidence=match_data.get(
+                                "classification_confidence", "medium"
+                            ),
+                            reasoning="Using existing classification from matching transaction",
+                        )
+                    else:
+                        logger.warning(
+                            f"Matched transaction has tax_category_id {match_data['tax_category_id']} which is not a known business category. Proceeding with AI."
+                        )
 
-            # Check if it's a home office expense
-            home_keywords = [
-                "rent",
-                "mortgage",
-                "utilities",
-                "internet",
-                "phone",
-                "office supplies",
-            ]
-            if any(
-                keyword in transaction["description"].lower()
-                for keyword in home_keywords
-            ):
-                worksheet = "HomeOffice"
-                tax_category = base_category
-                reasoning = "Home office expense based on description keywords"
-                confidence = "high"
+                # If no description match, try to map directly from Pass 2 category name to a BUSINESS tax category
+                if transaction.category_info:
+                    # Check if the Pass 2 category maps to a known business category ID
+                    # Assumes transaction.category_info.category holds the general category name from Pass 2
+                    pass2_cat_name = transaction.category_info.category
+                    found_map = False
+                    for (
+                        name,
+                        worksheet,
+                    ), cat_id in self.business_category_id_by_name_ws.items():
+                        if name.lower() == pass2_cat_name.lower():
+                            logger.info(
+                                f"✓ Found direct business tax category map: {name} (ID: {cat_id}) from Pass 2 category '{pass2_cat_name}'"
+                            )
+                            return TaxInfo(
+                                tax_category_id=cat_id,
+                                tax_category=name,
+                                business_percentage=transaction.category_info.business_percentage,
+                                worksheet=worksheet,
+                                confidence=transaction.category_info.confidence,
+                                reasoning=f"Mapped directly from Pass 2 category: {pass2_cat_name}",
+                            )
+                            found_map = True
+                            break  # Found first match
 
-            # Ensure tax_category is never None
-            if not tax_category:
-                tax_category = "Other expenses"
-                reasoning = "Defaulted to Other expenses due to missing classification"
-                confidence = "low"
+            # --- AI Classification --- #
+            logger.info(
+                f"🧠 Using AI for BUSINESS tax classification... [{transaction.transaction_id}]"
+                + (" (Forced)" if force_process else "")
+            )
+            prompt = self._build_classification_prompt(
+                transaction.description,
+                transaction.payee_info.payee if transaction.payee_info else "Unknown",
+                (
+                    transaction.category_info.category
+                    if transaction.category_info
+                    else "Unknown"
+                ),
+                transaction.amount,
+                transaction.transaction_date,
+            )
 
-            return WorksheetAssignment(
-                worksheet=worksheet,
-                tax_category=tax_category,
-                tax_subcategory=tax_subcategory,
-                line_number=line_number,
-                confidence=confidence,
-                reasoning=reasoning,
+            # Get response from OpenAI
+            response = self.client.chat.completions.create(
+                model=self._get_model(),
+                response_format={"type": "json_object"},
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a transaction classification assistant providing JSON responses for business expenses. ONLY use these EXACT worksheet values: '6A', 'Vehicle', 'HomeOffice', or 'Personal'. Personal expenses MUST use 'Personal' as the worksheet. Business expenses must NEVER use 'Personal' as the worksheet. DO NOT use T2125, T776, or any other tax form names - these will cause database validation errors.",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+            )
+
+            result_str = response.choices[0].message.content
+            try:
+                # Parse the JSON but validate/modify the worksheet before creating the ClassificationResponse
+                result = json.loads(result_str)
+
+                # Validate worksheet value before creating the model
+                allowed_worksheets = self.ALLOWED_WORKSHEETS
+
+                # First determine if this is a personal expense
+                is_personal = False
+                if result.get("tax_category_id") == self.personal_category_id:
+                    is_personal = True
+                    result["worksheet"] = (
+                        "Personal"  # Always use Personal worksheet for personal expenses
+                    )
+
+                # Handle case where worksheet is a list instead of a string
+                worksheet_value = result.get("worksheet", "")
+                if isinstance(worksheet_value, list):
+                    logger.warning(
+                        f"Worksheet value is a list: {worksheet_value}, extracting first value or defaulting to '6A'"
+                    )
+                    # Take the first value if the list is not empty, otherwise default to '6A'
+                    if worksheet_value and isinstance(worksheet_value[0], str):
+                        result["worksheet"] = worksheet_value[0]
+                    else:
+                        result["worksheet"] = "6A"
+
+                # Handle case where confidence is a list instead of a string
+                confidence_value = result.get("confidence", "")
+                if isinstance(confidence_value, list):
+                    logger.warning(
+                        f"Confidence value is a list: {confidence_value}, extracting first value or defaulting to 'medium'"
+                    )
+                    # Take the first value if the list is not empty, otherwise default to 'medium'
+                    if confidence_value and isinstance(confidence_value[0], str):
+                        result["confidence"] = confidence_value[0]
+                    else:
+                        result["confidence"] = "medium"
+
+                # Only apply worksheet mapping for business expenses
+                elif (
+                    not is_personal
+                    and result.get("worksheet") not in allowed_worksheets
+                ):
+                    # Map common variations to allowed values
+                    worksheet_mapping = {
+                        "T2125": "6A",
+                        "T1": "6A",
+                        "T2": "6A",
+                        "Schedule": "6A",
+                        "Business": "6A",
+                        "Auto": "Vehicle",
+                        "Car": "Vehicle",
+                        "Home": "HomeOffice",
+                        "Office": "HomeOffice",
+                        "Rental": "6A",
+                        "RentalProperty": "6A",
+                        "T776": "6A",
+                        "Employment": "6A",
+                        "Work": "6A",
+                        "T777": "6A",
+                    }
+
+                    mapped = False
+                    raw_worksheet = result.get("worksheet", "")
+                    for key, value in worksheet_mapping.items():
+                        if key.lower() in raw_worksheet.lower():
+                            logger.warning(
+                                f"Mapping worksheet '{raw_worksheet}' to '{value}'."
+                            )
+                            result["worksheet"] = value
+                            mapped = True
+                            break
+
+                    # If mapping fails, leave as is if it's a valid tax form
+                    if not mapped:
+                        if (
+                            raw_worksheet.startswith("T")
+                            and raw_worksheet[1:].isdigit()
+                        ):
+                            # It appears to be a tax form (T + numbers), keep it
+                            logger.info(
+                                f"Keeping tax form worksheet name: {raw_worksheet}"
+                            )
+                            result["worksheet"] = raw_worksheet
+                        else:
+                            # Use 6A only as a last resort
+                            logger.warning(
+                                f"Unrecognized worksheet '{raw_worksheet}'. Using '6A'."
+                            )
+                            result["worksheet"] = "6A"
+
+                # Final validation - Make sure we ALWAYS have a valid worksheet value before creating the model
+                worksheet_value = result.get("worksheet")
+                if isinstance(worksheet_value, list):
+                    logger.warning(
+                        f"Final worksheet value is still a list: {worksheet_value}, forcing to '6A'"
+                    )
+                    result["worksheet"] = "6A"
+                elif worksheet_value not in allowed_worksheets:
+                    logger.warning(
+                        f"Invalid worksheet '{worksheet_value}' found before model creation. Forcing to '6A'."
+                    )
+                    result["worksheet"] = "6A"  # Force to 6A as a fallback
+
+                # Final validation for confidence value
+                confidence_value = result.get("confidence")
+                if isinstance(confidence_value, list):
+                    logger.warning(
+                        f"Final confidence value is still a list: {confidence_value}, forcing to 'medium'"
+                    )
+                    result["confidence"] = "medium"
+                elif confidence_value not in ["high", "medium", "low"]:
+                    logger.warning(
+                        f"Invalid confidence value '{confidence_value}' found before model creation. Forcing to 'medium'."
+                    )
+                    result["confidence"] = "medium"  # Force to medium as a fallback
+
+                # Now create the ClassificationResponse with validated data
+                classification = ClassificationResponse(**result)
+            except (json.JSONDecodeError, PydanticValidationError) as json_error:
+                logger.error(
+                    f"❌ Error parsing AI JSON response for tax classification: {json_error}"
+                )
+                logger.error(f"Raw AI Response: {result_str}")
+                # Fallback or re-prompt logic could go here
+                return TaxInfo(
+                    tax_category_id=0,  # Or a default error ID if you create one
+                    tax_category="Error Parsing AI Response",
+                    business_percentage=0,
+                    worksheet="Unknown",
+                    confidence="low",
+                    reasoning=f"Error parsing AI JSON: {json_error}",
+                )
+
+            return TaxInfo(
+                tax_category_id=classification.tax_category_id,
+                tax_category=classification.tax_category,
+                business_percentage=classification.business_percentage,
+                worksheet=classification.worksheet,
+                confidence=classification.confidence,
+                reasoning=classification.reasoning,
             )
 
         except Exception as e:
-            logger.error(f"Error in worksheet determination: {str(e)}")
-            # Return safe default values on error
-            return WorksheetAssignment(
-                worksheet="6A",
-                tax_category="Other expenses",
-                tax_subcategory=None,
-                line_number="0",
-                confidence="low",
-                reasoning=f"Error in classification: {str(e)}",
+            logger.error(
+                f"❌ Error getting tax classification for transaction {transaction.transaction_id}: {str(e)}"
             )
+            logger.error(traceback.format_exc())
+            return TaxInfo(
+                tax_category_id=0,
+                tax_category="Classification Error",
+                business_percentage=0,
+                worksheet="Unknown",
+                confidence="low",
+                reasoning=f"Error during classification: {str(e)}",
+            )
+
+    def _validate_ai_response(
+        self, response: ClassificationResponse
+    ) -> ClassificationResponse:
+        """
+        This method is now deprecated. Validation happens inside _get_tax_classification.
+        Kept for backward compatibility.
+        """
+        return response
 
     def create_test_sample(
         self,
@@ -1452,132 +1991,78 @@ class TransactionClassifier:
 
         return sample_df, stats
 
-    def _get_tax_classification(
-        self, transaction: TransactionInfo, force_process: bool = False
-    ) -> TaxInfo:
-        """Get tax classification for a transaction."""
+    def _categorize_transaction_pass_1(
+        self, transaction: dict, force_process: bool = False
+    ) -> TransactionInfo:
+        """First pass of transaction categorization - basic categorization.
+
+        Assigns transaction to a high-level category (like Personal, Business Expense, etc.)
+
+        Args:
+            transaction: A dictionary containing transaction data
+            force_process: Whether to force AI processing, bypassing cache
+
+        Returns:
+            TransactionInfo with payee and category assigned
+        """
         try:
-            # First try to find a matching transaction
-            match_data = self._find_matching_transaction(transaction.description)
-            if match_data and not force_process:
-                logger.info(f"✓ Using existing classification from match")
-                return TaxInfo(
-                    tax_category_id=match_data["tax_category_id"],
-                    tax_category=match_data["tax_category"],
-                    business_percentage=match_data["business_percentage"],
-                    worksheet=match_data["worksheet"] or "6A",  # Default to 6A if null
-                    confidence=match_data["classification_confidence"]
-                    or "medium",  # Default to medium if null
-                    reasoning="Using existing classification from matching transaction",
-                )
+            # Extract transaction details
+            description = self._clean_text(transaction.get("description", ""))
+            amount = float(transaction.get("amount", 0))
+            date = transaction.get("date", "")
 
-            # If no match or force_process, get the tax category ID from the category name
-            if transaction.category_info:
-                # First try to find exact match
-                tax_cat_query = (
-                    "SELECT id, name FROM tax_categories WHERE LOWER(name) = LOWER(?)"
-                )
-                tax_cat_result = self.profile_manager.db.execute_query(
-                    tax_cat_query, (transaction.category_info.category,)
-                )
+            # Get a unique identifier for this transaction
+            transaction_id = transaction.get("id", str(uuid.uuid4()))
 
-                if tax_cat_result:
-                    row = tax_cat_result[0]
-                    logger.info(f"✓ Found tax category match: {row[1]} (ID: {row[0]})")
-                    return TaxInfo(
-                        tax_category_id=row[0],
-                        tax_category=row[1],
-                        business_percentage=transaction.category_info.business_percentage,
-                        worksheet="6A",  # Default to 6A for now
-                        confidence=transaction.category_info.confidence,
-                        reasoning=f"Mapped from category: {transaction.category_info.category}",
-                    )
-                else:
-                    logger.warning(
-                        f"No exact tax category match found for: {transaction.category_info.category}"
-                    )
-
-            # If we get here, we need to use AI to classify
-            prompt = self._build_classification_prompt(
-                transaction.description,
-                transaction.payee_info.payee if transaction.payee_info else "Unknown",
-                (
-                    transaction.category_info.category
-                    if transaction.category_info
-                    else "Unknown"
-                ),
-                transaction.amount,
-                transaction.transaction_date,
+            # Get the cache key
+            cache_key = self._get_cache_key(
+                description, amount, date, pass_type="Pass1"
             )
 
-            # Get response from OpenAI
-            response = self.client.chat.completions.create(
-                model=self._get_model(),
-                response_format={"type": "json_object"},
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are a transaction classification assistant that provides JSON responses.",
-                    },
-                    {"role": "user", "content": prompt},
-                ],
+            # Initialize transaction info
+            transaction_info = TransactionInfo(
+                id=transaction_id, description=description, date=date, amount=amount
             )
 
-            result = json.loads(response.choices[0].message.content)
-            classification = ClassificationResponse(**result)
+            # Get payee (may use AI)
+            payee = self._get_payee(description, force_process)
+            transaction_info.payee_info = payee
 
-            # Ensure confidence is one of the allowed values
-            if classification.confidence not in ["high", "medium", "low"]:
-                classification.confidence = "medium"  # Default to medium if invalid
-
-            # Get tax_category_id from the name
-            tax_cat_query = "SELECT id, name FROM tax_categories WHERE id = ?"
-            tax_cat_result = self.profile_manager.db.execute_query(
-                tax_cat_query, (classification.tax_category_id,)
+            # Attempt to get category
+            category, confidence, notes, expense_type, business_percentage = (
+                self._get_category(
+                    description=description,
+                    amount=amount,
+                    date=date,
+                    payee=payee,
+                    force_process=force_process,
+                )
             )
 
-            if not tax_cat_result:
-                logger.error(
-                    f"Tax category ID not found in database: {classification.tax_category_id}"
-                )
-                # Try to find a similar category
-                all_categories = self.profile_manager.db.execute_query(
-                    "SELECT id, name FROM tax_categories"
-                )
-                if all_categories:
-                    logger.info("Available tax categories:")
-                    for cat in all_categories:
-                        logger.info(f"  ID {cat[0]}: {cat[1]}")
-                return TaxInfo(
-                    tax_category_id=0,  # Default/unknown ID
-                    tax_category="Unknown",
-                    business_percentage=0,
-                    worksheet="6A",  # Default to 6A
-                    confidence="low",  # Default to low confidence
-                    reasoning="Tax category not found in database",
-                )
+            # Update transaction info with category data
+            transaction_info.category_info = category
+            transaction_info.confidence = confidence
+            transaction_info.notes = notes
+            transaction_info.expense_type = expense_type
+            transaction_info.business_percentage = business_percentage
 
-            row = tax_cat_result[0]
-            logger.info(f"✓ Using tax category: {row[1]} (ID: {row[0]})")
-            return TaxInfo(
-                tax_category_id=row[0],
-                tax_category=row[1],
-                business_percentage=classification.business_percentage,
-                worksheet=classification.worksheet
-                or "6A",  # Default to 6A if not specified
-                confidence=classification.confidence,
-                reasoning=classification.reasoning,
-            )
+            # Return the transaction info
+            return transaction_info
 
         except Exception as e:
-            logger.error(
-                f"Error getting tax classification for transaction {transaction.transaction_id}: {str(e)}"
-            )
-            return TaxInfo(
-                tax_category_id=0,  # Default/unknown ID
-                tax_category="Unknown",
+            # Log the exception
+            self.logger.error(f"Error in Pass 1 categorization: {str(e)}")
+            self.logger.error(traceback.format_exc())
+
+            # Return default transaction info
+            return TransactionInfo(
+                id=transaction.get("id", str(uuid.uuid4())),
+                description=transaction.get("description", ""),
+                date=transaction.get("date", ""),
+                amount=float(transaction.get("amount", 0)),
+                category="Error",
+                confidence="low",
+                notes=f"Error in categorization: {str(e)}",
+                expense_type="Unknown",
                 business_percentage=0,
-                worksheet="6A",  # Default to 6A
-                confidence="low",  # Default to low confidence
-                reasoning=f"Error during classification: {str(e)}",
             )

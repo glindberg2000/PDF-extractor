@@ -174,21 +174,59 @@ class ClientDB:
             """
             )
 
-            # Tax categories table
+            # --- Tax Categories Table (Recreate for Schema Update) --- #
+            # Drop the table first to ensure schema updates (including CHECK constraints) are applied
+            try:
+                logger.warning(
+                    "Dropping existing tax_categories table to apply schema updates..."
+                )
+                conn.execute("DROP TABLE IF EXISTS tax_categories")
+                logger.info("Successfully dropped tax_categories table.")
+            except sqlite3.Error as e:
+                logger.error(
+                    f"Error dropping tax_categories table: {e}. Proceeding might cause issues."
+                )
+
+            # Create the tax_categories table with the latest schema
             conn.execute(
                 """
-                CREATE TABLE IF NOT EXISTS tax_categories (
-                    id INTEGER PRIMARY KEY,
+                CREATE TABLE tax_categories (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
                     name TEXT NOT NULL,
                     description TEXT,
-                    worksheet TEXT CHECK(worksheet IN ('6A', 'Vehicle', 'HomeOffice')) NOT NULL,
+                    worksheet TEXT CHECK(worksheet IN ('Personal', 'T2125', 'T776', '6A', 'Vehicle', 'HomeOffice')) NOT NULL,
+                    is_personal BOOLEAN DEFAULT FALSE NOT NULL,
                     line_number TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(name)
+                    UNIQUE(name, worksheet)
                 )
-            """
+                """
             )
+            logger.info("Recreated tax_categories table with updated schema.")
+
+            # Initialize default categories (including Personal)
+            personal_info = {"worksheet": "Personal", "category": "Personal Expense"}
+            conn.execute(
+                "INSERT INTO tax_categories (worksheet, name, is_personal) VALUES (?, ?, TRUE)",
+                (personal_info["worksheet"], personal_info["category"]),
+            )
+            logger.info(f"Initialized '{personal_info['category']}' category.")
+
+            # Initialize standard business categories from utils
+            inserted_count = 0
+            for worksheet, categories in TAX_WORKSHEET_CATEGORIES.items():
+                for category in categories:
+                    conn.execute(
+                        "INSERT INTO tax_categories (worksheet, name, is_personal) VALUES (?, ?, FALSE)",
+                        (worksheet, category),
+                    )
+                    inserted_count += 1
+            if inserted_count > 0:
+                logger.info(
+                    f"Initialized {inserted_count} standard business categories."
+                )
+            # --- End Tax Categories Table --- #
 
             # Modify transaction_classifications table - add columns one at a time
             for column_def in [
