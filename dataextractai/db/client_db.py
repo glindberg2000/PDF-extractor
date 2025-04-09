@@ -162,7 +162,7 @@ class ClientDB:
                     category_type TEXT CHECK(category_type IN ('other_expense', 'custom_category')) NOT NULL,
                     description TEXT,
                     tax_year INTEGER NOT NULL,
-                    worksheet TEXT CHECK(worksheet IN ('6A', 'Vehicle', 'HomeOffice')) NOT NULL,
+                    worksheet TEXT CHECK(worksheet IN ('Personal', '6A', 'Vehicle', 'HomeOffice')) NOT NULL,
                     parent_category TEXT,  -- Links to standard category if this is a subcategory
                     line_number TEXT,      -- For custom line items in Other Expenses
                     is_active BOOLEAN DEFAULT 1,
@@ -232,7 +232,7 @@ class ClientDB:
             for column_def in [
                 "base_category TEXT",
                 "base_category_confidence TEXT CHECK(base_category_confidence IN ('high', 'medium', 'low'))",
-                "worksheet TEXT CHECK(worksheet IN ('6A', 'Vehicle', 'HomeOffice'))",
+                "worksheet TEXT CHECK(worksheet IN ('Personal', '6A', 'Vehicle', 'HomeOffice'))",
                 "tax_category_id INTEGER REFERENCES tax_categories(id)",
                 "tax_subcategory TEXT",
                 "tax_year INTEGER",

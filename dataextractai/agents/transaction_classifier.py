@@ -535,6 +535,15 @@ class TransactionClassifier:
             elif pass_num == 3:
                 # Ensure worksheet value is valid before committing to database
                 worksheet = transaction.tax_info.worksheet
+
+                # Special case: Always use "Personal" worksheet for personal expenses
+                if transaction.tax_info.tax_category_id == self.personal_category_id:
+                    worksheet = "Personal"
+                    logger.info(
+                        f"✓ Setting worksheet to 'Personal' for personal expense (ID: {transaction.transaction_id})"
+                    )
+
+                # Handle various data type issues
                 if isinstance(worksheet, list):
                     logger.warning(
                         f"Worksheet is still a list in commit: {worksheet}, using first value or '6A'"
@@ -545,12 +554,21 @@ class TransactionClassifier:
                         else "6A"
                     )
 
-                # Ensure it's one of the allowed values for the database constraint
+                # Final validation - ensure worksheet is one of the allowed values
                 if worksheet not in self.ALLOWED_WORKSHEETS:
                     logger.warning(
-                        f"Invalid worksheet '{worksheet}' at commit time, forcing to '6A'"
+                        f"Invalid worksheet '{worksheet}' at commit time. Tax ID: {transaction.tax_info.tax_category_id}, Is personal: {transaction.tax_info.tax_category_id == self.personal_category_id}"
                     )
-                    worksheet = "6A"
+                    # If personal, use "Personal", otherwise use "6A" as default
+                    if (
+                        transaction.tax_info.tax_category_id
+                        == self.personal_category_id
+                    ):
+                        worksheet = "Personal"
+                        logger.info("Corrected to 'Personal' worksheet")
+                    else:
+                        worksheet = "6A"
+                        logger.info("Defaulted to '6A' worksheet")
 
                 # Use the validated worksheet value
                 self.db.execute_query(
@@ -578,7 +596,7 @@ class TransactionClassifier:
                 )
 
                 logger.info(
-                    f"✓ Pass 3 complete: {tax_category_name} ({transaction.tax_info.confidence})"
+                    f"✓ Pass 3 complete: {tax_category_name} ({transaction.tax_info.confidence}) with worksheet: {worksheet}"
                 )
 
             # Use the connection from the persistent connection pool
