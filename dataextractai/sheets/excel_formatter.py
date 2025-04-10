@@ -344,6 +344,50 @@ class ExcelReportFormatter:
                 )
                 data.loc[personal_mask, "worksheet"] = "Personal"
 
+                # Log the affected transaction IDs for debugging
+                if "transaction_id" in data.columns:
+                    personal_txn_ids = data.loc[
+                        personal_mask, "transaction_id"
+                    ].tolist()
+                    logger.info(f"Personal expense transaction IDs: {personal_txn_ids}")
+
+                # Double check for inconsistencies
+                inconsistent_mask = (data["expense_type"] == "personal") & (
+                    data["worksheet"] != "Personal"
+                )
+                if inconsistent_mask.any():
+                    inconsistent_count = inconsistent_mask.sum()
+                    logger.warning(
+                        f"CRITICAL: Found {inconsistent_count} personal expenses with non-Personal worksheet! Fixing..."
+                    )
+                    data.loc[inconsistent_mask, "worksheet"] = "Personal"
+
+                    # Log the specific transaction IDs with inconsistencies
+                    if "transaction_id" in data.columns:
+                        inconsistent_txn_ids = data.loc[
+                            inconsistent_mask, "transaction_id"
+                        ].tolist()
+                        logger.warning(
+                            f"Fixed inconsistent worksheets for transaction IDs: {inconsistent_txn_ids}"
+                        )
+
+                # Also ensure business_percentage is set to 0 for personal expenses
+                if "business_percentage" in data.columns:
+                    data.loc[personal_mask, "business_percentage"] = 0
+                    logger.info(
+                        f"Set business_percentage to 0 for {personal_mask.sum()} personal expense items"
+                    )
+
+        # Additional check for Personal worksheet items to ensure business percentage is 0
+        if "worksheet" in data.columns and "business_percentage" in data.columns:
+            personal_worksheet_mask = data["worksheet"] == "Personal"
+            if personal_worksheet_mask.any():
+                # Any item in Personal worksheet should have 0% business
+                data.loc[personal_worksheet_mask, "business_percentage"] = 0
+                logger.info(
+                    f"Ensured business_percentage is 0 for {personal_worksheet_mask.sum()} items in Personal worksheet"
+                )
+
         # Ensure worksheet column contains valid values
         data["worksheet"] = data["worksheet"].fillna("Unknown").astype(str)
 
@@ -608,6 +652,33 @@ class ExcelReportFormatter:
                 )
                 data.loc[personal_mask, "worksheet"] = "Personal"
 
+                # Log the affected transaction IDs for debugging
+                if "transaction_id" in data.columns:
+                    personal_txn_ids = data.loc[
+                        personal_mask, "transaction_id"
+                    ].tolist()
+                    logger.info(f"Personal expense transaction IDs: {personal_txn_ids}")
+
+                # Double check for inconsistencies
+                inconsistent_mask = (data["expense_type"] == "personal") & (
+                    data["worksheet"] != "Personal"
+                )
+                if inconsistent_mask.any():
+                    inconsistent_count = inconsistent_mask.sum()
+                    logger.warning(
+                        f"CRITICAL: Found {inconsistent_count} personal expenses with non-Personal worksheet! Fixing..."
+                    )
+                    data.loc[inconsistent_mask, "worksheet"] = "Personal"
+
+                    # Log the specific transaction IDs with inconsistencies
+                    if "transaction_id" in data.columns:
+                        inconsistent_txn_ids = data.loc[
+                            inconsistent_mask, "transaction_id"
+                        ].tolist()
+                        logger.warning(
+                            f"Fixed inconsistent worksheets for transaction IDs: {inconsistent_txn_ids}"
+                        )
+
                 # Also ensure business_percentage is set to 0 for personal expenses
                 if "business_percentage" in data.columns:
                     data.loc[personal_mask, "business_percentage"] = 0
@@ -727,6 +798,33 @@ class ExcelReportFormatter:
                     f"Setting worksheet to 'Personal' for {personal_mask.sum()} personal expense items"
                 )
                 data.loc[personal_mask, "worksheet"] = "Personal"
+
+                # Log the affected transaction IDs for debugging
+                if "transaction_id" in data.columns:
+                    personal_txn_ids = data.loc[
+                        personal_mask, "transaction_id"
+                    ].tolist()
+                    logger.info(f"Personal expense transaction IDs: {personal_txn_ids}")
+
+                # Double check for inconsistencies
+                inconsistent_mask = (data["expense_type"] == "personal") & (
+                    data["worksheet"] != "Personal"
+                )
+                if inconsistent_mask.any():
+                    inconsistent_count = inconsistent_mask.sum()
+                    logger.warning(
+                        f"CRITICAL: Found {inconsistent_count} personal expenses with non-Personal worksheet! Fixing..."
+                    )
+                    data.loc[inconsistent_mask, "worksheet"] = "Personal"
+
+                    # Log the specific transaction IDs with inconsistencies
+                    if "transaction_id" in data.columns:
+                        inconsistent_txn_ids = data.loc[
+                            inconsistent_mask, "transaction_id"
+                        ].tolist()
+                        logger.warning(
+                            f"Fixed inconsistent worksheets for transaction IDs: {inconsistent_txn_ids}"
+                        )
 
                 # Also ensure business_percentage is set to 0 for personal expenses
                 if "business_percentage" in data.columns:

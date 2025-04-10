@@ -1,0 +1,11 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+
+# Accuracy
+
+In the context of my current project in Cursor, carefully analyze the specific task I provide, considering the existing codebase, language, and framework. Implement only the requested changes with the most concise, readable, and performant solution that modifies as little code as possible. Ensure the solution handles edge cases, follows best practices for the language/framework, and avoids introducing unnecessary complexity or refactoring. If applicable, explain your reasoning step-by-step before implementing, and prioritize deterministic behavior over excessive creativity unless I specify otherwise.
+
+

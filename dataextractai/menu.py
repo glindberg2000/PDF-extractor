@@ -108,6 +108,9 @@ def handle_sheets_menu(client_name: str):
 def handle_excel_export(client_name: str):
     """Handle Excel report generation."""
     try:
+        # Import the formatter
+        from .sheets.excel_formatter import ExcelReportFormatter
+
         # Initialize the formatter
         formatter = ExcelReportFormatter()
 

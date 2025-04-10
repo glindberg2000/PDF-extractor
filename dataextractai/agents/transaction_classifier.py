@@ -30,7 +30,6 @@ from ..models.ai_responses import (
 from ..db.client_db import ClientDB
 import sqlite3
 import logging
-from tools.vendor_lookup import lookup_vendor_info, format_vendor_results
 from ..utils.tax_categories import (
     TAX_WORKSHEET_CATEGORIES,
     get_worksheet_for_category,
@@ -533,40 +532,47 @@ class TransactionClassifier:
                 )
 
             elif pass_num == 3:
-                # Ensure worksheet value is valid before committing to database
-                worksheet = transaction.tax_info.worksheet
+                # CRITICAL: Ensure personal expenses always go to the Personal worksheet
+                # Check both methods to identify personal expenses
+                is_personal_by_id = (
+                    transaction.tax_info.tax_category_id == self.personal_category_id
+                )
+                is_personal_by_type = (
+                    transaction.category_info
+                    and transaction.category_info.expense_type == "personal"
+                )
+                is_personal = is_personal_by_id or is_personal_by_type
 
-                # Special case: Always use "Personal" worksheet for personal expenses
-                if transaction.tax_info.tax_category_id == self.personal_category_id:
+                logger.info(
+                    f"[ID:{transaction.transaction_id}] Personal check: by_id={is_personal_by_id}, by_type={is_personal_by_type}, final={is_personal}"
+                )
+
+                if is_personal:
+                    # Force the worksheet to be Personal
                     worksheet = "Personal"
                     logger.info(
                         f"✓ Setting worksheet to 'Personal' for personal expense (ID: {transaction.transaction_id})"
                     )
+                else:
+                    # For business expenses, validate the worksheet
+                    worksheet = transaction.tax_info.worksheet
 
-                # Handle various data type issues
-                if isinstance(worksheet, list):
-                    logger.warning(
-                        f"Worksheet is still a list in commit: {worksheet}, using first value or '6A'"
-                    )
-                    worksheet = (
-                        worksheet[0]
-                        if worksheet and isinstance(worksheet[0], str)
-                        else "6A"
-                    )
+                    # Handle various data type issues
+                    if isinstance(worksheet, list):
+                        logger.warning(
+                            f"Worksheet is still a list in commit: {worksheet}, using first value or '6A'"
+                        )
+                        worksheet = (
+                            worksheet[0]
+                            if worksheet and isinstance(worksheet[0], str)
+                            else "6A"
+                        )
 
-                # Final validation - ensure worksheet is one of the allowed values
-                if worksheet not in self.ALLOWED_WORKSHEETS:
-                    logger.warning(
-                        f"Invalid worksheet '{worksheet}' at commit time. Tax ID: {transaction.tax_info.tax_category_id}, Is personal: {transaction.tax_info.tax_category_id == self.personal_category_id}"
-                    )
-                    # If personal, use "Personal", otherwise use "6A" as default
-                    if (
-                        transaction.tax_info.tax_category_id
-                        == self.personal_category_id
-                    ):
-                        worksheet = "Personal"
-                        logger.info("Corrected to 'Personal' worksheet")
-                    else:
+                    # Final validation for business expenses - ensure worksheet is one of the allowed values
+                    if worksheet not in self.ALLOWED_WORKSHEETS:
+                        logger.warning(
+                            f"Invalid worksheet '{worksheet}' at commit time for business expense. Using '6A'."
+                        )
                         worksheet = "6A"
                         logger.info("Defaulted to '6A' worksheet")
 
@@ -575,14 +581,21 @@ class TransactionClassifier:
                     """UPDATE transaction_classifications 
                        SET tax_category_id = ?, business_percentage = ?, 
                            worksheet = ?, classification_confidence = ?,
-                           classification_reasoning = ?
+                           classification_reasoning = ?, expense_type = ?
                        WHERE transaction_id = ?""",
                     (
                         transaction.tax_info.tax_category_id,  # Using ID instead of name
-                        transaction.tax_info.business_percentage,
+                        (
+                            0
+                            if is_personal
+                            else transaction.tax_info.business_percentage
+                        ),  # Force 0% for personal
                         worksheet,  # Use the validated worksheet value
                         transaction.tax_info.confidence,
                         transaction.tax_info.reasoning,
+                        (
+                            "personal" if is_personal else "business"
+                        ),  # Explicitly set expense_type
                         transaction.transaction_id,
                     ),
                 )
@@ -596,7 +609,7 @@ class TransactionClassifier:
                 )
 
                 logger.info(
-                    f"✓ Pass 3 complete: {tax_category_name} ({transaction.tax_info.confidence}) with worksheet: {worksheet}"
+                    f"✓ Pass 3 complete: {tax_category_name} ({transaction.tax_info.confidence}) with worksheet: {worksheet}, expense_type: {'personal' if is_personal else 'business'}"
                 )
 
             # Use the connection from the persistent connection pool
@@ -1189,8 +1202,8 @@ class TransactionClassifier:
 
                         # CRITICAL: Ensure Personal expenses always go to Personal worksheet
                         if is_personal:
-                            logger.debug(
-                                f"Found personal expense, worksheet: {processed_row_data.get('tax_worksheet', processed_row_data.get('worksheet', 'Unknown'))}"
+                            logger.info(
+                                f"Transaction ID {transaction.transaction_id} is a personal expense, forcing Personal worksheet assignment"
                             )
                             # Try both possible field names
                             if processed_row_data.get("tax_worksheet") != "Personal":
@@ -1199,6 +1212,22 @@ class TransactionClassifier:
                             if processed_row_data.get("worksheet") != "Personal":
                                 processed_row_data["worksheet"] = "Personal"
                                 logger.warning(f"⚠️ Corrected worksheet to Personal")
+
+                            # Also ensure transaction.tax_info reflects this change
+                            if (
+                                transaction.tax_info
+                                and transaction.tax_info.worksheet != "Personal"
+                            ):
+                                transaction.tax_info.worksheet = "Personal"
+                                logger.warning(
+                                    f"⚠️ Corrected transaction.tax_info.worksheet to Personal"
+                                )
+
+                                # Re-commit the transaction with the corrected worksheet
+                                self._commit_pass(3, transaction)
+                                logger.info(
+                                    f"✓ Re-committed Pass 3 with corrected Personal worksheet"
+                                )
 
                             # Try both possible business percentage field names
                             if (
@@ -1278,9 +1307,10 @@ class TransactionClassifier:
                 # Determine basic category
                 category_result = self._get_category(
                     transaction["description"],
-                    payee_info["payee"] if payee_info else None,
-                    payee_info["business_description"] if payee_info else None,
-                    payee_info["general_category"] if payee_info else None,
+                    transaction["amount"],
+                    transaction["transaction_date"],
+                    force_process,
+                    f"[ID: {transaction['transaction_id']}]",
                 )
 
                 # Save to database
@@ -1300,44 +1330,75 @@ class TransactionClassifier:
                 self._update_status(transaction["transaction_id"], 2, "error", str(e))
 
     def _process_worksheet_assignment(
-        self,
-        transactions_df: pd.DataFrame,
-        start_row: int,
-        end_row: int,
-        force_process: bool,
-    ):
-        """Process Pass 3: Worksheet assignment."""
-        print("\nPass 3: Worksheet Assignment...")
-        for idx in range(start_row, end_row):
-            transaction = transactions_df.iloc[idx]
+        self, df: pd.DataFrame, rows_to_process: List[int], force_process: bool = False
+    ) -> pd.DataFrame:
+        """Process worksheet assignments for transactions.
+
+        Args:
+            df: DataFrame with transactions
+            rows_to_process: List of row indices to process
+            force_process: Whether to force processing even if already processed
+
+        Returns:
+            DataFrame with updated worksheet values
+        """
+        # Initialize counters for logging
+        count_processed = 0
+        count_already_processed = 0
+
+        # Process each transaction based on its indices
+        for idx in rows_to_process:
             try:
-                # Get existing category info
-                category_info = self._get_existing_category(
-                    transaction["transaction_id"]
-                )
-                if not category_info and not force_process:
+                # Get row data for this transaction
+                row = df.iloc[idx]
+                transaction_id = row.get("transaction_id", f"row_{idx}")
+
+                # Skip if already processed and not forcing
+                if not force_process and pd.notna(row.get("worksheet")):
+                    count_already_processed += 1
                     continue
 
-                # Determine worksheet
-                worksheet_result = self._determine_worksheet(
-                    transaction, category_info["base_category"]
-                )
+                # Get existing category information
+                expense_type = row.get("expense_type", None)
 
-                # Save to database
-                self.db.save_transaction_classification(
-                    self.client_name,
-                    transaction["transaction_id"],
-                    {
-                        "worksheet": worksheet_result.worksheet,
-                        "tax_category": worksheet_result.tax_category,
-                        "tax_subcategory": worksheet_result.tax_subcategory,
-                    },
-                    "worksheet",
-                )
+                # Determine worksheet
+                worksheet = self._determine_worksheet(row)
+
+                # CRITICAL SAFETY CHECK: Personal expenses MUST NEVER go to 6A
+                if expense_type == "personal" and worksheet == "6A":
+                    logger.warning(
+                        f"🚨 CRITICAL SAFETY: Prevented personal expense ID {transaction_id} "
+                        f"from being assigned to 6A worksheet. Forcing 'Personal' worksheet."
+                    )
+                    worksheet = "Personal"
+
+                # Save the worksheet assignment to the dataframe
+                df.at[idx, "worksheet"] = worksheet
+                count_processed += 1
+
+                # Also save to database for future reference if we have a transaction ID
+                transaction_id = row.get("transaction_id")
+                if transaction_id:
+                    self._save_classification_to_db(
+                        transaction_id=transaction_id,
+                        tax_category_id=row.get("tax_category_id"),
+                        tax_category=row.get("tax_category"),
+                        business_percentage=row.get("business_percentage", 0),
+                        worksheet=worksheet,
+                        confidence=row.get("classification_confidence", "medium"),
+                    )
 
             except Exception as e:
-                print(f"Error in Pass 3 for transaction {idx}: {str(e)}")
-                self._update_status(transaction["transaction_id"], 3, "error", str(e))
+                transaction_id = df.iloc[idx].get("transaction_id", f"row_{idx}")
+                logger.error(f"Error processing worksheet for ID {transaction_id}: {e}")
+                continue
+
+        # Log processing statistics
+        logger.info(f"Processed worksheet assignment for {count_processed} rows")
+        if count_already_processed > 0:
+            logger.info(f"Skipped {count_already_processed} rows already processed")
+
+        return df
 
     def _analyze_search_results(
         self, transaction_desc: str, search_results: List[Dict], client_profile: Dict
@@ -1655,6 +1716,24 @@ class TransactionClassifier:
     ) -> TaxInfo:
         """Get tax classification for a BUSINESS transaction."""
         try:
+            # CRITICAL CHECK: If transaction was categorized as personal in Pass 2,
+            # return a Personal TaxInfo object immediately without consulting the AI
+            if (
+                transaction.category_info
+                and transaction.category_info.expense_type == "personal"
+            ):
+                logger.info(
+                    f"Transaction ID {transaction.transaction_id} was categorized as personal in Pass 2, enforcing Personal worksheet"
+                )
+                return TaxInfo(
+                    tax_category_id=self.personal_category_id,
+                    tax_category="Personal Expense",
+                    business_percentage=0,
+                    worksheet="Personal",
+                    confidence="high",
+                    reasoning="Enforcing personal classification from category assignment phase",
+                )
+
             # This method now assumes the transaction is NOT personal.
             # Personal transactions should be handled earlier in process_transactions.
 
@@ -1664,6 +1743,7 @@ class TransactionClassifier:
                     f"🧠 FORCED AI tax classification for [{transaction.transaction_id}]"
                 )
             else:
+                # Only try matching if we're not forcing AI processing
                 # First try to find a matching transaction based on description
                 match_data = self._find_matching_transaction(transaction.description)
                 if (
@@ -1703,7 +1783,6 @@ class TransactionClassifier:
                     # Check if the Pass 2 category maps to a known business category ID
                     # Assumes transaction.category_info.category holds the general category name from Pass 2
                     pass2_cat_name = transaction.category_info.category
-                    found_map = False
                     for (
                         name,
                         worksheet,
@@ -1720,10 +1799,10 @@ class TransactionClassifier:
                                 confidence=transaction.category_info.confidence,
                                 reasoning=f"Mapped directly from Pass 2 category: {pass2_cat_name}",
                             )
-                            found_map = True
                             break  # Found first match
 
             # --- AI Classification --- #
+            # If we get here, either force_process is True or no matches were found
             logger.info(
                 f"🧠 Using AI for BUSINESS tax classification... [{transaction.transaction_id}]"
                 + (" (Forced)" if force_process else "")
@@ -2083,4 +2162,120 @@ class TransactionClassifier:
                 notes=f"Error in categorization: {str(e)}",
                 expense_type="Unknown",
                 business_percentage=0,
+            )
+
+    # After the _process_worksheet_assignment method and before the next method
+
+    def _get_existing_category(self, transaction_id: str) -> Optional[Dict]:
+        """Get existing category information for a transaction.
+
+        Args:
+            transaction_id: ID of the transaction
+
+        Returns:
+            Dictionary with category information including expense_type, or None if not found
+        """
+        try:
+            logger.info(
+                f"Getting existing category info for transaction ID: {transaction_id}"
+            )
+
+            # Query to get category information from transaction_classifications table
+            query = """
+                SELECT category, category_confidence, category_reasoning, expense_type, business_percentage
+                FROM transaction_classifications
+                WHERE transaction_id = ?
+            """
+            result = self.db.execute_query(query, (transaction_id,))
+
+            if not result or not result[0]:
+                logger.info(
+                    f"No category information found for transaction ID: {transaction_id}"
+                )
+                return None
+
+            row = result[0]
+
+            # Log the retrieved data for debugging
+            logger.info(
+                f"Found category data for transaction ID {transaction_id}: {row}"
+            )
+
+            # Return category information as dictionary
+            return {
+                "base_category": row[0],  # category
+                "confidence": row[1],  # category_confidence
+                "reasoning": row[2],  # category_reasoning
+                "expense_type": row[3],  # expense_type
+                "business_percentage": row[4],  # business_percentage
+            }
+
+        except Exception as e:
+            logger.error(
+                f"Error getting category info for transaction {transaction_id}: {str(e)}"
+            )
+            logger.error(traceback.format_exc())
+            return None
+
+    def _determine_worksheet(
+        self, transaction: pd.Series, base_category: str
+    ) -> WorksheetAssignment:
+        """Determine the worksheet for a transaction based on its category.
+
+        Args:
+            transaction: Transaction row from DataFrame
+            base_category: Base category from Pass 2
+
+        Returns:
+            WorksheetAssignment with worksheet, tax_category, and tax_subcategory
+        """
+        logger.info(
+            f"Determining worksheet for transaction ID: {transaction['transaction_id']}"
+        )
+
+        # First check if this is a personal expense based on existing classification
+        # Get existing category info to check expense_type
+        category_info = self._get_existing_category(transaction["transaction_id"])
+
+        if category_info and category_info.get("expense_type") == "personal":
+            logger.info(
+                f"Transaction ID {transaction['transaction_id']} is a personal expense, assigning to Personal worksheet"
+            )
+            return WorksheetAssignment(
+                worksheet="Personal",
+                tax_category="Personal Expense",
+                tax_subcategory="",
+            )
+
+        # For business expenses, use the normal mapping
+        try:
+            # Get the appropriate worksheet based on category
+            worksheet = get_worksheet_for_category(base_category)
+
+            # Ensure worksheet is in allowed values
+            if worksheet not in self.ALLOWED_WORKSHEETS:
+                logger.warning(
+                    f"Invalid worksheet '{worksheet}' for category '{base_category}', defaulting to '6A'"
+                )
+                worksheet = "6A"
+
+            logger.info(
+                f"Assigned worksheet '{worksheet}' to transaction ID {transaction['transaction_id']}"
+            )
+
+            return WorksheetAssignment(
+                worksheet=worksheet,
+                tax_category=base_category,
+                tax_subcategory="",  # This could be refined in future versions
+            )
+
+        except Exception as e:
+            logger.error(
+                f"Error determining worksheet for transaction {transaction['transaction_id']}: {str(e)}"
+            )
+            logger.error(traceback.format_exc())
+
+            # Default to 6A in case of error
+            return WorksheetAssignment(
+                worksheet="6A", tax_category=base_category, tax_subcategory=""
             )
