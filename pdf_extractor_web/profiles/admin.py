@@ -1,5 +1,13 @@
 from django.contrib import admin
-from .models import BusinessProfile, ClientExpenseCategory, Transaction
+from .models import (
+    BusinessProfile,
+    ClientExpenseCategory,
+    Transaction,
+    LLMConfig,
+    Agent,
+    Tool,
+)
+from django.utils.translation import gettext_lazy as _
 
 
 @admin.register(BusinessProfile)
@@ -15,10 +23,23 @@ class ClientExpenseCategoryAdmin(admin.ModelAdmin):
     search_fields = ("category_name", "description")
 
 
+class ClientFilter(admin.SimpleListFilter):
+    title = _("client")
+    parameter_name = "client"
+
+    def lookups(self, request, model_admin):
+        clients = set(Transaction.objects.values_list("client__client_id", flat=True))
+        return [(client, client) for client in clients]
+
+    def queryset(self, request, queryset):
+        if self.value():
+            return queryset.filter(client__client_id=self.value())
+        return queryset
+
+
 @admin.register(Transaction)
 class TransactionAdmin(admin.ModelAdmin):
     list_display = (
-        "client",
         "transaction_date",
         "amount",
         "description",
@@ -31,7 +52,13 @@ class TransactionAdmin(admin.ModelAdmin):
         "account_number",
         "transaction_id",
     )
-    list_filter = ("transaction_date", "category", "source", "transaction_type")
+    list_filter = (
+        ClientFilter,
+        "transaction_date",
+        "category",
+        "source",
+        "transaction_type",
+    )
     search_fields = (
         "description",
         "category",
@@ -39,3 +66,22 @@ class TransactionAdmin(admin.ModelAdmin):
         "transaction_type",
         "account_number",
     )
+
+
+@admin.register(LLMConfig)
+class LLMConfigAdmin(admin.ModelAdmin):
+    list_display = ("provider", "model", "url")
+    search_fields = ("provider", "model")
+
+
+@admin.register(Agent)
+class AgentAdmin(admin.ModelAdmin):
+    list_display = ("name", "purpose", "llm")
+    search_fields = ("name", "purpose", "llm__name")
+    filter_horizontal = ("tools",)
+
+
+@admin.register(Tool)
+class ToolAdmin(admin.ModelAdmin):
+    list_display = ("name", "description", "module_path")
+    search_fields = ("name", "description", "module_path")
