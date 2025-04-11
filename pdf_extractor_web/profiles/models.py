@@ -1,4 +1,8 @@
 from django.db import models
+import types
+from jsonschema import validate, ValidationError
+import logging
+from django.utils import timezone
 
 # Create your models here.
 
@@ -97,12 +101,57 @@ class LLMConfig(models.Model):
 
 
 class Tool(models.Model):
-    name = models.CharField(max_length=255, unique=True)
-    description = models.TextField(blank=True, null=True)
-    module_path = models.CharField(max_length=255)  # Path to the tool module
+    name = models.CharField(max_length=100)
+    description = models.TextField()
+    module_path = models.CharField(max_length=255, blank=True, null=True)
+    code = models.TextField(blank=True, null=True)
+    schema = models.JSONField(blank=True, null=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
         return self.name
+
+    def save(self, *args, **kwargs):
+        if not self.created_at:
+            self.created_at = timezone.now()
+        self.updated_at = timezone.now()
+        super().save(*args, **kwargs)
+
+    def get_module(self):
+        if self.module_path:
+            return __import__(self.module_path, fromlist=["search"])
+        elif self.code:
+            # Create a temporary module from the code
+            module = types.ModuleType(f"tool_{self.id}")
+            exec(self.code, module.__dict__)
+            return module
+        return None
+
+    def validate_schema(self, response):
+        if self.schema:
+            try:
+                validate(instance=response, schema=self.schema)
+                return True
+            except ValidationError as e:
+                logger.error(f"Schema validation failed for tool {self.name}: {e}")
+                return False
+        return True
+
+    def execute(self, *args, **kwargs):
+        module = self.get_module()
+        if not module:
+            raise ValueError(f"Tool {self.name} has no valid implementation")
+
+        if not hasattr(module, "search"):
+            raise ValueError(f"Tool {self.name} does not implement search function")
+
+        result = module.search(*args, **kwargs)
+        if not self.validate_schema(result):
+            raise ValueError(f"Tool {self.name} returned invalid response")
+
+        return result
 
 
 class Agent(models.Model):
@@ -116,3 +165,19 @@ class Agent(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class NormalizedVendorData(models.Model):
+    transaction = models.OneToOneField(
+        Transaction, on_delete=models.CASCADE, related_name="normalized_data"
+    )
+    normalized_name = models.CharField(max_length=255)
+    normalized_description = models.TextField(blank=True, null=True)
+    justification = models.TextField(blank=True, null=True)
+    confidence = models.DecimalField(max_digits=5, decimal_places=2)
+    transaction_type = models.CharField(max_length=50, blank=True, null=True)
+    original_context = models.TextField(blank=True, null=True)
+    questions = models.TextField(blank=True, null=True)
+
+    def __str__(self):
+        return self.normalized_name

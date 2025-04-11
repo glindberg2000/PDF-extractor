@@ -1,0 +1,35 @@
+{% extends "admin/change_list.html" %}
+{% load i18n admin_urls %}
+
+{% block object-tools-items %}
+{{ block.super }}
+<li>
+    <a href="{% url 'admin:discover_tools' %}" class="discover-tools-button">
+        {% trans "Discover Tools" %}
+    </a>
+</li>
+{% endblock %}
+
+{% block extrastyle %}
+{{ block.super }}
+<style>
+    .discover-tools-button {
+        background: var(--button-bg);
+        padding: 10px 15px;
+        border-radius: 4px;
+        color: var(--button-fg);
+        display: inline-block;
+        font-weight: 400;
+        font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-left: 8px;
+    }
+
+    .discover-tools-button:hover {
+        background: var(--button-hover-bg);
+        color: var(--button-hover-fg);
+        text-decoration: none;
+    }
+</style>
+{% endblock %}
