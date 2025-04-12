@@ -102,7 +102,7 @@ class LLMConfig(models.Model):
 
 class Tool(models.Model):
     name = models.CharField(max_length=100)
-    description = models.TextField()
+    description = models.TextField(blank=True, null=True)
     module_path = models.CharField(max_length=255, blank=True, null=True)
     code = models.TextField(blank=True, null=True)
     schema = models.JSONField(blank=True, null=True)
@@ -171,13 +171,24 @@ class NormalizedVendorData(models.Model):
     transaction = models.OneToOneField(
         Transaction, on_delete=models.CASCADE, related_name="normalized_data"
     )
-    normalized_name = models.CharField(max_length=255)
+    normalized_name = models.CharField(max_length=255, blank=True, null=True)
     normalized_description = models.TextField(blank=True, null=True)
-    justification = models.TextField(blank=True, null=True)
-    confidence = models.DecimalField(max_digits=5, decimal_places=2)
     transaction_type = models.CharField(max_length=50, blank=True, null=True)
-    original_context = models.TextField(blank=True, null=True)
-    questions = models.TextField(blank=True, null=True)
+    justification = models.TextField(blank=True, null=True)
+    confidence = models.CharField(
+        max_length=10,
+        choices=[("high", "High"), ("medium", "Medium"), ("low", "Low")],
+        default="medium",
+    )
+    tools_used = models.JSONField(
+        default=dict, blank=True
+    )  # Track which tools were used
+    created_at = models.DateTimeField(
+        auto_now_add=True, null=True
+    )  # Allow null for existing rows
+    updated_at = models.DateTimeField(
+        auto_now=True, null=True
+    )  # Allow null for existing rows
 
     def __str__(self):
-        return self.normalized_name
+        return f"Normalized data for {self.transaction.description}"

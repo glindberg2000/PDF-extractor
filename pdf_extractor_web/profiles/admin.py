@@ -134,11 +134,11 @@ class TransactionAdmin(admin.ModelAdmin):
 
     def agent_used(self, obj):
         if hasattr(obj, "normalized_data") and obj.normalized_data.justification:
-            return (
-                obj.normalized_data.justification.split(" - ")[0]
-                if " - " in obj.normalized_data.justification
-                else "Unknown"
-            )
+            agent_name = obj.normalized_data.justification.split(" - ")[0]
+            tools_used = obj.normalized_data.tools_used.get("tools", [])
+            if tools_used:
+                return f"{agent_name} (with {', '.join(tools_used)})"
+            return agent_name
         return None
 
     agent_used.short_description = "Agent Used"
@@ -359,6 +359,8 @@ def process_with_agent(agent, request, queryset):
                 {"role": "user", "content": transaction.description},
             ]
 
+            tools_used = set()  # Track which tools were used
+
             while True:
                 response = client.chat.completions.create(
                     model=agent.llm.model,
@@ -404,6 +406,7 @@ def process_with_agent(agent, request, queryset):
                 # Handle tool calls
                 for tool_call in message.tool_calls:
                     if tool_call.function.name == "brave_search":
+                        tools_used.add("brave_search")
                         # Execute the search
                         args = json.loads(tool_call.function.arguments)
                         logger.info(f"Executing search with query: {args['query']}")
@@ -449,6 +452,7 @@ def process_with_agent(agent, request, queryset):
             normalized_data.normalized_description = result["normalized_description"]
             normalized_data.transaction_type = result["transaction_type"]
             normalized_data.justification = f"{agent.name} - {result['reasoning']}"
+            normalized_data.tools_used = {"tools": list(tools_used)}  # Store tools used
             normalized_data.save()
 
             success_count += 1
