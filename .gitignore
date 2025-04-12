@@ -329,3 +329,27 @@ conda-requirements.txt
 environment.yml
 new_requirements.txt
 
+# Django
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+
+# Database backups and data
+*.sql
+*.dump
+*.backup
+backup_*/
+restore_*/
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Project specific
+pdf_extractor_web/media/
+pdf_extractor_web/static/
+*.pdf
+transaction_data/
+
