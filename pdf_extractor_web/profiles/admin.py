@@ -21,6 +21,12 @@ from dotenv import load_dotenv
 import logging
 import types
 from .tool_discovery import discover_tools, register_tools, get_available_tools
+from django.contrib import admin
+import openai
+import jsonschema
+from tools.vendor_lookup import search
+import html
+import re
 
 # Load environment variables
 load_dotenv()
@@ -55,196 +61,181 @@ class ClientFilter(admin.SimpleListFilter):
         return queryset
 
 
-def call_payee_agent(description):
-    logger.info(f"Calling payee agent for description: {description}")
-
-    # Retrieve the Payee Extractor agent
-    payee_agent = Agent.objects.get(name="Payee Extractor")
-    prompt = payee_agent.prompt  # Use the prompt from the database
-    llm_config = payee_agent.llm
-
-    logger.debug(f"Using LLM config: {llm_config.provider} - {llm_config.model}")
-    logger.debug(f"Using prompt: {prompt}")
-
-    # Build the API call using the LLM configuration
-    url = llm_config.url
-    headers = {
-        "Authorization": f"Bearer {os.getenv('OPENAI_API_KEY')}",
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "model": llm_config.model,
-        "messages": [
-            {"role": "system", "content": prompt},
-            {"role": "user", "content": description},
-        ],
-        "max_tokens": 250,  # Increased for more detailed responses
-        "temperature": 0.7,
-    }
-
-    logger.debug(f"Sending request to LLM with payload: {payload}")
-
-    # Make the API call
-    response = requests.post(url, headers=headers, json=payload)
-    response.raise_for_status()
-    result = response.json()
-
-    logger.debug(f"Received LLM response: {result}")
-
-    # Extract the content from the response
-    content = result["choices"][0]["message"]["content"]
+@admin.action(description="Extract Vendor")
+def extract_vendor(self, request, queryset):
+    """
+    Extract vendor information using the Vendor Extractor agent.
+    """
     try:
-        # Parse the content as JSON
-        result = json.loads(content)
-        logger.debug(f"Parsed JSON response: {result}")
-
-        # Adjust the schema to match the actual response format
-        response_schema = {
-            "type": "object",
-            "properties": {
-                "payee": {"type": "string"},
-                "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
-                "reasoning": {"type": "string"},
-                "needs_search": {"type": "boolean"},
-                "transaction_type": {"type": "string"},
-                "normalized_description": {"type": "string"},
-                "original_context": {"type": "string"},
-                "questions": {"type": "string"},
-            },
-            "required": [
-                "payee",
-                "confidence",
-                "reasoning",
-                "needs_search",
-                "transaction_type",
-                "normalized_description",
-                "original_context",
-                "questions",
-            ],
-        }
-
-        # Validate the response
-        validate(instance=result, schema=response_schema)
-    except (ValidationError, json.JSONDecodeError) as e:
-        logger.error(f"Response validation failed: {e}")
-        raise ValueError(f"Response validation failed: {e}")
-
-    # Map confidence string to numerical value
-    confidence_map = {"high": 0.9, "medium": 0.6, "low": 0.3}
-    confidence_str = result.get("confidence", "low").lower()
-    confidence = confidence_map.get(
-        confidence_str, 0.3
-    )  # Default to low confidence if unknown value
-
-    # If the LLM indicates it needs to search for vendor information
-    vendor_description = result.get("normalized_description", "")
-    if result.get("needs_search", False):
-        try:
-            # Get the Brave Search tool
-            brave_tool = Tool.objects.get(name="brave_search")
-            # Import the tool module
-            module = __import__(brave_tool.module_path, fromlist=["search"])
-            # Perform the search
-            search_results = module.search(result["payee"])
-            if search_results:
-                # Use the first result's description
-                vendor_description = search_results[0].get("description", "")
-                logger.info(
-                    f"Found vendor description from search: {vendor_description}"
-                )
-        except Exception as e:
-            logger.error(f"Error using Brave Search tool: {e}")
-            vendor_description = "Unable to retrieve vendor description"
-
-    # If no search was performed or it failed, use the normalized description
-    if not vendor_description:
-        vendor_description = result.get(
-            "normalized_description", f"Business transaction with {result['payee']}"
-        )
-
-    logger.info(f"Extracted payee: {result.get('payee')} with confidence: {confidence}")
-
-    # Map the response to the expected fields
-    return {
-        "normalized_name": result.get("payee"),
-        "normalized_description": vendor_description,
-        "justification": result.get("reasoning"),
-        "confidence": confidence,
-        "transaction_type": result.get("transaction_type"),
-        "original_context": result.get("original_context"),
-        "questions": result.get("questions"),
-    }
-
-
-def extract_payee(modeladmin, request, queryset):
-    for transaction in queryset:
-        logger.info(f"Processing transaction: {transaction.description}")
-        response = call_payee_agent(transaction.description)
-        logger.info(f"LLM response: {response}")
-
-        normalized_data, created = NormalizedVendorData.objects.update_or_create(
-            transaction=transaction,
-            defaults={
-                "normalized_name": response["normalized_name"],
-                "normalized_description": response["normalized_description"],
-                "justification": response["justification"],
-                "confidence": response["confidence"],
-            },
-        )
-        logger.info(
-            f"{'Created' if created else 'Updated'} NormalizedVendorData for transaction {transaction.id}"
-        )
-        logger.info(f"Stored data: {normalized_data.__dict__}")
-    messages.success(request, "Payee extraction completed for selected transactions.")
-
-
-def force_vendor_lookup(modeladmin, request, queryset):
-    try:
-        # Get the Brave Search tool
-        brave_tool = Tool.objects.get(name="brave_search", is_active=True)
-    except Tool.DoesNotExist:
+        # Get the Vendor Extractor agent
+        vendor_agent = Agent.objects.get(name="Vendor Extractor")
+    except Agent.DoesNotExist:
         messages.error(
             request,
-            "Brave Search tool not found or is inactive. Please add it through the admin interface.",
+            "Vendor Extractor agent not found. Please add it through the admin interface.",
         )
         return
 
+    success_count = 0
+    error_count = 0
+
     for transaction in queryset:
         try:
-            # Get the normalized data if it exists
-            normalized_data = transaction.normalized_data
+            # Call the LLM with the transaction description
+            client = openai.OpenAI()
+            response = client.chat.completions.create(
+                model=vendor_agent.llm.model,
+                messages=[
+                    {"role": "system", "content": vendor_agent.prompt},
+                    {"role": "user", "content": transaction.description},
+                ],
+                temperature=0.7,
+                max_tokens=250,
+            )
+
+            # Parse the response
+            response_text = response.choices[0].message.content
             try:
-                # Execute the tool
-                search_results = brave_tool.execute(normalized_data.normalized_name)
-                if search_results:
-                    # Update the description with the search result
-                    normalized_data.normalized_description = search_results[0].get(
-                        "description", ""
-                    )
-                    normalized_data.save()
-                    logger.info(
-                        f"Updated vendor description for {normalized_data.normalized_name}"
-                    )
-            except Exception as e:
-                logger.error(f"Error executing Brave Search tool: {e}")
-                messages.error(request, f"Error executing Brave Search tool: {e}")
-                return
-        except NormalizedVendorData.DoesNotExist:
-            messages.warning(
-                request, f"No normalized data found for transaction {transaction.id}"
+                result = json.loads(response_text)
+            except json.JSONDecodeError:
+                logger.error(f"Invalid JSON response: {response_text}")
+                messages.error(request, "Invalid JSON response from LLM")
+                error_count += 1
+                continue
+
+            # Create or update the normalized data
+            normalized_data, created = NormalizedVendorData.objects.get_or_create(
+                transaction=transaction
             )
+            normalized_data.normalized_name = result["payee"]
+            normalized_data.normalized_description = result["normalized_description"]
+            normalized_data.transaction_type = result["transaction_type"]
+            normalized_data.justification = result["original_context"]
+            normalized_data.save()
+
+            success_count += 1
         except Exception as e:
-            logger.error(
-                f"Error looking up vendor for transaction {transaction.id}: {e}"
-            )
+            logger.error(f"Error processing transaction {transaction.id}: {e}")
             messages.error(
-                request,
-                f"Error looking up vendor for transaction {transaction.id}: {e}",
+                request, f"Error processing transaction {transaction.id}: {e}"
             )
-    messages.success(request, "Vendor lookups completed for selected transactions.")
+            error_count += 1
+
+    messages.success(
+        request,
+        f"Successfully processed {success_count} transactions. {error_count} errors occurred.",
+    )
 
 
-force_vendor_lookup.short_description = "Force vendor lookup"
+@admin.action(description="Lookup Business Type")
+def lookup_business_type(self, request, queryset):
+    """
+    Lookup business type using the Lookup Payee agent and Brave Search.
+    """
+    try:
+        # Get the Lookup Payee agent
+        lookup_agent = Agent.objects.get(name="Lookup Payee")
+        brave_tool = Tool.objects.get(name="Brave Search")
+    except Agent.DoesNotExist:
+        messages.error(
+            request,
+            "Lookup Payee agent not found. Please add it through the admin interface.",
+        )
+        return
+    except Tool.DoesNotExist:
+        messages.error(
+            request,
+            "Brave Search tool not found. Please add it through the admin interface.",
+        )
+        return
+
+    success_count = 0
+    error_count = 0
+
+    for transaction in queryset:
+        try:
+            # Make a single LLM call with structured output and tool access
+            client = openai.OpenAI()
+            response = client.chat.completions.create(
+                model=lookup_agent.llm.model,
+                messages=[
+                    {"role": "system", "content": lookup_agent.prompt},
+                    {"role": "user", "content": transaction.description},
+                ],
+                tools=[
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "brave_search",
+                            "description": "Search for information about a vendor using Brave Search",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "query": {
+                                        "type": "string",
+                                        "description": "The search query to look up vendor information",
+                                    }
+                                },
+                                "required": ["query"],
+                            },
+                        },
+                    }
+                ],
+                response_format={
+                    "type": "json_object",
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "vendor_name": {"type": "string"},
+                            "business_description": {"type": "string"},
+                            "confidence_level": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1,
+                            },
+                            "reasoning": {"type": "string"},
+                        },
+                        "required": [
+                            "vendor_name",
+                            "business_description",
+                            "confidence_level",
+                            "reasoning",
+                        ],
+                    },
+                },
+                temperature=0.7,
+                max_tokens=250,
+            )
+
+            # The response will be automatically validated against the schema
+            result = response.choices[0].message.content
+            logger.info(f"LLM response: {result}")
+
+            # Create or update the normalized data
+            normalized_data, created = NormalizedVendorData.objects.get_or_create(
+                transaction=transaction
+            )
+            normalized_data.normalized_name = result["vendor_name"]
+            normalized_data.normalized_description = result["business_description"]
+            normalized_data.transaction_type = "purchase"  # Default type
+            normalized_data.justification = result["reasoning"]
+            normalized_data.save()
+
+            success_count += 1
+
+        except Exception as e:
+            logger.error(f"Error processing transaction {transaction.id}: {str(e)}")
+            messages.error(
+                request, f"Error processing transaction {transaction.id}: {str(e)}"
+            )
+            error_count += 1
+
+    if success_count > 0:
+        messages.success(
+            request, f"Successfully processed {success_count} transactions"
+        )
+    if error_count > 0:
+        messages.warning(request, f"Failed to process {error_count} transactions")
 
 
 @admin.register(Transaction)
@@ -253,70 +244,11 @@ class TransactionAdmin(admin.ModelAdmin):
         "transaction_date",
         "amount",
         "description",
-        "get_normalized_name",
-        "get_vendor_description",
-        "get_transaction_type",
-        "get_reasoning",
-        "get_confidence",
-        "get_questions",
-        "file_path",
-        "source",
-        "transaction_type",
-        "normalized_amount",
-        "statement_start_date",
-        "statement_end_date",
-        "account_number",
-        "transaction_id",
+        "normalized_data__normalized_name",
+        "normalized_data__normalized_description",
+        "normalized_data__transaction_type",
+        "agent_used",
     )
-
-    def get_normalized_name(self, obj):
-        try:
-            return obj.normalized_data.normalized_name
-        except NormalizedVendorData.DoesNotExist:
-            return "-"
-
-    get_normalized_name.short_description = "Normalized Payee"
-
-    def get_vendor_description(self, obj):
-        try:
-            return obj.normalized_data.normalized_description
-        except NormalizedVendorData.DoesNotExist:
-            return "-"
-
-    get_vendor_description.short_description = "Vendor Description"
-
-    def get_transaction_type(self, obj):
-        try:
-            return obj.normalized_data.transaction_type
-        except NormalizedVendorData.DoesNotExist:
-            return "-"
-
-    get_transaction_type.short_description = "Transaction Type"
-
-    def get_reasoning(self, obj):
-        try:
-            return obj.normalized_data.justification
-        except NormalizedVendorData.DoesNotExist:
-            return "-"
-
-    get_reasoning.short_description = "Extraction Reasoning"
-
-    def get_confidence(self, obj):
-        try:
-            return f"{obj.normalized_data.confidence:.2f}"
-        except NormalizedVendorData.DoesNotExist:
-            return "-"
-
-    get_confidence.short_description = "Confidence"
-
-    def get_questions(self, obj):
-        try:
-            return obj.normalized_data.questions
-        except NormalizedVendorData.DoesNotExist:
-            return "-"
-
-    get_questions.short_description = "Questions"
-
     list_filter = (
         ClientFilter,
         "transaction_date",
@@ -333,7 +265,60 @@ class TransactionAdmin(admin.ModelAdmin):
         "normalized_data__normalized_name",
         "normalized_data__normalized_description",
     )
-    actions = [extract_payee, force_vendor_lookup]
+
+    def get_actions(self, request):
+        actions = super().get_actions(request)
+        # Remove default delete action if it exists
+        if "delete_selected" in actions:
+            del actions["delete_selected"]
+
+        # Add dynamic actions for each agent
+        for agent in Agent.objects.all():
+            action = create_agent_action(agent)
+            action_name = f"process_with_{agent.name.lower().replace(' ', '_')}"
+            action.__name__ = action_name
+            action.short_description = f"Process with {agent.name}"
+            actions[action_name] = (action, action_name, action.short_description)
+
+        return actions
+
+    def normalized_data__normalized_name(self, obj):
+        return (
+            obj.normalized_data.normalized_name
+            if hasattr(obj, "normalized_data")
+            else None
+        )
+
+    normalized_data__normalized_name.short_description = "Vendor"
+
+    def normalized_data__normalized_description(self, obj):
+        return (
+            obj.normalized_data.normalized_description
+            if hasattr(obj, "normalized_data")
+            else None
+        )
+
+    normalized_data__normalized_description.short_description = "Business Type"
+
+    def normalized_data__transaction_type(self, obj):
+        return (
+            obj.normalized_data.transaction_type
+            if hasattr(obj, "normalized_data")
+            else None
+        )
+
+    normalized_data__transaction_type.short_description = "Transaction Type"
+
+    def agent_used(self, obj):
+        if hasattr(obj, "normalized_data") and obj.normalized_data.justification:
+            return (
+                obj.normalized_data.justification.split(" - ")[0]
+                if " - " in obj.normalized_data.justification
+                else "Unknown"
+            )
+        return None
+
+    agent_used.short_description = "Agent Used"
 
     def get_urls(self):
         urls = super().get_urls()
@@ -350,18 +335,6 @@ class TransactionAdmin(admin.ModelAdmin):
         # Placeholder for the view logic to select an agent and apply it
         messages.success(request, "Agent applied to selected transactions.")
         return render(request, "admin/apply_agent.html")
-
-    def get_actions(self, request):
-        actions = super().get_actions(request)
-        # Add dynamic actions for each agent
-        for agent in Agent.objects.all():
-            action = create_agent_action(agent)
-            actions[action.__name__] = (
-                action,
-                action.__name__,
-                action.short_description,
-            )
-        return actions
 
 
 @admin.register(LLMConfig)
@@ -529,46 +502,175 @@ class ToolAdmin(admin.ModelAdmin):
 # Create a dynamic action for each agent
 def create_agent_action(agent):
     def agent_action(modeladmin, request, queryset):
+        success_count = 0
+        error_count = 0
+
+        # Define available tools as OpenAI functions
+        tools = []
+        for tool in agent.tools.filter(is_active=True):
+            if tool.name == "brave_search":
+                tools.append(
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "brave_search",
+                            "description": "Search for information about a business or vendor",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "query": {
+                                        "type": "string",
+                                        "description": "The search query",
+                                    }
+                                },
+                                "required": ["query"],
+                            },
+                        },
+                    }
+                )
+
+        client = openai.OpenAI()
+
         for transaction in queryset:
             try:
                 logger.info(
-                    f"Processing transaction with agent {agent.name}: {transaction.description}"
-                )
-                response = call_payee_agent(transaction.description)
-                logger.info(f"LLM response: {response}")
-
-                normalized_data, created = (
-                    NormalizedVendorData.objects.update_or_create(
-                        transaction=transaction,
-                        defaults={
-                            "normalized_name": response["normalized_name"],
-                            "normalized_description": response[
-                                "normalized_description"
-                            ],
-                            "justification": response["justification"],
-                            "confidence": response["confidence"],
-                            "transaction_type": response.get("transaction_type"),
-                            "original_context": response.get("original_context"),
-                            "questions": response.get("questions"),
-                        },
-                    )
+                    f"Processing transaction {transaction.id} with agent {agent.name}"
                 )
                 logger.info(
-                    f"{'Created' if created else 'Updated'} NormalizedVendorData for transaction {transaction.id}"
+                    f"Agent {agent.name} has access to tools: {[tool.name for tool in agent.tools.all()]}"
                 )
-                logger.info(f"Stored data: {normalized_data.__dict__}")
+
+                messages = [
+                    {"role": "system", "content": agent.prompt},
+                    {
+                        "role": "user",
+                        "content": json.dumps(
+                            {
+                                "transaction": {
+                                    "description": transaction.description,
+                                    "amount": str(transaction.amount),
+                                    "date": transaction.transaction_date.isoformat(),
+                                }
+                            }
+                        ),
+                    },
+                ]
+
+                while True:
+                    response = client.chat.completions.create(
+                        model=agent.llm.model,
+                        messages=messages,
+                        tools=tools,
+                        tool_choice="auto",
+                    )
+
+                    message = response.choices[0].message
+                    logger.info(f"Raw LLM response content: {message.content}")
+
+                    # Add assistant's message to conversation
+                    messages.append(
+                        {
+                            "role": "assistant",
+                            "content": message.content,
+                            "tool_calls": message.tool_calls,
+                        }
+                    )
+
+                    # If no tool calls, we're done
+                    if not message.tool_calls:
+                        break
+
+                    # Handle tool calls
+                    for tool_call in message.tool_calls:
+                        if tool_call.function.name == "brave_search":
+                            # Execute the search
+                            from tools.vendor_lookup import search
+
+                            args = json.loads(tool_call.function.arguments)
+                            logger.info(f"Executing search with query: {args['query']}")
+                            search_results = search(args["query"])
+
+                            # Format results for the LLM
+                            tool_response = [
+                                {
+                                    "title": result.title,
+                                    "description": result.description,
+                                    "url": result.url if result.url else "",
+                                }
+                                for result in search_results
+                            ]
+
+                            logger.info(f"Search results: {tool_response}")
+
+                            # Send results back to LLM
+                            messages.append(
+                                {
+                                    "role": "tool",
+                                    "tool_call_id": tool_call.id,
+                                    "name": tool_call.function.name,
+                                    "content": json.dumps(tool_response),
+                                }
+                            )
+
+                # Process final LLM response
+                try:
+                    # Try to parse as JSON first
+                    try:
+                        result = json.loads(message.content)
+                    except json.JSONDecodeError:
+                        # If not JSON, try to extract structured info from text
+                        logger.warning(
+                            f"Response not in JSON format, attempting to parse text: {message.content}"
+                        )
+                        # Create a basic result with what we can extract
+                        result = {
+                            "vendor_name": transaction.description.split()[
+                                0
+                            ],  # Just use first word as fallback
+                            "vendor_description": "Could not determine",
+                            "transaction_type": "unknown",
+                            "reasoning": "Failed to parse LLM response",
+                        }
+
+                    logger.info(f"Parsed result: {result}")
+
+                    # Create or update normalized data
+                    normalized_data, created = (
+                        NormalizedVendorData.objects.get_or_create(
+                            transaction=transaction
+                        )
+                    )
+
+                    # Update fields - handle both old and new field names
+                    normalized_data.normalized_name = result.get(
+                        "vendor_name"
+                    ) or result.get("payee", "")
+                    normalized_data.normalized_description = result.get(
+                        "vendor_description"
+                    ) or result.get("normalized_description", "")
+                    normalized_data.transaction_type = result.get(
+                        "transaction_type", ""
+                    )
+                    normalized_data.justification = f"{agent.name} - {result.get('reasoning') or result.get('original_context', '')}"
+                    normalized_data.save()
+
+                    success_count += 1
+                    logger.info(f"Successfully processed transaction {transaction.id}")
+
+                except Exception as e:
+                    logger.error(f"Error processing result: {str(e)}")
+                    error_count += 1
+                    continue
+
             except Exception as e:
-                logger.error(
-                    f"Error processing transaction {transaction.id} with agent {agent.name}: {e}"
-                )
-                messages.error(
-                    request, f"Error processing transaction {transaction.id}: {e}"
-                )
+                logger.error(f"Error processing transaction {transaction.id}: {e}")
+                error_count += 1
+
+        from django.contrib import messages
+
         messages.success(
             request,
-            f"Agent '{agent.name}' completed processing for selected transactions.",
+            f"Agent '{agent.name}' completed processing {success_count} transactions. {error_count} errors occurred.",
         )
 
-    agent_action.__name__ = f"agent_{agent.id}_action"
-    agent_action.short_description = f"Process with {agent.name}"
     return agent_action
