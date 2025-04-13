@@ -43,6 +43,30 @@
 - Google OAuth2
 - Service Account authentication
 
+### Database & Docker
+- **PostgreSQL**: Primary database running in Docker
+- **Docker**: Container management for database and services
+- **Docker Compose**: Used for service orchestration
+
+### Docker Configuration
+- Docker container name: postgres
+- Database: pdf_extractor
+- User: greg
+- Location: /Users/greg/iCloud Drive (Archive)/repos/PDF-extractor/docker-compose.yml
+
+### Environment Files
+- Main .env location: /Users/greg/iCloud Drive (Archive)/repos/PDF-extractor/.env
+- Contains database credentials and other configuration
+
+### Database Backup
+```bash
+# Backup command (from host)
+docker exec postgres pg_dump -U greg pdf_extractor > backup_$(date +%Y%m%d_%H%M%S).sql
+
+# Restore command (from host)
+docker exec -i postgres psql -U greg pdf_extractor < backup_file.sql
+```
+
 ## Development Setup
 
 ### Environment

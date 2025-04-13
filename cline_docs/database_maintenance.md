@@ -1,5 +1,47 @@
 # Database Maintenance and Backup Strategy
 
+## CRITICAL SAFETY RULES - READ FIRST
+1. NEVER EVER attempt to recreate, drop, or reinitialize a working database
+   - A working database contains live production data
+   - Even if experiencing connection issues, assume the data is valid
+   - Connection issues should be solved without risking data loss
+   - When in doubt, ask the user for guidance
+
+2. NEVER make destructive changes out of frustration
+   - If something isn't working, stop and ask for help
+   - Connection issues are preferable to data loss
+   - Always assume the database contains critical data
+   - There is no "just recreate it" in production
+
+3. PROPER ESCALATION PROCESS
+   - If unable to connect, verify credentials first
+   - Document current state and errors
+   - Ask user for correct credentials
+   - Never attempt "quick fixes" that risk data
+
+## Database Configuration
+- Database Name: mydatabase (in Docker)
+- Container Name: postgres_container
+- Host: localhost (via Docker container)
+- Port: 5432
+- Credentials: Stored in .env file at project root
+- Django Settings DB Name: pdf_extractor
+
+## Connection Examples
+```bash
+# Load credentials from .env (never hardcode)
+source .env
+
+# Connect to database
+docker exec -it postgres_container psql -U $POSTGRES_USER -d mydatabase
+
+# Backup database
+docker exec postgres_container pg_dump -U $POSTGRES_USER mydatabase > backup_$(date +%Y%m%d_%H%M%S).sql
+
+# Restore database (requires explicit approval)
+# docker exec -i postgres_container psql -U $POSTGRES_USER mydatabase < backup_file.sql
+```
+
 ## Critical Rules
 1. NEVER drop or modify production tables without:
    - Full backup
