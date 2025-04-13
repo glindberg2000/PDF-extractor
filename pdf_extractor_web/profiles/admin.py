@@ -1,12 +1,14 @@
 from django.contrib import admin
 from .models import (
     BusinessProfile,
-    ClientExpenseCategory,
     Transaction,
     LLMConfig,
     Agent,
     Tool,
     NormalizedVendorData,
+    IRSWorksheet,
+    IRSExpenseCategory,
+    BusinessExpenseCategory,
 )
 from django.utils.translation import gettext_lazy as _
 from django.http import HttpResponseRedirect
@@ -27,13 +29,6 @@ load_dotenv()
 class BusinessProfileAdmin(admin.ModelAdmin):
     list_display = ("client_id", "business_type")
     search_fields = ("client_id", "business_description")
-
-
-@admin.register(ClientExpenseCategory)
-class ClientExpenseCategoryAdmin(admin.ModelAdmin):
-    list_display = ("category_name", "client", "category_type", "tax_year", "worksheet")
-    list_filter = ("category_type", "tax_year", "worksheet")
-    search_fields = ("category_name", "description")
 
 
 class ClientFilter(admin.SimpleListFilter):
@@ -250,3 +245,36 @@ class AgentAdmin(admin.ModelAdmin):
 class ToolAdmin(admin.ModelAdmin):
     list_display = ("name", "description", "module_path")
     search_fields = ("name", "description", "module_path")
+
+
+@admin.register(IRSWorksheet)
+class IRSWorksheetAdmin(admin.ModelAdmin):
+    list_display = ("name", "description", "is_active", "updated_at")
+    list_filter = ("is_active",)
+    search_fields = ("name", "description")
+    ordering = ("name",)
+
+
+@admin.register(IRSExpenseCategory)
+class IRSExpenseCategoryAdmin(admin.ModelAdmin):
+    list_display = ("name", "worksheet", "line_number", "is_active", "updated_at")
+    list_filter = ("worksheet", "is_active")
+    search_fields = ("name", "description", "line_number")
+    ordering = ("worksheet", "line_number")
+
+
+@admin.register(BusinessExpenseCategory)
+class BusinessExpenseCategoryAdmin(admin.ModelAdmin):
+    list_display = (
+        "category_name",
+        "business",
+        "worksheet",
+        "parent_category",
+        "tax_year",
+        "is_active",
+        "updated_at",
+    )
+    list_filter = ("worksheet", "business", "tax_year", "is_active")
+    search_fields = ("category_name", "description", "business__client_id")
+    ordering = ("business", "worksheet", "category_name")
+    raw_id_fields = ("business", "worksheet", "parent_category")
