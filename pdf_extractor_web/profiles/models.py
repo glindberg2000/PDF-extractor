@@ -1,8 +1,5 @@
 from django.db import models
-import types
-from jsonschema import validate, ValidationError
-import logging
-from django.utils import timezone
+from django.db.models import JSONField
 
 # Create your models here.
 
@@ -12,18 +9,27 @@ class BusinessProfile(models.Model):
     business_type = models.TextField(blank=True, null=True)
     business_description = models.TextField(blank=True, null=True)
     contact_info = models.TextField(blank=True, null=True)
-    common_business_expenses = models.TextField(blank=True, null=True)
-    custom_6A_expense_categories = models.TextField(blank=True, null=True)
+
+    # JSON fields for structured data
+    common_expenses = models.JSONField(default=dict)
+    custom_categories = models.JSONField(default=dict)
+    industry_keywords = models.JSONField(default=dict)
+    category_patterns = models.JSONField(default=dict)
+    profile_data = models.JSONField(default=dict)
+
+    # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return self.client_id
+        return f"Business Profile for client {self.client_id}"
 
 
 class ClientExpenseCategory(models.Model):
     client = models.ForeignKey(
-        BusinessProfile, on_delete=models.CASCADE, related_name="expense_categories"
+        BusinessProfile,
+        on_delete=models.CASCADE,
+        related_name="client_expense_categories",
     )
     category_name = models.CharField(max_length=255)
     category_type = models.CharField(
@@ -60,6 +66,59 @@ class ClientExpenseCategory(models.Model):
         ]
 
 
+class TransactionClassification(models.Model):
+    """
+    Tracks classifications for transactions, allowing history and multiple classifications over time.
+    Links to Transaction model without modifying its structure.
+    """
+
+    transaction = models.ForeignKey(
+        "Transaction", on_delete=models.CASCADE, related_name="classifications"
+    )
+    classification_type = models.CharField(
+        max_length=50, help_text="Type of classification (e.g., 'business', 'personal')"
+    )
+    worksheet = models.CharField(
+        max_length=50,
+        help_text="Tax worksheet category (e.g., '6A', 'Auto', 'HomeOffice')",
+    )
+    confidence = models.CharField(
+        max_length=20, help_text="Confidence level of the classification"
+    )
+    reasoning = models.TextField(
+        help_text="Explanation for the classification decision"
+    )
+
+    # Audit fields
+    created_by = models.CharField(
+        max_length=100, help_text="Agent or user who created this classification"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    is_active = models.BooleanField(
+        default=True, help_text="Whether this is the current active classification"
+    )
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["transaction", "created_at"]),
+            models.Index(fields=["transaction", "is_active"]),
+            models.Index(fields=["classification_type"]),
+            models.Index(fields=["worksheet"]),
+        ]
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.transaction} - {self.classification_type} ({self.worksheet})"
+
+    def save(self, *args, **kwargs):
+        # If this is a new active classification, deactivate other classifications
+        if self.is_active and not self.pk:
+            TransactionClassification.objects.filter(
+                transaction=self.transaction, is_active=True
+            ).update(is_active=False)
+        super().save(*args, **kwargs)
+
+
 class Transaction(models.Model):
     client = models.ForeignKey(
         BusinessProfile, on_delete=models.CASCADE, related_name="transactions"
@@ -80,6 +139,16 @@ class Transaction(models.Model):
     account_number = models.CharField(max_length=50, blank=True, null=True)
     transaction_id = models.IntegerField(unique=True, null=True)
 
+    # Fields for LLM processing
+    normalized_description = models.TextField(blank=True, null=True)
+    payee = models.CharField(max_length=255, blank=True, null=True)
+    confidence = models.CharField(
+        max_length=50, blank=True, null=True
+    )  # high, medium, low
+    reasoning = models.TextField(blank=True, null=True)
+    business_context = models.TextField(blank=True, null=True)
+    questions = models.TextField(blank=True, null=True)
+
     class Meta:
         constraints = [
             models.UniqueConstraint(
@@ -89,6 +158,33 @@ class Transaction(models.Model):
 
     def __str__(self):
         return f"{self.client.client_id} - {self.transaction_date} - {self.amount}"
+
+    @property
+    def current_classification(self):
+        """Get the current active classification for this transaction."""
+        return self.classifications.filter(is_active=True).first()
+
+    @property
+    def classification_history(self):
+        """Get all classifications for this transaction in chronological order."""
+        return self.classifications.all()
+
+    def add_classification(
+        self, classification_type, worksheet, confidence, reasoning, created_by
+    ):
+        """
+        Add a new classification for this transaction.
+        Automatically deactivates previous classifications.
+        """
+        return TransactionClassification.objects.create(
+            transaction=self,
+            classification_type=classification_type,
+            worksheet=worksheet,
+            confidence=confidence,
+            reasoning=reasoning,
+            created_by=created_by,
+            is_active=True,
+        )
 
 
 class LLMConfig(models.Model):
@@ -101,57 +197,14 @@ class LLMConfig(models.Model):
 
 
 class Tool(models.Model):
-    name = models.CharField(max_length=100)
+    name = models.CharField(max_length=255, unique=True)
     description = models.TextField(blank=True, null=True)
-    module_path = models.CharField(max_length=255, blank=True, null=True)
-    code = models.TextField(blank=True, null=True)
-    schema = models.JSONField(blank=True, null=True)
-    is_active = models.BooleanField(default=True)
-    created_at = models.DateTimeField(null=True, blank=True)
-    updated_at = models.DateTimeField(null=True, blank=True)
+    module_path = models.CharField(max_length=255)  # Path to the tool module
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
         return self.name
-
-    def save(self, *args, **kwargs):
-        if not self.created_at:
-            self.created_at = timezone.now()
-        self.updated_at = timezone.now()
-        super().save(*args, **kwargs)
-
-    def get_module(self):
-        if self.module_path:
-            return __import__(self.module_path, fromlist=["search"])
-        elif self.code:
-            # Create a temporary module from the code
-            module = types.ModuleType(f"tool_{self.id}")
-            exec(self.code, module.__dict__)
-            return module
-        return None
-
-    def validate_schema(self, response):
-        if self.schema:
-            try:
-                validate(instance=response, schema=self.schema)
-                return True
-            except ValidationError as e:
-                logger.error(f"Schema validation failed for tool {self.name}: {e}")
-                return False
-        return True
-
-    def execute(self, *args, **kwargs):
-        module = self.get_module()
-        if not module:
-            raise ValueError(f"Tool {self.name} has no valid implementation")
-
-        if not hasattr(module, "search"):
-            raise ValueError(f"Tool {self.name} does not implement search function")
-
-        result = module.search(*args, **kwargs)
-        if not self.validate_schema(result):
-            raise ValueError(f"Tool {self.name} returned invalid response")
-
-        return result
 
 
 class Agent(models.Model):
@@ -171,24 +224,81 @@ class NormalizedVendorData(models.Model):
     transaction = models.OneToOneField(
         Transaction, on_delete=models.CASCADE, related_name="normalized_data"
     )
-    normalized_name = models.CharField(max_length=255, blank=True, null=True)
+    normalized_name = models.CharField(max_length=255)
     normalized_description = models.TextField(blank=True, null=True)
-    transaction_type = models.CharField(max_length=50, blank=True, null=True)
     justification = models.TextField(blank=True, null=True)
-    confidence = models.CharField(
-        max_length=10,
-        choices=[("high", "High"), ("medium", "Medium"), ("low", "Low")],
-        default="medium",
-    )
-    tools_used = models.JSONField(
-        default=dict, blank=True
-    )  # Track which tools were used
-    created_at = models.DateTimeField(
-        auto_now_add=True, null=True
-    )  # Allow null for existing rows
-    updated_at = models.DateTimeField(
-        auto_now=True, null=True
-    )  # Allow null for existing rows
+    confidence = models.DecimalField(max_digits=5, decimal_places=2)
 
     def __str__(self):
-        return f"Normalized data for {self.transaction.description}"
+        return self.normalized_name
+
+
+class IRSWorksheet(models.Model):
+    """Global IRS worksheet definitions"""
+
+    name = models.CharField(
+        max_length=50, unique=True
+    )  # e.g., "6A", "Auto", "HomeOffice"
+    description = models.TextField()
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.name
+
+
+class IRSExpenseCategory(models.Model):
+    """Standard IRS expense categories that appear on worksheets"""
+
+    worksheet = models.ForeignKey(
+        IRSWorksheet, on_delete=models.CASCADE, related_name="categories"
+    )
+    name = models.CharField(max_length=255)
+    description = models.TextField()
+    line_number = models.CharField(
+        max_length=50, help_text="Line number on the IRS form"
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ["worksheet", "name"]
+        ordering = ["worksheet", "line_number"]
+
+    def __str__(self):
+        return f"{self.worksheet.name} - {self.name} (Line {self.line_number})"
+
+
+class BusinessExpenseCategory(models.Model):
+    """Custom expense categories specific to a business"""
+
+    business = models.ForeignKey(
+        BusinessProfile,
+        on_delete=models.CASCADE,
+        related_name="business_expense_categories",
+    )
+    category_name = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    worksheet = models.ForeignKey(
+        IRSWorksheet, on_delete=models.CASCADE, related_name="business_categories"
+    )
+    parent_category = models.ForeignKey(
+        IRSExpenseCategory,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        help_text="The IRS category this maps to (e.g., 'Other Expenses' on 6A)",
+    )
+    is_active = models.BooleanField(default=True)
+    tax_year = models.IntegerField(help_text="Tax year this category applies to")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name_plural = "Business Expense Categories"
+        unique_together = ["business", "category_name"]
+
+    def __str__(self):
+        return f"{self.business.client_id} - {self.category_name}"
