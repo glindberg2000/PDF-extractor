@@ -18,20 +18,9 @@ from jsonschema import validate, ValidationError
 import requests
 import os
 from dotenv import load_dotenv
-import logging
-import types
-from .tool_discovery import discover_tools, register_tools, get_available_tools
-from django.contrib import admin
-import openai
-import jsonschema
-from tools.vendor_lookup import search
-import html
-import re
 
 # Load environment variables
 load_dotenv()
-
-logger = logging.getLogger("profiles")
 
 
 @admin.register(BusinessProfile)
@@ -61,16 +50,109 @@ class ClientFilter(admin.SimpleListFilter):
         return queryset
 
 
+def call_agent(agent, description):
+    """Generic function to call any agent"""
+    prompt = agent.prompt
+    llm_config = agent.llm
+
+    # Build the API call using the LLM configuration
+    url = llm_config.url
+    headers = {
+        "Authorization": f"Bearer {os.getenv('OPENAI_API_KEY')}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": llm_config.model,
+        "messages": [
+            {"role": "system", "content": prompt},
+            {"role": "user", "content": description},
+        ],
+        "max_tokens": 150,
+        "temperature": 0.7,
+    }
+
+    # Make the API call
+    response = requests.post(url, headers=headers, json=payload)
+    response.raise_for_status()
+    result = response.json()
+
+    # Extract the content from the response
+    content = result["choices"][0]["message"]["content"]
+    try:
+        # Parse the content as JSON
+        result = json.loads(content)
+        return result
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Response parsing failed: {e}")
+
+
+def process_transactions(modeladmin, request, queryset):
+    if "agent" not in request.POST:
+        # Show the agent selection form
+        agents = Agent.objects.all().order_by("name")  # Order agents by name
+        if not agents:
+            messages.error(
+                request, "No agents available. Please create an agent first."
+            )
+            return HttpResponseRedirect(request.get_full_path())
+
+        return render(
+            request,
+            "admin/process_transactions.html",
+            context={
+                "transactions": queryset,
+                "agents": agents,
+                "title": "Select Agent to Process Transactions",
+                "opts": modeladmin.model._meta,
+            },
+        )
+
+    # Process the transactions with the selected agent
+    agent_id = request.POST["agent"]
+    try:
+        agent = Agent.objects.get(id=agent_id)
+        for transaction in queryset:
+            response = call_agent(agent, transaction.description)
+
+            # Update transaction with the response
+            update_fields = {
+                "normalized_description": response.get("normalized_description"),
+                "payee": response.get("payee"),
+                "confidence": response.get("confidence", "low"),
+                "reasoning": response.get("reasoning"),
+                "business_context": response.get("business_context"),
+                "questions": response.get("questions"),
+            }
+
+            # Remove None values
+            update_fields = {k: v for k, v in update_fields.items() if v is not None}
+
+            # Update the transaction
+            Transaction.objects.filter(id=transaction.id).update(**update_fields)
+
+        messages.success(
+            request,
+            f"Successfully processed {queryset.count()} transactions with {agent.name}",
+        )
+    except Agent.DoesNotExist:
+        messages.error(request, "Selected agent not found")
+    except Exception as e:
+        messages.error(request, f"Error processing transactions: {str(e)}")
+
+    return HttpResponseRedirect(request.get_full_path())
+
+
 @admin.register(Transaction)
 class TransactionAdmin(admin.ModelAdmin):
     list_display = (
         "transaction_date",
         "amount",
         "description",
-        "normalized_data__normalized_name",
-        "normalized_data__normalized_description",
-        "normalized_data__transaction_type",
-        "agent_used",
+        "payee",
+        "confidence",
+        "normalized_description",
+        "transaction_type",
+        "category",
     )
     list_filter = (
         ClientFilter,
@@ -78,6 +160,7 @@ class TransactionAdmin(admin.ModelAdmin):
         "category",
         "source",
         "transaction_type",
+        "confidence",
     )
     search_fields = (
         "description",
@@ -85,79 +168,69 @@ class TransactionAdmin(admin.ModelAdmin):
         "source",
         "transaction_type",
         "account_number",
-        "normalized_data__normalized_name",
-        "normalized_data__normalized_description",
+        "payee",
+        "normalized_description",
     )
 
     def get_actions(self, request):
         actions = super().get_actions(request)
-        # Remove default delete action if it exists
-        if "delete_selected" in actions:
-            del actions["delete_selected"]
 
-        # Add dynamic actions for each agent
+        # Add an action for each agent
         for agent in Agent.objects.all():
-            action = create_agent_action(agent)
-            action_name = f"process_with_{agent.name.lower().replace(' ', '_')}"
-            action.__name__ = action_name
-            action.short_description = f"Process with {agent.name}"
-            actions[action_name] = (action, action_name, action.short_description)
+            action_name = f'process_with_{agent.name.lower().replace(" ", "_")}'
+            action_function = self._create_agent_action(agent)
+            action_function.short_description = f"Process with {agent.name}"
+            actions[action_name] = (
+                action_function,
+                action_name,
+                action_function.short_description,
+            )
 
         return actions
 
-    def normalized_data__normalized_name(self, obj):
-        return (
-            obj.normalized_data.normalized_name
-            if hasattr(obj, "normalized_data")
-            else None
-        )
+    def _create_agent_action(self, agent):
+        def process_with_agent(modeladmin, request, queryset):
+            try:
+                for transaction in queryset:
+                    response = call_agent(agent, transaction.description)
 
-    normalized_data__normalized_name.short_description = "Vendor"
+                    # Update transaction with the response
+                    update_fields = {
+                        "normalized_description": response.get(
+                            "normalized_description"
+                        ),
+                        "payee": response.get("payee"),
+                        "confidence": response.get("confidence", "low"),
+                        "reasoning": response.get("reasoning"),
+                        "business_context": response.get("business_context"),
+                        "questions": response.get("questions"),
+                    }
 
-    def normalized_data__normalized_description(self, obj):
-        return (
-            obj.normalized_data.normalized_description
-            if hasattr(obj, "normalized_data")
-            else None
-        )
+                    # Remove None values
+                    update_fields = {
+                        k: v for k, v in update_fields.items() if v is not None
+                    }
 
-    normalized_data__normalized_description.short_description = "Business Type"
+                    # Update the transaction
+                    Transaction.objects.filter(id=transaction.id).update(
+                        **update_fields
+                    )
 
-    def normalized_data__transaction_type(self, obj):
-        return (
-            obj.normalized_data.transaction_type
-            if hasattr(obj, "normalized_data")
-            else None
-        )
+                messages.success(
+                    request,
+                    f"Successfully processed {queryset.count()} transactions with {agent.name}",
+                )
+            except Exception as e:
+                messages.error(
+                    request,
+                    f"Error processing transactions with {agent.name}: {str(e)}",
+                )
 
-    normalized_data__transaction_type.short_description = "Transaction Type"
-
-    def agent_used(self, obj):
-        if hasattr(obj, "normalized_data") and obj.normalized_data.justification:
-            agent_name = obj.normalized_data.justification.split(" - ")[0]
-            tools_used = obj.normalized_data.tools_used.get("tools", [])
-            if tools_used:
-                return f"{agent_name} (with {', '.join(tools_used)})"
-            return agent_name
-        return None
-
-    agent_used.short_description = "Agent Used"
+        return process_with_agent
 
     def get_urls(self):
         urls = super().get_urls()
-        custom_urls = [
-            path(
-                "apply-agent/",
-                self.admin_site.admin_view(self.apply_agent_view),
-                name="apply-agent",
-            ),
-        ]
-        return custom_urls + urls
-
-    def apply_agent_view(self, request):
-        # Placeholder for the view logic to select an agent and apply it
-        messages.success(request, "Agent applied to selected transactions.")
-        return render(request, "admin/apply_agent.html")
+        return urls
 
 
 @admin.register(LLMConfig)
@@ -175,302 +248,5 @@ class AgentAdmin(admin.ModelAdmin):
 
 @admin.register(Tool)
 class ToolAdmin(admin.ModelAdmin):
-    list_display = ("name", "description", "is_active", "created_at", "updated_at")
-    search_fields = ("name", "description")
-    list_filter = ("is_active",)
-    actions = ["activate_tools", "deactivate_tools"]
-    fieldsets = (
-        (None, {"fields": ("name", "description", "is_active")}),
-        (
-            "Implementation",
-            {
-                "fields": ("module_path", "code"),
-                "description": "Either provide a module path or paste the tool code directly. If both are provided, module_path takes precedence.",
-            },
-        ),
-        (
-            "Schema",
-            {
-                "fields": ("schema",),
-                "description": "Optional JSON schema for validating tool responses",
-            },
-        ),
-    )
-
-    def get_urls(self):
-        from django.urls import path
-
-        urls = super().get_urls()
-        custom_urls = [
-            path(
-                "discover/",
-                self.admin_site.admin_view(self.discover_tools_view),
-                name="discover_tools",
-            ),
-        ]
-        return custom_urls + urls
-
-    def discover_tools_view(self, request):
-        """View for discovering tools."""
-        logger.info("Discovering tools...")
-        try:
-            # Log existing tools before discovery
-            existing_tools = Tool.objects.all()
-            logger.info(
-                f"Existing tools before discovery: {list(existing_tools.values_list('name', flat=True))}"
-            )
-
-            # Discover and register tools
-            register_tools()
-
-            # Log tools after discovery
-            all_tools = Tool.objects.all()
-            logger.info(
-                f"Tools after discovery: {list(all_tools.values_list('name', flat=True))}"
-            )
-
-            if all_tools.exists():
-                self.message_user(
-                    request, "Tools discovered and registered successfully."
-                )
-            else:
-                self.message_user(
-                    request,
-                    "No tools were discovered. Please check the tools directory.",
-                    level=messages.WARNING,
-                )
-        except Exception as e:
-            logger.error(f"Error discovering tools: {e}")
-            self.message_user(
-                request, f"Error discovering tools: {str(e)}", level=messages.ERROR
-            )
-
-        return HttpResponseRedirect(request.META.get("HTTP_REFERER", "/"))
-
-    def activate_tools(self, request, queryset):
-        """Activate selected tools."""
-        logger.info(f"Activating {queryset.count()} tools...")
-        queryset.update(is_active=True)
-        self.message_user(request, f"Activated {queryset.count()} tools.")
-
-    activate_tools.short_description = "Activate selected tools"
-    activate_tools.allowed_permissions = ("change",)
-
-    def deactivate_tools(self, request, queryset):
-        """Deactivate selected tools."""
-        logger.info(f"Deactivating {queryset.count()} tools...")
-        queryset.update(is_active=False)
-        self.message_user(request, f"Deactivated {queryset.count()} tools.")
-
-    deactivate_tools.short_description = "Deactivate selected tools"
-    deactivate_tools.allowed_permissions = ("change",)
-
-    def get_actions(self, request):
-        actions = super().get_actions(request)
-        logger.info(f"Available actions: {list(actions.keys())}")
-        logger.info(f"User permissions: {request.user.get_all_permissions()}")
-
-        # Add our custom actions
-        actions["activate_tools"] = (
-            self.activate_tools,
-            "activate_tools",
-            self.activate_tools.short_description,
-        )
-        actions["deactivate_tools"] = (
-            self.deactivate_tools,
-            "deactivate_tools",
-            self.deactivate_tools.short_description,
-        )
-
-        return actions
-
-    def changelist_view(self, request, extra_context=None):
-        extra_context = extra_context or {}
-        extra_context["show_discover_button"] = True
-        return super().changelist_view(request, extra_context=extra_context)
-
-    def save_model(self, request, obj, form, change):
-        # Validate that either module_path or code is provided
-        if not obj.module_path and not obj.code:
-            raise ValidationError("Either module_path or code must be provided")
-
-        # If code is provided, validate it can be executed
-        if obj.code:
-            try:
-                # Test if the code can be executed
-                test_module = types.ModuleType("test")
-                exec(obj.code, test_module.__dict__)
-                if not hasattr(test_module, "search"):
-                    raise ValidationError(
-                        "Tool code must implement a 'search' function"
-                    )
-            except Exception as e:
-                raise ValidationError(f"Invalid tool code: {str(e)}")
-
-        # If schema is provided, validate it's valid JSON schema
-        if obj.schema:
-            try:
-                validate(instance={}, schema=obj.schema)
-            except ValidationError as e:
-                raise ValidationError(f"Invalid schema: {str(e)}")
-
-        super().save_model(request, obj, form, change)
-
-    def get_readonly_fields(self, request, obj=None):
-        if obj:  # Editing an existing object
-            return ("created_at", "updated_at")
-        return ()
-
-
-# Process transactions with an agent
-def process_with_agent(agent, request, queryset):
-    """
-    Process transactions using the specified agent.
-    The agent's prompt and tools determine how the transactions are processed.
-    """
-    try:
-        # Verify agent has access to required tools
-        if not agent.tools.filter(name="brave_search").exists():
-            messages.error(
-                request,
-                f"Agent '{agent.name}' needs access to the brave_search tool. Please add it through the admin interface.",
-            )
-            return
-    except Exception as e:
-        messages.error(request, f"Error checking agent tools: {str(e)}")
-        return
-
-    success_count = 0
-    error_count = 0
-
-    for transaction in queryset:
-        try:
-            logger.info(
-                f"Processing transaction {transaction.id} with agent {agent.name}"
-            )
-            logger.info(
-                f"Agent {agent.name} has access to tools: {[tool.name for tool in agent.tools.all()]}"
-            )
-
-            # Make a single LLM call with structured output and tool access
-            client = openai.OpenAI()
-            conversation = [
-                {"role": "system", "content": agent.prompt},
-                {"role": "user", "content": transaction.description},
-            ]
-
-            tools_used = set()  # Track which tools were used
-
-            while True:
-                response = client.chat.completions.create(
-                    model=agent.llm.model,
-                    messages=conversation,
-                    tools=[
-                        {
-                            "type": "function",
-                            "function": {
-                                "name": "brave_search",
-                                "description": "Search for information about a vendor using Brave Search",
-                                "parameters": {
-                                    "type": "object",
-                                    "properties": {
-                                        "query": {
-                                            "type": "string",
-                                            "description": "The search query to look up vendor information",
-                                        }
-                                    },
-                                    "required": ["query"],
-                                },
-                            },
-                        }
-                    ],
-                    tool_choice="auto",
-                )
-
-                message = response.choices[0].message
-                logger.info(f"Raw LLM response content: {message.content}")
-
-                # Add assistant's message to conversation
-                conversation.append(
-                    {
-                        "role": "assistant",
-                        "content": message.content,
-                        "tool_calls": message.tool_calls,
-                    }
-                )
-
-                # If no tool calls, we're done
-                if not message.tool_calls:
-                    break
-
-                # Handle tool calls
-                for tool_call in message.tool_calls:
-                    if tool_call.function.name == "brave_search":
-                        tools_used.add("brave_search")
-                        # Execute the search
-                        args = json.loads(tool_call.function.arguments)
-                        logger.info(f"Executing search with query: {args['query']}")
-                        search_results = search(args["query"])
-
-                        # Format results for the LLM
-                        tool_response = [
-                            {
-                                "title": result.title,
-                                "description": result.description,
-                                "url": result.url if result.url else "",
-                            }
-                            for result in search_results
-                        ]
-
-                        logger.info(f"Search results: {tool_response}")
-
-                        # Send results back to LLM
-                        conversation.append(
-                            {
-                                "role": "tool",
-                                "tool_call_id": tool_call.id,
-                                "name": tool_call.function.name,
-                                "content": json.dumps(tool_response),
-                            }
-                        )
-
-            # Parse the final response
-            try:
-                result = json.loads(message.content)
-            except json.JSONDecodeError:
-                logger.error(f"Invalid JSON response: {message.content}")
-                error_count += 1
-                continue
-
-            # Create or update normalized data
-            normalized_data, created = NormalizedVendorData.objects.get_or_create(
-                transaction=transaction
-            )
-
-            # Update fields
-            normalized_data.normalized_name = result["payee"]
-            normalized_data.normalized_description = result["normalized_description"]
-            normalized_data.transaction_type = result["transaction_type"]
-            normalized_data.justification = f"{agent.name} - {result['reasoning']}"
-            normalized_data.tools_used = {"tools": list(tools_used)}  # Store tools used
-            normalized_data.save()
-
-            success_count += 1
-            logger.info(f"Successfully processed transaction {transaction.id}")
-
-        except Exception as e:
-            logger.error(f"Error processing transaction {transaction.id}: {str(e)}")
-            error_count += 1
-
-    messages.success(
-        request,
-        f"Agent '{agent.name}' completed processing {success_count} transactions. {error_count} errors occurred.",
-    )
-
-
-# Create a dynamic action for each agent
-def create_agent_action(agent):
-    def agent_action(modeladmin, request, queryset):
-        process_with_agent(agent, request, queryset)
-
-    return agent_action
+    list_display = ("name", "description", "module_path")
+    search_fields = ("name", "description", "module_path")
