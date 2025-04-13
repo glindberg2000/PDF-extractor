@@ -81,11 +81,11 @@ WSGI_APPLICATION = "core.wsgi.application"
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
-        "NAME": os.getenv("POSTGRES_DB", "pdf_extractor"),
-        "USER": os.getenv("POSTGRES_USER", "postgres"),
-        "PASSWORD": os.getenv("POSTGRES_PASSWORD", ""),
-        "HOST": os.getenv("POSTGRES_HOST", "localhost"),
-        "PORT": os.getenv("POSTGRES_PORT", "5432"),
+        "NAME": os.getenv("POSTGRES_DB", "mydatabase"),
+        "USER": os.getenv("POSTGRES_USER", "newuser"),
+        "PASSWORD": os.getenv("POSTGRES_PASSWORD", "newpassword"),
+        "HOST": "localhost",
+        "PORT": "5432",
     }
 }
 
@@ -131,45 +131,22 @@ STATIC_URL = "static/"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-# Logging Configuration
+# Logging configuration
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
-    "formatters": {
-        "verbose": {
-            "format": "{levelname} {asctime} {module} {process:d} {thread:d} {message}",
-            "style": "{",
-        },
-        "simple": {
-            "format": "{levelname} {message}",
-            "style": "{",
-        },
-    },
     "handlers": {
-        "console": {
-            "class": "logging.StreamHandler",
-            "formatter": "verbose",
-        },
         "file": {
+            "level": "DEBUG",
             "class": "logging.FileHandler",
-            "filename": "django.log",
-            "formatter": "verbose",
+            "filename": BASE_DIR / "django_debug.log",
         },
-    },
-    "root": {
-        "handlers": ["console", "file"],
-        "level": "INFO",
     },
     "loggers": {
         "django": {
-            "handlers": ["console", "file"],
-            "level": "INFO",
-            "propagate": False,
-        },
-        "profiles": {  # Your app's logger
-            "handlers": ["console", "file"],
+            "handlers": ["file"],
             "level": "DEBUG",
-            "propagate": False,
+            "propagate": True,
         },
     },
 }
