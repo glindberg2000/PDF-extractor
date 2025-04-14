@@ -81,9 +81,9 @@ WSGI_APPLICATION = "core.wsgi.application"
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
-        "NAME": os.getenv("POSTGRES_DB", "mydatabase"),
-        "USER": os.getenv("POSTGRES_USER", "newuser"),
-        "PASSWORD": os.getenv("POSTGRES_PASSWORD", "newpassword"),
+        "NAME": "pdf_extractor",
+        "USER": "newuser",
+        "PASSWORD": "newpassword",
         "HOST": "localhost",
         "PORT": "5432",
     }
