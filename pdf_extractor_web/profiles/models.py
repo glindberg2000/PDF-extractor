@@ -15,7 +15,7 @@ class BusinessProfile(models.Model):
     custom_categories = models.JSONField(default=dict)
     industry_keywords = models.JSONField(default=dict)
     category_patterns = models.JSONField(default=dict)
-    profile_data = models.JSONField(default=dict)
+    additional_info = models.JSONField(default=dict)
 
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
@@ -302,3 +302,28 @@ class BusinessExpenseCategory(models.Model):
 
     def __str__(self):
         return f"{self.business.client_id} - {self.category_name}"
+
+
+class ClassificationOverride(models.Model):
+    """Model for manual classification overrides by bookkeepers."""
+
+    transaction = models.ForeignKey(
+        Transaction, on_delete=models.CASCADE, related_name="classification_overrides"
+    )
+    original_classification = models.ForeignKey(
+        TransactionClassification, on_delete=models.CASCADE, related_name="overrides"
+    )
+    new_classification_type = models.CharField(max_length=50)
+    new_worksheet = models.CharField(max_length=50)
+    notes = models.TextField(blank=True)
+    created_by = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name = "Classification Override"
+        verbose_name_plural = "Classification Overrides"
+
+    def __str__(self):
+        return f"Override for {self.transaction} by {self.created_by}"
