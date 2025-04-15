@@ -149,6 +149,24 @@ class Transaction(models.Model):
     business_context = models.TextField(blank=True, null=True)
     questions = models.TextField(blank=True, null=True)
 
+    # New fields for tracking processing methods
+    payee_extraction_method = models.CharField(
+        max_length=20,
+        choices=[
+            ("AI", "AI Only"),
+            ("AI+Search", "AI with Search"),
+            ("Human", "Human Override"),
+        ],
+        default="AI",
+        help_text="Method used to extract the payee information",
+    )
+    classification_method = models.CharField(
+        max_length=20,
+        choices=[("AI", "AI Classification"), ("Human", "Human Override")],
+        default="AI",
+        help_text="Method used to classify the transaction",
+    )
+
     class Meta:
         constraints = [
             models.UniqueConstraint(
