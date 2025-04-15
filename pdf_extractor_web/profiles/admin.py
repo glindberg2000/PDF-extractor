@@ -20,9 +20,27 @@ from jsonschema import validate, ValidationError
 import requests
 import os
 from dotenv import load_dotenv
+import logging
+import traceback
+from openai import OpenAI
+import sys
+
+# Add the root directory to the Python path
+sys.path.append(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+)
 
 # Load environment variables
 load_dotenv()
+
+# Configure logging
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+handler = logging.StreamHandler()
+handler.setFormatter(
+    logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+)
+logger.addHandler(handler)
 
 
 @admin.register(BusinessProfile)
@@ -47,38 +65,114 @@ class ClientFilter(admin.SimpleListFilter):
 
 def call_agent(agent, description):
     """Generic function to call any agent"""
-    prompt = agent.prompt
-    llm_config = agent.llm
+    # Get the agent's configuration
+    llm = agent.llm
+    prompt = agent.prompt + "\n\nIMPORTANT: Your response must be a valid JSON object."
+    tool_definitions = []
 
-    # Build the API call using the LLM configuration
-    url = llm_config.url
-    headers = {
-        "Authorization": f"Bearer {os.getenv('OPENAI_API_KEY')}",
-        "Content-Type": "application/json",
-    }
+    # Prepare tools for the API call with proper schema
+    for tool in agent.tools.all():
+        tool_def = {
+            "name": tool.name,
+            "type": "function",
+            "function": {
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "The search query to look up",
+                        }
+                    },
+                    "required": ["query"],
+                },
+            },
+        }
+        tool_definitions.append(tool_def)
+
+    # Initialize OpenAI client
+    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+    # Prepare the API request payload
     payload = {
-        "model": llm_config.model,
+        "model": llm.model,
         "messages": [
             {"role": "system", "content": prompt},
             {"role": "user", "content": description},
         ],
-        "max_tokens": 150,
-        "temperature": 0.7,
+        "response_format": {"type": "json_object"},
+        "tools": tool_definitions if tool_definitions else None,
     }
 
-    # Make the API call
-    response = requests.post(url, headers=headers, json=payload)
-    response.raise_for_status()
-    result = response.json()
+    # Log the complete API request
+    logger.info("\n=== API Request ===")
+    logger.info(f"Model: {llm.model}")
+    logger.info(f"Prompt: {prompt}")
+    logger.info(f"Description: {description}")
+    if tool_definitions:
+        logger.info(f"Tools: {json.dumps(tool_definitions, indent=2)}")
 
-    # Extract the content from the response
-    content = result["choices"][0]["message"]["content"]
     try:
-        # Parse the content as JSON
+        # Make the API call
+        response = client.chat.completions.create(**payload)
+        logger.info("\n=== API Response ===")
+        logger.info(f"Response: {response}")
+
+        # Check if we got a tool call
+        if response.choices[0].message.tool_calls:
+            logger.info("Tool call detected, executing...")
+            tool_call = response.choices[0].message.tool_calls[0]
+            tool_name = tool_call.function.name
+            tool_args = json.loads(tool_call.function.arguments)
+
+            logger.info(f"Tool call: {tool_name} with args: {tool_args}")
+
+            # Execute the tool
+            if tool_name == "brave_search":
+                from tools.vendor_lookup.brave_search import brave_search
+
+                search_results = brave_search(tool_args["query"])
+                logger.info(f"Search results: {json.dumps(search_results, indent=2)}")
+
+                # Feed results back to the model
+                payload["messages"].extend(
+                    [
+                        {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [tool_call],
+                        },
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "name": tool_name,
+                            "content": json.dumps(search_results),
+                        },
+                    ]
+                )
+
+                # Get final response
+                response = client.chat.completions.create(**payload)
+                logger.info(f"Final response after tool: {response}")
+
+        # Get the final content
+        if not response.choices or not response.choices[0].message.content:
+            logger.error("No content in final API response")
+            raise ValueError("No content in final API response")
+
+        content = response.choices[0].message.content
+        logger.info(f"Final content: {content}")
+
         result = json.loads(content)
+        logger.info(f"Parsed result: {json.dumps(result, indent=2)}")
         return result
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Response parsing failed: {e}")
+
+    except Exception as e:
+        logger.error(f"Error in call_agent: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise
 
 
 def process_transactions(modeladmin, request, queryset):
@@ -192,13 +286,16 @@ class TransactionAdmin(admin.ModelAdmin):
                     # Update transaction with the response
                     update_fields = {
                         "normalized_description": response.get(
-                            "normalized_description"
+                            "Normalized Description"
                         ),
-                        "payee": response.get("payee"),
-                        "confidence": response.get("confidence", "low"),
-                        "reasoning": response.get("reasoning"),
-                        "business_context": response.get("business_context"),
-                        "questions": response.get("questions"),
+                        "payee": response.get("Payee"),
+                        "confidence": response.get("Confidence Score", "low"),
+                        "reasoning": response.get("Original Context"),
+                        "transaction_type": response.get("Transaction Type"),
+                        "questions": response.get("Questions"),
+                        "payee_extraction_method": (
+                            "AI+Search" if response.get("needs_search", False) else "AI"
+                        ),
                     }
 
                     # Remove None values
