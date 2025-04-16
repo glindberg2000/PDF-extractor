@@ -217,13 +217,26 @@ class TransactionClassifier:
                 f"Industry Insights: {self.business_profile['industry_insights']}"
             )
 
-        # Add any custom categories (consider if these are relevant for context)
-        # if self.business_profile.get("custom_categories"):
-        #     categories = self.business_profile["custom_categories"]
-        #     if isinstance(categories, list):
-        #         context_parts.append(f"Custom Categories: {', '.join(categories)}")
+        # Add custom categories with their mappings
+        if self.business_profile.get("business_expense_categories"):
+            context_parts.append("\nCustom Business Categories:")
+            for category in self.business_profile["business_expense_categories"]:
+                if category.get("is_active", True):  # Only include active categories
+                    mapping = (
+                        f" (maps to: {category.get('parent_category', 'Other expenses')})"
+                        if category.get("parent_category")
+                        else ""
+                    )
+                    context_parts.append(f"- {category['category_name']}{mapping}")
 
-        # TODO: Add custom business rules from profile if available and relevant
+        # Add any custom business rules from profile
+        if self.business_profile.get("category_patterns"):
+            context_parts.append("\nCategory Patterns:")
+            for category, patterns in self.business_profile[
+                "category_patterns"
+            ].items():
+                if patterns:
+                    context_parts.append(f"- {category}: {', '.join(patterns)}")
 
         return "\n".join(context_parts)
 
@@ -1613,26 +1626,56 @@ class TransactionClassifier:
         if self.business_context:
             prompt += f"\nBusiness Context:\n{self.business_context}\n"
 
-        # Add available categories with their IDs
-        prompt += "\nAvailable Categories (ID: Category Name):\n"
-        # Sort by ID for consistent ordering
-        sorted_categories = sorted(CATEGORY_MAPPING.items(), key=lambda x: x[1])
-        for category_name, category_id in sorted_categories:
-            prompt += f"{category_id}: {category_name}\n"
+        # Add IRS categories with clear headers and formatting
+        prompt += "\n## IRS TAX CATEGORIES\n"
+        prompt += "Each category belongs to a specific worksheet:\n"
+        prompt += "---------------------------------\n"
 
-        # Clear instructions on response format
+        # Add T2125 categories
+        prompt += "\nT2125 - Statement of Business or Professional Activities:\n"
+        for category in TAX_WORKSHEET_CATEGORIES["T2125"]:
+            prompt += f"- {category}\n"
+
+        # Add T776 categories
+        prompt += "\nT776 - Statement of Real Estate Rentals:\n"
+        for category in TAX_WORKSHEET_CATEGORIES["T776"]:
+            prompt += f"- {category}\n"
+
+        # Add 6A categories
+        prompt += "\nSchedule 6A - Main Business Expense Categories:\n"
+        for category in TAX_WORKSHEET_CATEGORIES["6A"]:
+            prompt += f"- {category}\n"
+
+        # Specify allowed worksheet values
+        allowed_worksheets = sorted(list(self.ALLOWED_WORKSHEETS))
+        prompt += f"\n## WORKSHEET VALUES\n"
+        prompt += f"You MUST ONLY use one of these exact worksheet values:\n"
+        prompt += f"{', '.join(allowed_worksheets)}\n\n"
+        prompt += f"RULES:\n"
+        prompt += f"- Personal expenses MUST use 'Personal' as the worksheet\n"
+        prompt += f"- Business expenses must NEVER use 'Personal' as the worksheet\n"
+        prompt += f"- For business expenses, use '6A' for general business expenses\n"
+        prompt += f"- Use 'Vehicle' for vehicle-related expenses\n"
+        prompt += f"- Use 'HomeOffice' for home office expenses\n"
+        prompt += f"- DO NOT use 'None' or any other value not in the list above\n\n"
+
+        # Clear response format instructions
+        prompt += f"## RESPONSE FORMAT\n"
         prompt += (
-            "\nPLEASE SELECT ONE CATEGORY from the list above.\n"
-            "You MUST return the category NAME, not the ID number.\n\n"
-            "Format your response as JSON with these fields:\n"
-            "- category: The exact name of the chosen category (NOT the ID)\n"
-            "- confidence: 'high' if very certain, 'medium' if somewhat certain, 'low' if uncertain\n"
-            "- notes: Brief explanation of why this category was chosen\n"
-            "- expense_type: 'business' or 'personal'\n"
-            "- business_percentage: Percentage that is business-related (0-100)\n\n"
-            "Response in JSON:"
+            "You must ONLY reply in this exact JSON format:\n"
+            "{\n"
+            '  "tax_category_id": [numeric ID from the list above],\n'
+            '  "business_percentage": [0-100],\n'
+            '  "worksheet": ["6A", "Vehicle", "HomeOffice", or "Personal"],\n'
+            '  "confidence": ["high", "medium", or "low"],\n'
+            '  "reasoning": "Your explanation here"\n'
+            "}\n\n"
+            "Remember:\n"
+            "- tax_category_id must be a NUMBER\n"
+            "- worksheet must be one of the allowed values above\n"
+            "- NEVER use 'None' as a worksheet value\n"
+            "- For business expenses, default to '6A' if unsure\n"
         )
-
         return prompt
 
     def _build_classification_prompt(
@@ -1669,32 +1712,38 @@ class TransactionClassifier:
         if self.business_context:
             prompt += f"\nBusiness Context:\n{self.business_context}\n"
 
-        # Add tax categories with clear headers and formatting
-        prompt += "\n## TAX CATEGORIES\n"
-        prompt += (
-            "Each category has a numeric ID and belongs to a specific worksheet.\n"
-        )
-        prompt += "ID: Category Name (Worksheet)\n"
+        # Add IRS categories with clear headers and formatting
+        prompt += "\n## IRS TAX CATEGORIES\n"
+        prompt += "Each category belongs to a specific worksheet:\n"
         prompt += "---------------------------------\n"
 
-        # Sort by ID for consistent ordering
-        sorted_business_categories = sorted(self.business_categories_by_id.items())
+        # Add T2125 categories
+        prompt += "\nT2125 - Statement of Business or Professional Activities:\n"
+        for category in TAX_WORKSHEET_CATEGORIES["T2125"]:
+            prompt += f"- {category}\n"
 
-        for cat_id, (name, worksheet) in sorted_business_categories:
-            prompt += f"{cat_id}: {name} (Worksheet: {worksheet})\n"
+        # Add T776 categories
+        prompt += "\nT776 - Statement of Real Estate Rentals:\n"
+        for category in TAX_WORKSHEET_CATEGORIES["T776"]:
+            prompt += f"- {category}\n"
 
-        # Special note for Personal expenses
-        prompt += f"\nNOTE: If this is a personal expense, use category ID {self.personal_category_id}.\n\n"
+        # Add 6A categories
+        prompt += "\nSchedule 6A - Main Business Expense Categories:\n"
+        for category in TAX_WORKSHEET_CATEGORIES["6A"]:
+            prompt += f"- {category}\n"
 
         # Specify allowed worksheet values
         allowed_worksheets = sorted(list(self.ALLOWED_WORKSHEETS))
-        prompt += f"## WORKSHEET VALUES\n"
+        prompt += f"\n## WORKSHEET VALUES\n"
         prompt += f"You MUST ONLY use one of these exact worksheet values:\n"
         prompt += f"{', '.join(allowed_worksheets)}\n\n"
         prompt += f"RULES:\n"
         prompt += f"- Personal expenses MUST use 'Personal' as the worksheet\n"
         prompt += f"- Business expenses must NEVER use 'Personal' as the worksheet\n"
-        prompt += f"- DO NOT use 'T2125', 'T776', or any other worksheet name not in the list above\n\n"
+        prompt += f"- For business expenses, use '6A' for general business expenses\n"
+        prompt += f"- Use 'Vehicle' for vehicle-related expenses\n"
+        prompt += f"- Use 'HomeOffice' for home office expenses\n"
+        prompt += f"- DO NOT use 'None' or any other value not in the list above\n\n"
 
         # Clear response format instructions
         prompt += f"## RESPONSE FORMAT\n"
@@ -1707,7 +1756,11 @@ class TransactionClassifier:
             '  "confidence": ["high", "medium", or "low"],\n'
             '  "reasoning": "Your explanation here"\n'
             "}\n\n"
-            "Remember: tax_category_id must be a NUMBER, not a string!"
+            "Remember:\n"
+            "- tax_category_id must be a NUMBER\n"
+            "- worksheet must be one of the allowed values above\n"
+            "- NEVER use 'None' as a worksheet value\n"
+            "- For business expenses, default to '6A' if unsure\n"
         )
         return prompt
 
