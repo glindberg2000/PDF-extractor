@@ -26,13 +26,17 @@ fi
 echo "Backing up migrations..."
 cp -r pdf_extractor_web/profiles/migrations "${BACKUP_PATH}/migrations"
 
-# 3. Code Snapshot
+# 3. Memory Bank Backup
+echo "Backing up memory bank..."
+cp -r cline_docs "${BACKUP_PATH}/cline_docs"
+
+# 4. Code Snapshot
 echo "Creating code snapshot..."
 git add .
 git commit -m "Backup snapshot ${TIMESTAMP}" --no-verify
 git tag "backup_${TIMESTAMP}"
 
-# 4. Create metadata
+# 5. Create metadata
 echo "Creating backup metadata..."
 cat > "${BACKUP_PATH}/metadata.txt" << EOF
 Backup created: ${TIMESTAMP}
@@ -41,9 +45,10 @@ Database size: $(du -h "${BACKUP_PATH}/database.sql" | cut -f1)
 Migration count: $(find "${BACKUP_PATH}/migrations" -name "*.py" | wc -l)
 Database: ${DB_NAME}
 User: ${DB_USER}
+Memory Bank: cline_docs
 EOF
 
-# 5. Create restore script
+# 6. Create restore script
 echo "Creating restore script..."
 cat > "${BACKUP_PATH}/restore.sh" << EOF
 #!/bin/bash
@@ -66,6 +71,11 @@ echo "Restoring migrations..."
 rm -rf ../pdf_extractor_web/profiles/migrations
 cp -r migrations ../pdf_extractor_web/profiles/
 
+# Restore memory bank
+echo "Restoring memory bank..."
+rm -rf ../cline_docs/*
+cp -r cline_docs/* ../cline_docs/
+
 # Restore git state
 echo "Restoring git state..."
 git reset --hard HEAD
@@ -77,7 +87,7 @@ EOF
 
 chmod +x "${BACKUP_PATH}/restore.sh"
 
-# 6. Create backup manifest
+# 7. Create backup manifest
 echo "Creating backup manifest..."
 cat > "${BACKUP_DIR}/manifest.txt" << EOF
 ${TIMESTAMP}: ${BACKUP_NAME}
