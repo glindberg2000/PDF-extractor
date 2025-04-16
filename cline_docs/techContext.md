@@ -1,5 +1,69 @@
 # Technical Context
 
+## Technologies Used
+1. Backend:
+   - Django
+   - PostgreSQL
+   - OpenAI API
+   - Brave Search API
+
+2. Agent System:
+   - GPT-4 for transaction analysis
+   - Custom prompt engineering
+   - Tool integration
+   - Response validation
+
+## Development Setup
+1. Environment:
+   - Python virtual environment
+   - Django development server
+   - PostgreSQL database
+   - Environment variables for API keys
+
+2. Configuration:
+   - Agent configurations in database
+   - Tool definitions
+   - Prompt templates
+   - Logging settings
+
+## Technical Constraints
+1. Agent Isolation:
+   - Separate prompts for each agent
+   - Independent field updates
+   - No shared state between agents
+   - Clear separation of concerns
+
+2. Data Integrity:
+   - Transaction field validation
+   - Response schema validation
+   - Database constraint enforcement
+   - Backup system
+
+3. Performance:
+   - Efficient tool calls
+   - Optimized database updates
+   - Proper error handling
+   - Logging overhead management
+
+## Critical Components
+1. Agent System:
+   - Payee Lookup Agent
+   - Classification Agent
+   - Tool Integration
+   - Response Processing
+
+2. Database:
+   - Transaction Model
+   - Business Profile
+   - Agent Configurations
+   - Tool Definitions
+
+3. Logging:
+   - Request/Response logging
+   - Tool call tracking
+   - Error logging
+   - Performance monitoring
+
 ## Current Technologies
 
 ### Core Technologies

@@ -68,36 +68,87 @@ def call_agent(agent, description, transaction_id=None):
     """Generic function to call any agent"""
     # Get the agent's configuration
     llm = agent.llm
-    prompt = (
-        "You are an expert in business expense classification and tax preparation. Your role is to:\n\n"
-        "1. Analyze transactions and determine if they are business or personal expenses\n"
-        "2. For business expenses, determine the appropriate worksheet (6A, Vehicle, HomeOffice, or Personal)\n"
-        "3. Provide detailed reasoning for your decisions\n"
-        "4. Flag any transactions that need additional review\n\n"
-        "Consider these factors:\n"
-        "- Business type and description\n"
-        "- Industry context\n"
-        "- Transaction patterns\n"
-        "- Amount and frequency\n"
-        "- Business rules and patterns\n\n"
-        "IMPORTANT RULES:\n"
-        "- Personal expenses MUST use 'Personal' as the worksheet\n"
-        "- Business expenses must NEVER use 'Personal' as the worksheet\n"
-        "- For business expenses, use '6A' for general business expenses\n"
-        "- Use 'Vehicle' for vehicle-related expenses\n"
-        "- Use 'HomeOffice' for home office expenses\n"
-        "- DO NOT use 'None' or any other value not in the list above\n\n"
-        "Return your analysis in this exact JSON format:\n"
-        "{\n"
-        '    "classification_type": "business" or "personal",\n'
-        '    "worksheet": "6A" or "Vehicle" or "HomeOffice" or "Personal",\n'
-        '    "irs_category": "Name of IRS category if business",\n'
-        '    "confidence": "high" or "medium" or "low",\n'
-        '    "reasoning": "Detailed explanation of your decision",\n'
-        '    "questions": "Any questions or uncertainties about this classification"\n'
-        "}\n\n"
-        "IMPORTANT: Your response must be a valid JSON object."
-    )
+
+    # Use different prompts based on agent type
+    if "payee" in agent.name.lower():
+        system_prompt = """You are a transaction analysis assistant. Your task is to:
+1. Identify the payee/merchant from transaction descriptions
+2. Use the search tool to look up vendor information
+3. Provide detailed, normalized descriptions
+4. Return a final response after using the search tool
+
+IMPORTANT: After using the search tool, you MUST provide a final response with the transaction details."""
+
+        user_prompt = """Analyze this transaction and return a JSON object with EXACTLY these field names:
+{
+    "normalized_description": "string - Detailed description of what was purchased/paid for, including vendor type and purpose (e.g., 'Farm equipment purchase from Kubota dealership', 'Online subscription to business software')",
+    "payee": "string - The identified payee/merchant name",
+    "confidence": "string - Must be exactly 'high', 'medium', or 'low'",
+    "reasoning": "string - Explanation of the identification, including any search results used",
+    "transaction_type": "string - One of: purchase, payment, transfer, fee, subscription, service",
+    "questions": "string - Any questions about unclear elements",
+    "needs_search": "boolean - Whether additional vendor information is needed"
+}
+
+IMPORTANT INSTRUCTIONS:
+1. ALWAYS use the search tool to look up vendor information
+2. Use the search results to provide detailed, specific descriptions
+3. Include the type of business and what was purchased in the normalized_description
+4. Reference any search results used in the reasoning field
+5. After using the search tool, you MUST provide a final response
+
+Example with search results:
+Search Results: [
+  {
+    "title": "The Farm Shop - Kubota Dealer in Edina, MO",
+    "description": "The Farm Shop is a full-service Kubota dealership offering equipment, parts, service, and more."
+  }
+]
+
+Response:
+{
+    "normalized_description": "Farm equipment purchase from Kubota dealership",
+    "payee": "The Farm Shop",
+    "confidence": "high",
+    "reasoning": "Identified as The Farm Shop, a Kubota dealership based on search results. Transaction appears to be for farm equipment or services.",
+    "transaction_type": "purchase",
+    "questions": "None",
+    "needs_search": false
+}"""
+    else:
+        system_prompt = """You are an expert in business expense classification and tax preparation. Your role is to:
+1. Analyze transactions and determine if they are business or personal expenses
+2. For business expenses, determine the appropriate worksheet (6A, Vehicle, HomeOffice, or Personal)
+3. Provide detailed reasoning for your decisions
+4. Flag any transactions that need additional review
+
+Consider these factors:
+- Business type and description
+- Industry context
+- Transaction patterns
+- Amount and frequency
+- Business rules and patterns"""
+
+        user_prompt = """Return your analysis in this exact JSON format:
+{
+    "classification_type": "business" or "personal",
+    "worksheet": "6A" or "Vehicle" or "HomeOffice" or "Personal",
+    "irs_category": "Name of IRS category if business",
+    "confidence": "high" or "medium" or "low",
+    "reasoning": "Detailed explanation of your decision",
+    "questions": "Any questions or uncertainties about this classification"
+}
+
+IMPORTANT RULES:
+- Personal expenses MUST use 'Personal' as the worksheet
+- Business expenses must NEVER use 'Personal' as the worksheet
+- For business expenses, use '6A' for general business expenses
+- Use 'Vehicle' for vehicle-related expenses
+- Use 'HomeOffice' for home office expenses
+- DO NOT use 'None' or any other value not in the list above
+
+IMPORTANT: Your response must be a valid JSON object."""
+
     tool_definitions = []
 
     # Prepare tools for the API call with proper schema
@@ -147,8 +198,11 @@ def call_agent(agent, description, transaction_id=None):
     payload = {
         "model": llm.model,
         "messages": [
-            {"role": "system", "content": prompt},
-            {"role": "user", "content": f"{description}{business_context}"},
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": f"{user_prompt}\n\nTransaction: {description}{business_context}",
+            },
         ],
         "response_format": {"type": "json_object"},
         "tools": tool_definitions if tool_definitions else None,
@@ -157,8 +211,8 @@ def call_agent(agent, description, transaction_id=None):
     # Log the complete API request
     logger.info("\n=== API Request ===")
     logger.info(f"Model: {llm.model}")
-    logger.info(f"Prompt: {prompt}")
-    logger.info(f"Description: {description}")
+    logger.info(f"Prompt: {system_prompt}")
+    logger.info(f"Transaction: {description}")
     logger.info(f"Business Context: {business_context}")
     if tool_definitions:
         logger.info(f"Tools: {json.dumps(tool_definitions, indent=2)}")
@@ -375,49 +429,52 @@ class TransactionAdmin(admin.ModelAdmin):
                     # Map response fields to database fields
                     update_fields = {
                         "normalized_description": response.get(
-                            "Normalized Description"
+                            "normalized_description"
                         ),
-                        "payee": response.get("Payee"),
-                        "confidence": response.get("confidence", "low"),
+                        "payee": response.get("payee"),
+                        "confidence": response.get("confidence"),
                         "reasoning": response.get("reasoning"),
-                        "transaction_type": response.get("Transaction Type"),
-                        "questions": response.get("Questions"),
+                        "transaction_type": response.get("transaction_type"),
+                        "questions": response.get("questions"),
                         "classification_type": response.get("classification_type"),
-                        "worksheet": response.get("worksheet", "6A"),
-                        "business_percentage": (
-                            100
-                            if response.get("classification_type") == "business"
-                            else 0
-                        ),
-                        "payee_extraction_method": (
-                            "AI+Search" if response.get("needs_search", False) else "AI"
-                        ),
+                        "worksheet": response.get("worksheet"),
+                        "business_percentage": response.get("business_percentage", 0),
+                        "payee_extraction_method": "AI",
                         "classification_method": "AI",
-                        "business_context": response.get("business_context"),
-                        "category": response.get("irs_category"),
+                        "business_context": None,
+                        "category": response.get("irs_category", ""),
                     }
 
-                    # Validate and correct worksheet value
-                    worksheet = update_fields.get("worksheet", "")
-                    if worksheet == "None" or not worksheet:
-                        if update_fields.get("classification_type") == "personal":
-                            update_fields["worksheet"] = "Personal"
-                        else:
-                            update_fields["worksheet"] = "6A"
-                        logger.warning(
-                            f"Corrected invalid worksheet value '{worksheet}' to '{update_fields['worksheet']}'"
-                        )
-
-                    # Log the update fields
-                    logger.info(
-                        f"Update fields for transaction {transaction.id}: {update_fields}"
-                    )
-
-                    # Remove None values
+                    # Clean up fields - remove None values
                     update_fields = {
                         k: v for k, v in update_fields.items() if v is not None
                     }
-                    logger.info(f"Cleaned update fields: {update_fields}")
+
+                    # For payee lookup, only update payee-related fields
+                    if "payee" in agent.name.lower():
+                        update_fields = {
+                            "normalized_description": response.get(
+                                "normalized_description"
+                            ),
+                            "payee": response.get("payee"),
+                            "confidence": response.get("confidence"),
+                            "reasoning": response.get("reasoning"),
+                            "transaction_type": response.get("transaction_type"),
+                            "questions": response.get("questions"),
+                            "payee_extraction_method": (
+                                "AI+Search"
+                                if response.get("needs_search", False)
+                                else "AI"
+                            ),
+                        }
+                        # Remove None values
+                        update_fields = {
+                            k: v for k, v in update_fields.items() if v is not None
+                        }
+
+                    logger.info(
+                        f"Update fields for transaction {transaction.id}: {update_fields}"
+                    )
 
                     # Update the transaction
                     rows_updated = Transaction.objects.filter(id=transaction.id).update(

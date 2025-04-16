@@ -191,10 +191,10 @@ python -m dataextractai.cli.main categories generate <client_name>
    - System category matching
 
 ## Current Work
-- Successfully implemented client-specific directory structure
-- Fixed path handling in parser modules
-- Added proper configuration management
-- Implemented debug logging for path verification
+- Fixed Payee Lookup agent functionality
+- Restored Classification agent functionality
+- Implemented proper prompt separation between agents
+- Added detailed logging for debugging
 
 ## Current Status
 1. Command-Line Version (Core)
@@ -540,3 +540,27 @@ Implementing new LLM integration with structured outputs and tools:
 - Django models (Agent, Tool)
 - JSON schema validation
 - Logging system 
+
+## Recent Changes
+1. Payee Lookup Agent:
+   - Split prompts into system and user messages
+   - Added explicit instructions for tool usage
+   - Improved normalized_description handling
+   - Fixed tool call flow to ensure final response
+
+2. Classification Agent:
+   - Maintained original classification logic
+   - Updated prompt structure to match new format
+   - Preserved all business rules and worksheet assignments
+
+## Next Steps
+1. Test both agents thoroughly
+2. Monitor logs for any issues
+3. Consider adding more detailed logging for tool calls
+4. Review agent response schemas for consistency
+
+## Critical Notes
+- Agents must be kept isolated - changes to one should not affect others
+- Each agent has its own specific prompt and schema
+- Tool calls must be properly handled to ensure final responses
+- Logging is crucial for debugging and monitoring 
