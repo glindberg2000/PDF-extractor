@@ -64,11 +64,40 @@ class ClientFilter(admin.SimpleListFilter):
         return queryset
 
 
-def call_agent(agent, description):
+def call_agent(agent, description, transaction_id=None):
     """Generic function to call any agent"""
     # Get the agent's configuration
     llm = agent.llm
-    prompt = agent.prompt + "\n\nIMPORTANT: Your response must be a valid JSON object."
+    prompt = (
+        "You are an expert in business expense classification and tax preparation. Your role is to:\n\n"
+        "1. Analyze transactions and determine if they are business or personal expenses\n"
+        "2. For business expenses, determine the appropriate worksheet (6A, Vehicle, HomeOffice, or Personal)\n"
+        "3. Provide detailed reasoning for your decisions\n"
+        "4. Flag any transactions that need additional review\n\n"
+        "Consider these factors:\n"
+        "- Business type and description\n"
+        "- Industry context\n"
+        "- Transaction patterns\n"
+        "- Amount and frequency\n"
+        "- Business rules and patterns\n\n"
+        "IMPORTANT RULES:\n"
+        "- Personal expenses MUST use 'Personal' as the worksheet\n"
+        "- Business expenses must NEVER use 'Personal' as the worksheet\n"
+        "- For business expenses, use '6A' for general business expenses\n"
+        "- Use 'Vehicle' for vehicle-related expenses\n"
+        "- Use 'HomeOffice' for home office expenses\n"
+        "- DO NOT use 'None' or any other value not in the list above\n\n"
+        "Return your analysis in this exact JSON format:\n"
+        "{\n"
+        '    "classification_type": "business" or "personal",\n'
+        '    "worksheet": "6A" or "Vehicle" or "HomeOffice" or "Personal",\n'
+        '    "irs_category": "Name of IRS category if business",\n'
+        '    "confidence": "high" or "medium" or "low",\n'
+        '    "reasoning": "Detailed explanation of your decision",\n'
+        '    "questions": "Any questions or uncertainties about this classification"\n'
+        "}\n\n"
+        "IMPORTANT: Your response must be a valid JSON object."
+    )
     tool_definitions = []
 
     # Prepare tools for the API call with proper schema
@@ -96,12 +125,30 @@ def call_agent(agent, description):
     # Initialize OpenAI client
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+    # Get business profile information if available
+    business_context = ""
+    try:
+        if transaction_id:
+            transaction = Transaction.objects.get(id=transaction_id)
+            if transaction.client:
+                business = transaction.client
+                business_context = (
+                    f"\nBusiness Context:\n"
+                    f"- Business Type: {business.business_type}\n"
+                    f"- Description: {business.business_description}\n"
+                    f"- Common Expenses: {business.common_expenses}\n"
+                    f"- Industry Keywords: {business.industry_keywords}\n"
+                    f"- Category Patterns: {business.category_patterns}\n"
+                )
+    except Transaction.DoesNotExist:
+        pass
+
     # Prepare the API request payload
     payload = {
         "model": llm.model,
         "messages": [
             {"role": "system", "content": prompt},
-            {"role": "user", "content": description},
+            {"role": "user", "content": f"{description}{business_context}"},
         ],
         "response_format": {"type": "json_object"},
         "tools": tool_definitions if tool_definitions else None,
@@ -112,6 +159,7 @@ def call_agent(agent, description):
     logger.info(f"Model: {llm.model}")
     logger.info(f"Prompt: {prompt}")
     logger.info(f"Description: {description}")
+    logger.info(f"Business Context: {business_context}")
     if tool_definitions:
         logger.info(f"Tools: {json.dumps(tool_definitions, indent=2)}")
 
@@ -202,7 +250,7 @@ def process_transactions(modeladmin, request, queryset):
     try:
         agent = Agent.objects.get(id=agent_id)
         for transaction in queryset:
-            response = call_agent(agent, transaction.description)
+            response = call_agent(agent, transaction.description, transaction.id)
 
             # Update transaction with the response
             update_fields = {
@@ -251,6 +299,7 @@ class TransactionAdmin(admin.ModelAdmin):
         "business_context",
         "classification_method",
         "payee_extraction_method",
+        "reasoning",
     )
     list_filter = (
         ClientFilter,
@@ -278,6 +327,22 @@ class TransactionAdmin(admin.ModelAdmin):
         "classification_type",
         "worksheet",
     )
+    readonly_fields = (
+        "transaction_date",
+        "amount",
+        "description",
+        "normalized_description",
+        "payee",
+        "category",
+        "classification_type",
+        "worksheet",
+        "business_percentage",
+        "confidence",
+        "business_context",
+        "classification_method",
+        "payee_extraction_method",
+        "reasoning",
+    )
 
     def get_actions(self, request):
         actions = super().get_actions(request)
@@ -302,7 +367,9 @@ class TransactionAdmin(admin.ModelAdmin):
                     logger.info(
                         f"Processing transaction {transaction.id} with agent {agent.name}"
                     )
-                    response = call_agent(agent, transaction.description)
+                    response = call_agent(
+                        agent, transaction.description, transaction.id
+                    )
                     logger.info(f"Agent response: {response}")
 
                     # Map response fields to database fields
@@ -311,7 +378,7 @@ class TransactionAdmin(admin.ModelAdmin):
                             "Normalized Description"
                         ),
                         "payee": response.get("Payee"),
-                        "confidence": response.get("Confidence Score", "low"),
+                        "confidence": response.get("confidence", "low"),
                         "reasoning": response.get("reasoning"),
                         "transaction_type": response.get("Transaction Type"),
                         "questions": response.get("Questions"),
@@ -327,7 +394,19 @@ class TransactionAdmin(admin.ModelAdmin):
                         ),
                         "classification_method": "AI",
                         "business_context": response.get("business_context"),
+                        "category": response.get("irs_category"),
                     }
+
+                    # Validate and correct worksheet value
+                    worksheet = update_fields.get("worksheet", "")
+                    if worksheet == "None" or not worksheet:
+                        if update_fields.get("classification_type") == "personal":
+                            update_fields["worksheet"] = "Personal"
+                        else:
+                            update_fields["worksheet"] = "6A"
+                        logger.warning(
+                            f"Corrected invalid worksheet value '{worksheet}' to '{update_fields['worksheet']}'"
+                        )
 
                     # Log the update fields
                     logger.info(
@@ -351,7 +430,7 @@ class TransactionAdmin(admin.ModelAdmin):
                     # Verify the update
                     updated_tx = Transaction.objects.get(id=transaction.id)
                     logger.info(
-                        f"Transaction {transaction.id} after update: payee={updated_tx.payee}, classification_type={updated_tx.classification_type}, worksheet={updated_tx.worksheet}"
+                        f"Transaction {transaction.id} after update: payee={updated_tx.payee}, classification_type={updated_tx.classification_type}, worksheet={updated_tx.worksheet}, confidence={updated_tx.confidence}, category={updated_tx.category}"
                     )
 
                 messages.success(
