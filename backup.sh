@@ -6,17 +6,21 @@ TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 BACKUP_NAME="backup_${TIMESTAMP}"
 BACKUP_PATH="${BACKUP_DIR}/${BACKUP_NAME}"
 
-# Get database credentials from settings
-DB_NAME=$(python -c "from pdf_extractor_web.settings import DATABASES; print(DATABASES['default']['NAME'])")
-DB_USER=$(python -c "from pdf_extractor_web.settings import DATABASES; print(DATABASES['default']['USER'])")
-DB_PASSWORD=$(python -c "from pdf_extractor_web.settings import DATABASES; print(DATABASES['default']['PASSWORD'])")
+# Database configuration (update these values)
+DB_NAME="pdf_extractor"
+DB_USER="greg"
+DB_PASSWORD=""
 
 # Create backup directory
 mkdir -p "${BACKUP_PATH}"
 
 # 1. Database Backup
 echo "Backing up database..."
-PGPASSWORD="${DB_PASSWORD}" pg_dump -U "${DB_USER}" "${DB_NAME}" > "${BACKUP_PATH}/database.sql"
+if [ -n "$DB_PASSWORD" ]; then
+    PGPASSWORD="${DB_PASSWORD}" pg_dump -U "${DB_USER}" "${DB_NAME}" > "${BACKUP_PATH}/database.sql"
+else
+    pg_dump -U "${DB_USER}" "${DB_NAME}" > "${BACKUP_PATH}/database.sql"
+fi
 
 # 2. Migrations Backup
 echo "Backing up migrations..."
@@ -44,14 +48,18 @@ echo "Creating restore script..."
 cat > "${BACKUP_PATH}/restore.sh" << EOF
 #!/bin/bash
 
-# Get database credentials from settings
-DB_NAME=\$(python -c "from pdf_extractor_web.settings import DATABASES; print(DATABASES['default']['NAME'])")
-DB_USER=\$(python -c "from pdf_extractor_web.settings import DATABASES; print(DATABASES['default']['USER'])")
-DB_PASSWORD=\$(python -c "from pdf_extractor_web.settings import DATABASES; print(DATABASES['default']['PASSWORD'])")
+# Database configuration (update these values)
+DB_NAME="pdf_extractor"
+DB_USER="greg"
+DB_PASSWORD=""
 
 # Restore database
 echo "Restoring database..."
-PGPASSWORD="\${DB_PASSWORD}" psql -U "\${DB_USER}" "\${DB_NAME}" < database.sql
+if [ -n "\$DB_PASSWORD" ]; then
+    PGPASSWORD="\${DB_PASSWORD}" psql -U "\${DB_USER}" "\${DB_NAME}" < database.sql
+else
+    psql -U "\${DB_USER}" "\${DB_NAME}" < database.sql
+fi
 
 # Restore migrations
 echo "Restoring migrations..."
