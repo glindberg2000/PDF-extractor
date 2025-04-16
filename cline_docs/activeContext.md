@@ -1,90 +1,66 @@
 # Active Context
 
 ## Current Focus
-Implementing transaction classification system for tax preparation:
-- Building system to classify transactions into business/personal categories
-- Mapping transactions to appropriate tax worksheets (6A, Auto, Home Office)
-- Maintaining classification history and audit trail
-- Resolving database migration issues related to the IRSWorksheet model
-- Ensuring proper table creation and data integrity
-
-## Recent Changes
-1. Fixed agent selection in admin interface
-2. Created new database backup with all current data
-3. Established database maintenance strategy
-4. Implemented proper agent selection dropdown in transaction processing
-5. Identified that migration 0031 (transaction_classification) has been applied
-6. Discovered that the IRSWorksheet model exists in models.py but its table is not present in the database
-7. Found that the IRSWorksheet model is referenced by other models (IRSExpenseCategory and BusinessExpenseCategory)
+Refining the transaction classification system to achieve the core goal: producing tax-ready Excel reports with transactions accurately separated into 6A, Auto, HomeOffice, and Personal worksheets, ensuring consistency through enhanced matching logic.
 
 ## Current State
-1. Database:
-   - Transaction table has basic LLM processing fields
-   - NormalizedVendorData exists as linked table
-   - One unapplied migration (0031) that can be safely deleted
-   - The IRSWorksheet model is defined in models.py with fields:
-     - name (CharField, unique)
-     - description (TextField)
-     - is_active (BooleanField)
-     - created_at (DateTimeField)
-     - updated_at (DateTimeField)
-   - The model is referenced by:
-     - IRSExpenseCategory (ForeignKey)
-     - BusinessExpenseCategory (ForeignKey)
-   - The table `profiles_irsworksheet` does not exist in the database despite the model definition
+- The multi-pass classification framework (`transaction_classifier.py`) is operational but requires significant enhancements.
+- It processes transactions row-by-row, using AI and basic database lookups/matching.
+- Payee normalization is missing.
+- Matching logic (`_find_matching_transaction`) is basic and needs improvement (use normalized payee, ensure full field copying).
+- Worksheet assignment relies heavily on AI fallback or defaults ('6A') due to missing business rule integration and handling for 'Personal' category.
+- Excel export (`excel_formatter.py`) generates only a combined transaction list, not the required separate worksheets.
+- Recent debugging resolved numerous errors related to DB initialization, category mapping, variable names, and type hints (Commit `4a5cce5`).
+- Explicit caching seems removed, replaced by DB lookups/matching.
 
-2. Working Features:
-   - Transaction import and normalization
-   - Vendor/Payee extraction
-   - Agent selection and processing
-   - Basic admin interface
+## Recent Changes (Post-Debugging)
+- Codebase is stable after fixing multiple runtime errors in classification logic.
+- `tax_categories` table initialization is working correctly.
+- Basic transaction flow (Pass 1 -> 2 -> 3) completes for test cases.
+- Committed all current changes (including potentially unrelated ones) in commit `4a5cce5`.
 
-## Next Steps
+## Next Steps (Refined Plan)
+1.  **Implement Payee Normalization**:
+    *   Define normalization rules (regex for store #, state, zip, etc.).
+    *   Add logic (e.g., in `TransactionNormalizer` or parser stage) to create and store a `normalized_payee` field (likely needs DB schema update).
+    *   Update Pass 1 AI prompt to potentially use/generate this.
+2.  **Enhance Matching Logic (`_find_matching_transaction`)**:
+    *   Modify to query using `normalized_payee`.
+    *   Ensure it reliably copies *all* relevant classification fields (Tax Category ID, Worksheet, Business %, Reasoning, Confidence) from the matched transaction.
+3.  **Develop Worksheet Assignment Logic (Pass 3)**:
+    *   Decide how to handle 'Personal' classification (e.g., add to DB CHECK constraint, use a separate field/flag, filter during export).
+    *   Implement rules within Pass 3 (`_get_tax_classification` or a new dedicated step/function) to determine the correct worksheet ('6A', 'Auto', 'HomeOffice', 'Personal').
+    *   This logic should consider:
+        *   The assigned tax category.
+        *   Business profile details (e.g., does the business use a vehicle? have a home office?).
+        *   Business percentage.
+    *   Update the `transaction_classifications` table update in `_commit_pass` to store the determined worksheet.
+4.  **Update Excel Formatter (`excel_formatter.py`)**:
+    *   Modify `create_report` to:
+        *   Read the final assigned `worksheet` for each transaction from the database.
+        *   Create separate sheets named '6A', 'Auto', 'HomeOffice', 'Personal'.
+        *   Populate each sheet only with transactions assigned to that worksheet.
+        *   Adjust the 'Summary' sheet if needed to reflect this separation.
+5.  **Testing**: After implementing the above, test thoroughly with diverse transactions to verify:
+    *   Payee normalization works.
+    *   Matching is consistent and prevents unnecessary AI calls.
+    *   Worksheet assignment rules are correct.
+    *   Excel output has the correct sheets and data separation.
 
-### Immediate (Current Sprint)
-1. Delete unnecessary migration 0031
-2. Create new TransactionClassification model as linked table
-3. Implement classification tracking without modifying main Transaction table
-4. Add convenience methods to Transaction model
-5. Set up admin interface for classification management
-6. Create a new migration to add the IRSWorksheet model and its related tables
-7. Apply the migration to create the necessary database tables
-8. Initialize the IRSWorksheet table with standard worksheet definitions:
-   - "6A" (Main Business Expenses)
-   - "Auto" (Vehicle Expenses)
-   - "HomeOffice" (Home Office Expenses)
-   - "Personal" (Personal Expenses)
-9. Verify that the foreign key relationships work correctly
+## Current Issues/Challenges
+- Lack of payee normalization hinders consistent matching.
+- Rudimentary worksheet assignment logic prevents correct output separation.
+- Excel export doesn't meet the primary goal of separate tax worksheets.
+- Robustness of matching and classification needs validation.
 
-### Short Term
-1. Implement classification agent
-2. Create worksheet views and reports
-3. Add manual override interface
-4. Implement classification history tracking
+## Dependencies
+- Payee normalization is required for effective matching.
+- Correct worksheet assignment is required for meaningful Excel export.
 
-### Medium Term
-1. Add batch processing capabilities
-2. Create comprehensive reporting system
-3. Implement audit trail
-4. Add export functionality
-
-## Technical Decisions
-1. Using linked table approach for classification data to:
-   - Avoid modifying main Transaction table
-   - Enable history tracking
-   - Maintain clean separation of concerns
-   - Allow for future extensions
-2. Need to create a new migration rather than modifying existing ones
-3. Will include data migration to populate standard worksheet definitions
-4. Will ensure proper ordering of migrations to maintain database integrity
-
-## Current Challenges
-1. Need to maintain data integrity during implementation
-2. Must ensure classification history is properly tracked
-3. Need to handle manual overrides gracefully
-4. Need to ensure the migration creates all necessary tables and relationships
-5. Must maintain data integrity during the migration process
-6. Need to handle any existing data that might reference these tables
+## Notes
+- Currently monitoring Pass 1 execution with new caching strategy
+- Will need to carefully review Pass 2 and 3 outputs for data quality
+- Final report generation will need thorough validation
 
 ## Current CLI Structure
 1. Legacy System (scripts/grok.py):
@@ -529,3 +505,38 @@ Cache key strategy:
 - Cache effectiveness needs verification through logs
 - Balance needed between cache hit rate and accuracy
 - Consider impact of cache key strategy on performance 
+
+## Current Focus: LLM Integration Implementation
+
+### Active Task
+Implementing new LLM integration with structured outputs and tools:
+- Creating `LLMIntegration` class in `pdf_extractor_web/llm/integration.py`
+- Updating transaction processing in `pdf_extractor_web/profiles/admin.py`
+- Implementing response schemas for payee lookup and classification
+- Adding tool execution and result integration
+
+### Recent Changes
+- Created comprehensive LLM integration architecture plan
+- Defined response schemas for both payee lookup and classification
+- Outlined tool integration strategy
+- Planned status tracking for payee identification methods
+
+### Next Steps
+1. Create `LLMIntegration` class with core functionality
+2. Implement response schemas
+3. Add tool execution handling
+4. Update transaction processing
+5. Add comprehensive logging
+6. Test with existing agents
+
+### Key Decisions
+- Maintain two-pass approach for payee lookup and classification
+- Track payee identification method (AI, AI+Search, Human)
+- Use JSON schema validation for responses
+- Implement dynamic tool loading from database
+
+### Dependencies
+- OpenAI API
+- Django models (Agent, Tool)
+- JSON schema validation
+- Logging system 

@@ -39,6 +39,27 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
+# Define function schema for OpenAI function calling
+function_schema = {
+    "name": "brave_search",
+    "description": "Search for vendor information using Brave Search",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "vendor_name": {
+                "type": "string",
+                "description": "Name of the vendor to search for",
+            },
+            "max_results": {
+                "type": "integer",
+                "description": "Maximum number of results to return",
+                "default": 5,
+            },
+        },
+        "required": ["vendor_name"],
+    },
+}
+
 
 class VendorInfo(TypedDict):
     """
@@ -59,7 +80,7 @@ class VendorInfo(TypedDict):
     relevance_score: int
 
 
-def lookup_vendor_info(
+def brave_search(
     vendor_name: str,
     max_results: int = 5,
     industry_keywords: Dict[str, int] = None,
