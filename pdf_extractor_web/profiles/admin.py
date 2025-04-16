@@ -9,6 +9,7 @@ from .models import (
     IRSWorksheet,
     IRSExpenseCategory,
     BusinessExpenseCategory,
+    TransactionClassification,
 )
 from django.utils.translation import gettext_lazy as _
 from django.http import HttpResponseRedirect
@@ -231,34 +232,51 @@ def process_transactions(modeladmin, request, queryset):
     return HttpResponseRedirect(request.get_full_path())
 
 
+process_transactions.short_description = "Process selected transactions with agent"
+
+
 @admin.register(Transaction)
 class TransactionAdmin(admin.ModelAdmin):
     list_display = (
         "transaction_date",
         "amount",
         "description",
-        "payee",
-        "confidence",
         "normalized_description",
-        "transaction_type",
+        "payee",
         "category",
+        "classification_type",
+        "worksheet",
+        "business_percentage",
+        "confidence",
+        "business_context",
+        "classification_method",
+        "payee_extraction_method",
     )
     list_filter = (
         ClientFilter,
         "transaction_date",
+        "classification_type",
+        "worksheet",
+        "confidence",
         "category",
         "source",
         "transaction_type",
-        "confidence",
+        "classification_method",
+        "payee_extraction_method",
     )
     search_fields = (
         "description",
+        "normalized_description",
         "category",
         "source",
         "transaction_type",
         "account_number",
         "payee",
-        "normalized_description",
+        "reasoning",
+        "business_context",
+        "questions",
+        "classification_type",
+        "worksheet",
     )
 
     def get_actions(self, request):
@@ -281,31 +299,59 @@ class TransactionAdmin(admin.ModelAdmin):
         def process_with_agent(modeladmin, request, queryset):
             try:
                 for transaction in queryset:
+                    logger.info(
+                        f"Processing transaction {transaction.id} with agent {agent.name}"
+                    )
                     response = call_agent(agent, transaction.description)
+                    logger.info(f"Agent response: {response}")
 
-                    # Update transaction with the response
+                    # Map response fields to database fields
                     update_fields = {
                         "normalized_description": response.get(
                             "Normalized Description"
                         ),
                         "payee": response.get("Payee"),
                         "confidence": response.get("Confidence Score", "low"),
-                        "reasoning": response.get("Original Context"),
+                        "reasoning": response.get("reasoning"),
                         "transaction_type": response.get("Transaction Type"),
                         "questions": response.get("Questions"),
+                        "classification_type": response.get("classification_type"),
+                        "worksheet": response.get("worksheet", "6A"),
+                        "business_percentage": (
+                            100
+                            if response.get("classification_type") == "business"
+                            else 0
+                        ),
                         "payee_extraction_method": (
                             "AI+Search" if response.get("needs_search", False) else "AI"
                         ),
+                        "classification_method": "AI",
+                        "business_context": response.get("business_context"),
                     }
+
+                    # Log the update fields
+                    logger.info(
+                        f"Update fields for transaction {transaction.id}: {update_fields}"
+                    )
 
                     # Remove None values
                     update_fields = {
                         k: v for k, v in update_fields.items() if v is not None
                     }
+                    logger.info(f"Cleaned update fields: {update_fields}")
 
                     # Update the transaction
-                    Transaction.objects.filter(id=transaction.id).update(
+                    rows_updated = Transaction.objects.filter(id=transaction.id).update(
                         **update_fields
+                    )
+                    logger.info(
+                        f"Updated {rows_updated} rows for transaction {transaction.id}"
+                    )
+
+                    # Verify the update
+                    updated_tx = Transaction.objects.get(id=transaction.id)
+                    logger.info(
+                        f"Transaction {transaction.id} after update: payee={updated_tx.payee}, classification_type={updated_tx.classification_type}, worksheet={updated_tx.worksheet}"
                     )
 
                 messages.success(
@@ -313,6 +359,10 @@ class TransactionAdmin(admin.ModelAdmin):
                     f"Successfully processed {queryset.count()} transactions with {agent.name}",
                 )
             except Exception as e:
+                logger.error(
+                    f"Error processing transactions with {agent.name}: {str(e)}",
+                    exc_info=True,
+                )
                 messages.error(
                     request,
                     f"Error processing transactions with {agent.name}: {str(e)}",

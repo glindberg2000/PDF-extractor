@@ -82,6 +82,15 @@ class TransactionClassification(models.Model):
         max_length=50,
         help_text="Tax worksheet category (e.g., '6A', 'Auto', 'HomeOffice')",
     )
+    category = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+        help_text="Specific expense category within the worksheet",
+    )
+    business_percentage = models.IntegerField(
+        default=100, help_text="Percentage of the transaction that is business-related"
+    )
     confidence = models.CharField(
         max_length=20, help_text="Confidence level of the classification"
     )
@@ -149,7 +158,27 @@ class Transaction(models.Model):
     business_context = models.TextField(blank=True, null=True)
     questions = models.TextField(blank=True, null=True)
 
-    # New fields for tracking processing methods
+    # Classification fields
+    classification_type = models.CharField(
+        max_length=50,
+        help_text="Type of classification (e.g., 'business', 'personal')",
+        null=True,
+        blank=True,
+    )
+    worksheet = models.CharField(
+        max_length=50,
+        help_text="Tax worksheet category (e.g., '6A', 'Auto', 'HomeOffice')",
+        null=True,
+        blank=True,
+    )
+    business_percentage = models.IntegerField(
+        default=100,
+        help_text="Percentage of the transaction that is business-related",
+        null=True,
+        blank=True,
+    )
+
+    # Processing method tracking
     payee_extraction_method = models.CharField(
         max_length=20,
         choices=[
@@ -326,15 +355,16 @@ class ClassificationOverride(models.Model):
     """Model for manual classification overrides by bookkeepers."""
 
     transaction = models.ForeignKey(
-        Transaction, on_delete=models.CASCADE, related_name="classification_overrides"
+        Transaction,
+        on_delete=models.CASCADE,
+        related_name="classification_overrides",
+        null=True,
+        blank=True,
     )
-    original_classification = models.ForeignKey(
-        TransactionClassification, on_delete=models.CASCADE, related_name="overrides"
-    )
-    new_classification_type = models.CharField(max_length=50)
-    new_worksheet = models.CharField(max_length=50)
+    new_classification_type = models.CharField(max_length=50, null=True, blank=True)
+    new_worksheet = models.CharField(max_length=50, null=True, blank=True)
     notes = models.TextField(blank=True)
-    created_by = models.CharField(max_length=255)
+    created_by = models.CharField(max_length=255, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     is_active = models.BooleanField(default=True)
 
