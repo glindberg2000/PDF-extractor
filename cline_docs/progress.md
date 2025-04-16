@@ -97,10 +97,32 @@ Legend:
 - ⏳ Summary calculations
 - ⏳ Final formatting
 
+### Backup System
+- Full system backup script
+- Pre-migration backup script
+- Self-contained restore capability
+- Git integration with tagged snapshots
+- Database dumps and migration preservation
+
 ## In Progress
 - Pass 1 execution with new caching strategy
 - Preparation for Pass 2 verification
 - Planning for Schedule 6A report format
+
+1. Transaction Classification System
+   - Reviewing current table structure
+   - Planning reliable classification storage
+   - Evaluating migration strategy
+
+2. Reporting
+   - Classification statistics
+   - Accuracy metrics
+   - Error tracking
+
+3. Integration Features
+   - External system connections
+   - API endpoints
+   - Webhook support
 
 ## Next Up
 1. Complete Pass 1 processing
@@ -188,4 +210,43 @@ Legend:
 - Needs thorough testing
 - Performance impact unknown
 - Batch operations pending
-- UI refinements needed 
+- UI refinements needed
+
+### Migration Dependencies
+- Some migration files have incorrect dependencies
+- Working on proper sequencing
+- Implementing safer migration practices
+
+## Next Steps
+1. Review and document current database schema
+2. Plan classification storage strategy
+3. Implement chosen storage solution
+4. Add necessary migration safety checks
+
+## Pending
+1. Classification UI
+   - Manual override interface
+   - Batch classification tools
+   - Review workflow
+
+2. Reporting
+   - Classification statistics
+   - Accuracy metrics
+   - Error tracking
+
+3. Integration Features
+   - External system connections
+   - API endpoints
+   - Webhook support
+
+## Known Issues
+1. Migration Dependencies
+   - Some migration files have incorrect dependencies
+   - Working on proper sequencing
+   - Implementing safer migration practices
+
+## Next Steps
+1. Review and document current database schema
+2. Plan classification storage strategy
+3. Implement chosen storage solution
+4. Add necessary migration safety checks 
