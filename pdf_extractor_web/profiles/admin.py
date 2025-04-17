@@ -164,11 +164,21 @@ IMPORTANT INSTRUCTIONS:
             for cat in business_categories:
                 logger.info(f"- {cat.category_name}")
 
-            # Add business categories to the list
+            # Normalize category names for comparison (replace & with and)
+            def normalize_category_name(name):
+                return name.replace("&", "and").strip()
+
+            # Create normalized sets for comparison
+            normalized_irs_categories = {
+                normalize_category_name(cat) for cat in category_list
+            }
+
+            # Add business categories to the list, checking against normalized names
             business_category_list = [
                 cat.category_name
                 for cat in business_categories
-                if cat.category_name not in category_list
+                if normalize_category_name(cat.category_name)
+                not in normalized_irs_categories
             ]
 
             # Sort the business categories for consistency
