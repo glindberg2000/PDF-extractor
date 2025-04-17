@@ -148,6 +148,14 @@ IMPORTANT INSTRUCTIONS:
                 "Utilities",
                 "Wages",
             ]
+
+            # Add business expense categories, excluding "Other Expenses" header
+            business_categories = BusinessExpenseCategory.objects.filter(
+                is_active=True
+            ).exclude(category_name="Other Expenses")
+            business_category_list = [cat.category_name for cat in business_categories]
+            category_list.extend(business_category_list)
+
             system_prompt = """You are an expert in business expense classification and tax preparation. Your role is to:
 1. Analyze transactions and determine if they are business or personal expenses
 2. For business expenses, determine the appropriate worksheet (6A, Vehicle, HomeOffice, or Personal)
