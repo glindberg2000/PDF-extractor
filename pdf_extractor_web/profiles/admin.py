@@ -115,9 +115,7 @@ IMPORTANT INSTRUCTIONS:
                 is_active=True, worksheet="6A"
             ).order_by("line_number")
 
-            category_list = [cat.name for cat in irs_categories]
-
-            # Add business expense categories, excluding "Other Expenses" header
+            # Get business expense categories
             business_categories = BusinessExpenseCategory.objects.filter(
                 is_active=True
             ).exclude(category_name="Other Expenses")
@@ -125,14 +123,15 @@ IMPORTANT INSTRUCTIONS:
             # Log the categories for debugging
             logger.info("\n=== Categories ===")
             logger.info("IRS Categories:")
-            for cat in category_list:
-                logger.info(f"- {cat}")
+            for cat in irs_categories:
+                logger.info(f"- {cat.name}")
 
             logger.info("\nBusiness Categories:")
             for cat in business_categories:
                 logger.info(f"- {cat.category_name}")
 
-            # Add business categories to the list
+            # Combine categories from both sources
+            category_list = [cat.name for cat in irs_categories]
             business_category_list = [
                 cat.category_name
                 for cat in business_categories
