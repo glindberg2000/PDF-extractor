@@ -110,44 +110,12 @@ IMPORTANT INSTRUCTIONS:
 
         else:
             # Classification prompt
-            category_list = [
-                "Advertising",
-                "Auto",
-                "Bank Charges",
-                "Business Insurance",
-                "Business Meals",
-                "Business Travel",
-                "Commissions",
-                "Contract Labor",
-                "Depreciation",
-                "Dues & Subscriptions",
-                "Equipment Rental",
-                "Equipment Purchase",
-                "Gas & Oil",
-                "Home Office",
-                "Interest",
-                "Legal & Professional",
-                "Licenses & Permits",
-                "Maintenance & Repairs",
-                "Marketing",
-                "Meals & Entertainment",
-                "Office Supplies",
-                "Other",
-                "Payroll",
-                "Postage",
-                "Printing",
-                "Professional Development",
-                "Property Taxes",
-                "Rent",
-                "Repairs & Maintenance",
-                "Software",
-                "Supplies",
-                "Taxes & Licenses",
-                "Telephone",
-                "Travel",
-                "Utilities",
-                "Wages",
-            ]
+            # Get IRS categories from the database
+            irs_categories = IRSExpenseCategory.objects.filter(
+                is_active=True, worksheet="6A"
+            ).order_by("line_number")
+
+            category_list = [cat.name for cat in irs_categories]
 
             # Add business expense categories, excluding "Other Expenses" header
             business_categories = BusinessExpenseCategory.objects.filter(
@@ -164,21 +132,11 @@ IMPORTANT INSTRUCTIONS:
             for cat in business_categories:
                 logger.info(f"- {cat.category_name}")
 
-            # Normalize category names for comparison (replace & with and)
-            def normalize_category_name(name):
-                return name.replace("&", "and").strip()
-
-            # Create normalized sets for comparison
-            normalized_irs_categories = {
-                normalize_category_name(cat) for cat in category_list
-            }
-
-            # Add business categories to the list, checking against normalized names
+            # Add business categories to the list
             business_category_list = [
                 cat.category_name
                 for cat in business_categories
-                if normalize_category_name(cat.category_name)
-                not in normalized_irs_categories
+                if cat.category_name not in category_list
             ]
 
             # Sort the business categories for consistency
