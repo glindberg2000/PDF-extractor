@@ -1,0 +1,54 @@
+{% extends "experimental_admin/base.html" %}
+
+{% block content %}
+<div class="bg-white shadow rounded-lg">
+    <div class="px-4 py-5 sm:p-6">
+        <h2 class="text-lg font-medium text-gray-900 mb-6">Experimental Admin Dashboard</h2>
+
+        <div class="grid grid-cols-1 gap-6 sm:grid-cols-2">
+            <div class="bg-white overflow-hidden shadow rounded-lg">
+                <div class="px-4 py-5 sm:p-6">
+                    <h3 class="text-lg font-medium text-gray-900 mb-4">Transactions</h3>
+                    <p class="text-sm text-gray-500 mb-4">Manage and process your transactions</p>
+                    <a href="{% url 'experimental_admin:transaction_list' %}"
+                        class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700">
+                        View Transactions
+                    </a>
+                </div>
+            </div>
+
+            <div class="bg-white overflow-hidden shadow rounded-lg">
+                <div class="px-4 py-5 sm:p-6">
+                    <h3 class="text-lg font-medium text-gray-900 mb-4">Processing Tasks</h3>
+                    <p class="text-sm text-gray-500 mb-4">Monitor batch processing tasks</p>
+                    <a href="{% url 'experimental_admin:task_list' %}"
+                        class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700">
+                        View Tasks
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <div class="mt-8">
+            <div class="bg-white overflow-hidden shadow rounded-lg">
+                <div class="px-4 py-5 sm:p-6">
+                    <h3 class="text-lg font-medium text-gray-900 mb-4">Quick Links</h3>
+                    <div class="space-y-4">
+                        <a href="{% url 'admin:index' %}" class="block text-sm text-indigo-600 hover:text-indigo-900">
+                            Back to Main Admin
+                        </a>
+                        <a href="{% url 'admin:profiles_transaction_changelist' %}"
+                            class="block text-sm text-indigo-600 hover:text-indigo-900">
+                            View All Transactions
+                        </a>
+                        <a href="{% url 'admin:profiles_processingtask_changelist' %}"
+                            class="block text-sm text-indigo-600 hover:text-indigo-900">
+                            View All Processing Tasks
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

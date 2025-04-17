@@ -731,6 +731,16 @@ class ToolAdmin(admin.ModelAdmin):
     list_display = ("name", "description", "module_path")
     search_fields = ("name", "description", "module_path")
 
+    def save_model(self, request, obj, form, change):
+        try:
+            super().save_model(request, obj, form, change)
+        except ValidationError as e:
+            messages.error(request, f"Error saving tool: {str(e)}")
+            return
+        except Exception as e:
+            messages.error(request, f"Unexpected error saving tool: {str(e)}")
+            return
+
 
 @admin.register(IRSWorksheet)
 class IRSWorksheetAdmin(admin.ModelAdmin):
@@ -790,3 +800,5 @@ class ProcessingTaskAdmin(admin.ModelAdmin):
     )
     search_fields = ("task_id", "client__client_id")
     ordering = ("-created_at",)
+SEARXNG_BASE_URL=http://localhost:8888
+SEARXNG_PORT=8888

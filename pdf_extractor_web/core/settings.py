@@ -44,6 +44,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "profiles",
     "simple_classifications",
+    "experimental_admin",
 ]
 
 MIDDLEWARE = [
