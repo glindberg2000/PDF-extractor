@@ -161,6 +161,26 @@ Consider these factors:
 - Amount and frequency
 - Business rules and patterns"""
 
+            # Get business context
+            business_context = ""
+            if transaction.client:
+                try:
+                    business_profile = BusinessProfile.objects.get(
+                        client_id=transaction.client.client_id
+                    )
+                    business_context = f"""
+Business Context:
+Type: {business_profile.business_type}
+Description: {business_profile.business_description}
+Industry Keywords: {', '.join(business_profile.industry_keywords) if business_profile.industry_keywords else 'Not specified'}
+Common Expenses: {', '.join(business_profile.common_expenses) if business_profile.common_expenses else 'Not specified'}
+Category Patterns: {', '.join(business_profile.category_patterns) if business_profile.category_patterns else 'Not specified'}
+"""
+                except BusinessProfile.DoesNotExist:
+                    logger.warning(
+                        f"No business profile found for client {transaction.client.client_id}"
+                    )
+
             user_prompt = f"""Return your analysis in this exact JSON format:
 {{
     "classification_type": "business" or "personal",
@@ -175,6 +195,8 @@ Transaction: {transaction.description}
 Amount: ${transaction.amount}
 Date: {transaction.transaction_date}
 
+{business_context}
+
 Available Categories:
 {chr(10).join(category_list)}
 
@@ -188,6 +210,7 @@ IMPORTANT RULES:
 - For business expenses, choose the most specific category that matches
 - If no exact match, use the most appropriate IRS category
 - For custom business categories, use them when they match exactly
+- Consider the business context when making classification decisions
 
 IMPORTANT: Your response must be a valid JSON object."""
 
