@@ -414,3 +414,24 @@ class ProcessingTask(models.Model):
 
     def __str__(self):
         return f"{self.task_type} task for {self.client.client_id} ({self.status})"
+
+
+class SearchResult(models.Model):
+    """Model to store search results from SearXNG."""
+
+    query = models.CharField(max_length=255)
+    title = models.CharField(max_length=255)
+    url = models.URLField()
+    content = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    source = models.CharField(max_length=50, default="searxng")
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["query"]),
+            models.Index(fields=["created_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.title} ({self.query})"

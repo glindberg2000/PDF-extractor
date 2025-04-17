@@ -1,3 +1,14 @@
-from .search import search_web, SearchToolException, SafeSearchLevel, function_schema
+"""
+Search Tool Package
 
-__all__ = ["search_web", "SearchToolException", "SafeSearchLevel", "function_schema"]
+This package provides search functionality using SearXNG.
+"""
+
+from .search_standalone import (
+    search_web,
+    SearchResult,
+    SafeSearchLevel,
+    SearchToolException,
+)
+
+__all__ = ["search_web", "SearchResult", "SafeSearchLevel", "SearchToolException"]

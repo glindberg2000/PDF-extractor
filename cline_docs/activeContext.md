@@ -428,6 +428,35 @@ Implemented stricter IRS-compliant business expense classification with:
 
 # Active Development Context
 
+## Current Focus
+- Implementing and testing the search tool integration with SearXNG
+- Modernizing the admin interface with Tailwind CSS
+- Setting up secure configuration management for services
+
+## Recent Changes
+- Fixed tools page layout and functionality
+- Integrated SearXNG search engine service
+- Secured configuration by moving sensitive keys to main .env
+- Updated port configuration for SearXNG (now running on 8888)
+- Modernized admin interface with Tailwind CSS
+
+## Next Steps
+1. Test the search tool functionality using the commandline test
+2. Verify SearXNG integration is working correctly
+3. Document the search tool usage in the system patterns
+4. Consider adding more search-related features if needed
+
+## Current Challenges
+- Ensuring secure configuration management across services
+- Maintaining consistent port configurations
+- Testing the search tool integration
+
+## Environment Status
+- SearXNG running on port 8888
+- Configuration centralized in main .env
+- Tools page fixed and functional
+- Admin interface modernized
+
 ## Current Task
 Debugging transaction classifier caching mechanism in `dataextractai/agents/transaction_classifier.py`.
 

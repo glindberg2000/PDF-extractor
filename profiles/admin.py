@@ -11,3 +11,5 @@ from .models import (
     TransactionClassification,
 )
 from simple_classifications.models import SimpleClassification2
+
+SEARXNG_BASE_URL = "http://localhost:8888"
