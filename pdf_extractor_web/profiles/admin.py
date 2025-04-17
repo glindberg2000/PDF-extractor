@@ -111,8 +111,9 @@ IMPORTANT INSTRUCTIONS:
         else:
             # Classification prompt
             # Get IRS categories from the database
+            worksheet_6a = IRSWorksheet.objects.get(name="6A")
             irs_categories = IRSExpenseCategory.objects.filter(
-                is_active=True, worksheet="6A"
+                is_active=True, worksheet=worksheet_6a
             ).order_by("line_number")
 
             # Get business expense categories
