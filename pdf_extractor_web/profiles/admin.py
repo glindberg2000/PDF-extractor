@@ -347,6 +347,9 @@ def process_transactions(modeladmin, request, queryset):
                 "payee": response.get("payee"),
                 "confidence": response.get("confidence"),
                 "reasoning": response.get("reasoning"),
+                "payee_reasoning": (
+                    response.get("reasoning") if "payee" in agent.name.lower() else None
+                ),
                 "transaction_type": response.get("transaction_type"),
                 "questions": response.get("questions"),
                 "classification_type": response.get("classification_type"),
@@ -373,7 +376,7 @@ def process_transactions(modeladmin, request, queryset):
                         "normalized_description",
                         "payee",
                         "confidence",
-                        "reasoning",
+                        "payee_reasoning",
                         "transaction_type",
                         "questions",
                         "payee_extraction_method",
@@ -419,6 +422,33 @@ def process_transactions(modeladmin, request, queryset):
 
 
 process_transactions.short_description = "Process selected transactions with agent"
+
+
+def reset_processing_status(modeladmin, request, queryset):
+    """Reset selected transactions to 'Not Processed' status."""
+    updated = queryset.update(
+        payee_extraction_method=None,
+        classification_method=None,
+        payee=None,
+        normalized_description=None,
+        confidence=None,
+        reasoning=None,
+        payee_reasoning=None,
+        business_context=None,
+        questions=None,
+        classification_type=None,
+        worksheet=None,
+        business_percentage=None,
+        category=None,
+    )
+    messages.success(
+        request, f"Successfully reset {updated} transactions to 'Not Processed' status."
+    )
+
+
+reset_processing_status.short_description = (
+    "Reset selected transactions to 'Not Processed'"
+)
 
 
 @admin.register(Transaction)
@@ -483,10 +513,15 @@ class TransactionAdmin(admin.ModelAdmin):
         "reasoning",
         "payee_reasoning",
     )
+    actions = ["reset_processing_status"]  # Add the new action
 
     def get_actions(self, request):
         actions = super().get_actions(request)
-
+        actions["reset_processing_status"] = (
+            reset_processing_status,
+            "reset_processing_status",
+            reset_processing_status.short_description,
+        )
         # Add an action for each agent
         for agent in Agent.objects.all():
             action_name = f'process_with_{agent.name.lower().replace(" ", "_")}'
@@ -517,11 +552,7 @@ class TransactionAdmin(admin.ModelAdmin):
                         ),
                         "payee": response.get("payee"),
                         "confidence": response.get("confidence"),
-                        "reasoning": (
-                            response.get("reasoning")
-                            if "classification" in agent.name.lower()
-                            else None
-                        ),
+                        "reasoning": response.get("reasoning"),
                         "payee_reasoning": (
                             response.get("reasoning")
                             if "payee" in agent.name.lower()
