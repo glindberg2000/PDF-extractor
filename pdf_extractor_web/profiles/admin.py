@@ -80,8 +80,8 @@ def call_agent(agent_name, transaction, model="gpt-4o-mini"):
 4. Return a final response in the exact JSON format specified
 
 IMPORTANT RULES:
-1. Make at most ONE search call
-2. After the search (or immediately if search not needed), provide the final JSON response
+1. You may make up to THREE search calls if needed
+2. After your searches (or immediately if no search needed), provide the final JSON response
 3. Format the response exactly as specified"""
 
             user_prompt = f"""Analyze this transaction and return a JSON object with EXACTLY these field names:
@@ -100,8 +100,8 @@ Amount: ${transaction.amount}
 Date: {transaction.transaction_date}
 
 IMPORTANT INSTRUCTIONS:
-1. Make at most ONE search call to look up vendor information
-2. After the search (or if no search needed), provide the final JSON response
+1. You may make up to THREE search calls to look up vendor information
+2. After your searches (or if no search needed), provide the final JSON response
 3. Include the type of business and what was purchased in the normalized_description
 4. Reference any search results used in the reasoning field
 5. NEVER include store numbers, locations, or other non-standard elements in the payee field
@@ -270,7 +270,7 @@ IMPORTANT: Your response must be a valid JSON object."""
 
             # Track if we've already made a tool call
             tool_call_made = False
-            max_tool_calls = 1  # Limit to one tool call
+            max_tool_calls = 3  # Increased to allow up to 3 searches
 
             # Handle tool calls and final response
             while (
