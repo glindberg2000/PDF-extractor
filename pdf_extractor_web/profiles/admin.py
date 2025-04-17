@@ -149,11 +149,21 @@ IMPORTANT INSTRUCTIONS:
                 "Wages",
             ]
 
-            # Add business expense categories, excluding "Other Expenses" header
+            # Add business expense categories, excluding "Other Expenses" header and duplicates
             business_categories = BusinessExpenseCategory.objects.filter(
                 is_active=True
             ).exclude(category_name="Other Expenses")
-            business_category_list = [cat.category_name for cat in business_categories]
+            
+            # Convert to set to remove duplicates, then back to list
+            business_category_list = list(set(
+                cat.category_name for cat in business_categories
+                if cat.category_name not in category_list
+            ))
+            
+            # Sort the business categories for consistency
+            business_category_list.sort()
+            
+            # Extend the main category list
             category_list.extend(business_category_list)
 
             system_prompt = """You are an expert in business expense classification and tax preparation. Your role is to:
