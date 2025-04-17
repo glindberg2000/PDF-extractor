@@ -74,11 +74,14 @@ def call_agent(agent_name, transaction, model="gpt-4o-mini"):
         if "payee" in agent_name.lower():
             system_prompt = """You are a transaction analysis assistant. Your task is to:
 1. Identify the payee/merchant from transaction descriptions
-2. Use the search tool to look up vendor information
+2. Use the search tool to look up vendor information if needed
 3. Provide detailed, normalized descriptions
-4. Return a final response after using the search tool
+4. Return a final response in the exact JSON format specified
 
-IMPORTANT: After using the search tool, you MUST provide a final response with the transaction details."""
+IMPORTANT RULES:
+1. Make at most ONE search call
+2. After the search (or immediately if search not needed), provide the final JSON response
+5. Format the response exactly as specified"""
 
             user_prompt = f"""Analyze this transaction and return a JSON object with EXACTLY these field names:
 {{
@@ -96,13 +99,14 @@ Amount: ${transaction.amount}
 Date: {transaction.transaction_date}
 
 IMPORTANT INSTRUCTIONS:
-1. ALWAYS use the search tool to look up vendor information
-2. Use the search results to provide detailed, specific descriptions
+1. Make at most ONE search call to look up vendor information
+2. After the search (or if no search needed), provide the final JSON response
 3. Include the type of business and what was purchased in the normalized_description
 4. Reference any search results used in the reasoning field
-5. After using the search tool, you MUST provide a final response
-6. NEVER include store numbers, locations, or other non-standard elements in the payee field
-7. Normalize the payee name to its standard business name (e.g., 'Lowe's' not 'LOWE'S #1636')"""
+5. NEVER include store numbers, locations, or other non-standard elements in the payee field
+6. Normalize the payee name to its standard business name (e.g., 'Lowe's' not 'LOWE'S #1636')
+7. ALWAYS provide a final JSON response"""
+
         else:
             # Classification prompt
             category_list = [
@@ -217,8 +221,12 @@ IMPORTANT: Your response must be a valid JSON object."""
                 {"role": "user", "content": user_prompt},
             ],
             "response_format": {"type": "json_object"},
-            "tools": tool_definitions if tool_definitions else None,
         }
+
+        # Only add tools and tool_choice if tools are available
+        if tool_definitions:
+            payload["tools"] = tool_definitions
+            payload["tool_choice"] = "auto"
 
         # Log the complete API request
         logger.info("\n=== API Request ===")
@@ -236,9 +244,15 @@ IMPORTANT: Your response must be a valid JSON object."""
             logger.info("\n=== API Response ===")
             logger.info(f"Response: {response}")
 
-            # Check if we got a tool call
-            if response.choices[0].message.tool_calls:
-                logger.info("Tool call detected, executing...")
+            # Track if we've already made a tool call
+            tool_call_made = False
+
+            # Handle tool calls and final response
+            while (
+                response.choices
+                and response.choices[0].message.tool_calls
+                and not tool_call_made
+            ):
                 tool_call = response.choices[0].message.tool_calls[0]
                 tool_name = tool_call.function.name
                 tool_args = json.loads(tool_call.function.arguments)
@@ -271,9 +285,18 @@ IMPORTANT: Your response must be a valid JSON object."""
                         ]
                     )
 
+                    # Add a message emphasizing the need for a final JSON response
+                    payload["messages"].append(
+                        {
+                            "role": "user",
+                            "content": "Now provide your final response in the exact JSON format specified. Do not make any more tool calls.",
+                        }
+                    )
+
                     # Get final response
                     response = client.chat.completions.create(**payload)
                     logger.info(f"Final response after tool: {response}")
+                    tool_call_made = True
 
             # Get the final content
             if not response.choices or not response.choices[0].message.content:
@@ -411,10 +434,10 @@ class TransactionAdmin(admin.ModelAdmin):
         "worksheet",
         "business_percentage",
         "confidence",
-        "business_context",
+        "reasoning",  # Classification reasoning
+        "payee_reasoning",  # Payee lookup reasoning
         "classification_method",
         "payee_extraction_method",
-        "reasoning",
     )
     list_filter = (
         ClientFilter,
@@ -437,6 +460,7 @@ class TransactionAdmin(admin.ModelAdmin):
         "account_number",
         "payee",
         "reasoning",
+        "payee_reasoning",
         "business_context",
         "questions",
         "classification_type",
@@ -457,6 +481,7 @@ class TransactionAdmin(admin.ModelAdmin):
         "classification_method",
         "payee_extraction_method",
         "reasoning",
+        "payee_reasoning",
     )
 
     def get_actions(self, request):
@@ -492,7 +517,16 @@ class TransactionAdmin(admin.ModelAdmin):
                         ),
                         "payee": response.get("payee"),
                         "confidence": response.get("confidence"),
-                        "reasoning": response.get("reasoning"),
+                        "reasoning": (
+                            response.get("reasoning")
+                            if "classification" in agent.name.lower()
+                            else None
+                        ),
+                        "payee_reasoning": (
+                            response.get("reasoning")
+                            if "payee" in agent.name.lower()
+                            else None
+                        ),
                         "transaction_type": response.get("transaction_type"),
                         "questions": response.get("questions"),
                         "classification_type": response.get("classification_type"),
@@ -521,7 +555,7 @@ class TransactionAdmin(admin.ModelAdmin):
                                 "normalized_description",
                                 "payee",
                                 "confidence",
-                                "reasoning",
+                                "payee_reasoning",
                                 "transaction_type",
                                 "questions",
                                 "payee_extraction_method",

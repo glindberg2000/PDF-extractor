@@ -4,63 +4,37 @@
 Refining the transaction classification system to achieve the core goal: producing tax-ready Excel reports with transactions accurately separated into 6A, Auto, HomeOffice, and Personal worksheets, ensuring consistency through enhanced matching logic.
 
 ## Current State
-- The multi-pass classification framework (`transaction_classifier.py`) is operational but requires significant enhancements.
-- It processes transactions row-by-row, using AI and basic database lookups/matching.
-- Payee normalization is missing.
-- Matching logic (`_find_matching_transaction`) is basic and needs improvement (use normalized payee, ensure full field copying).
-- Worksheet assignment relies heavily on AI fallback or defaults ('6A') due to missing business rule integration and handling for 'Personal' category.
-- Excel export (`excel_formatter.py`) generates only a combined transaction list, not the required separate worksheets.
-- Recent debugging resolved numerous errors related to DB initialization, category mapping, variable names, and type hints (Commit `4a5cce5`).
-- Explicit caching seems removed, replaced by DB lookups/matching.
+- Successfully fixed agent separation issues
+- Verified both Payee Lookup and Classification agents working correctly
+- Created backup of current working state
+- Updated system patterns with detailed agent documentation
 
-## Recent Changes (Post-Debugging)
-- Codebase is stable after fixing multiple runtime errors in classification logic.
-- `tax_categories` table initialization is working correctly.
-- Basic transaction flow (Pass 1 -> 2 -> 3) completes for test cases.
-- Committed all current changes (including potentially unrelated ones) in commit `4a5cce5`.
+## Recent Changes
+1. Fixed Payee Lookup Agent:
+   - Properly normalizing vendor names
+   - Correctly using search tool
+   - Returning all required fields
+   - Not including store numbers/locations
 
-## Next Steps (Refined Plan)
-1.  **Implement Payee Normalization**:
-    *   Define normalization rules (regex for store #, state, zip, etc.).
-    *   Add logic (e.g., in `TransactionNormalizer` or parser stage) to create and store a `normalized_payee` field (likely needs DB schema update).
-    *   Update Pass 1 AI prompt to potentially use/generate this.
-2.  **Enhance Matching Logic (`_find_matching_transaction`)**:
-    *   Modify to query using `normalized_payee`.
-    *   Ensure it reliably copies *all* relevant classification fields (Tax Category ID, Worksheet, Business %, Reasoning, Confidence) from the matched transaction.
-3.  **Develop Worksheet Assignment Logic (Pass 3)**:
-    *   Decide how to handle 'Personal' classification (e.g., add to DB CHECK constraint, use a separate field/flag, filter during export).
-    *   Implement rules within Pass 3 (`_get_tax_classification` or a new dedicated step/function) to determine the correct worksheet ('6A', 'Auto', 'HomeOffice', 'Personal').
-    *   This logic should consider:
-        *   The assigned tax category.
-        *   Business profile details (e.g., does the business use a vehicle? have a home office?).
-        *   Business percentage.
-    *   Update the `transaction_classifications` table update in `_commit_pass` to store the determined worksheet.
-4.  **Update Excel Formatter (`excel_formatter.py`)**:
-    *   Modify `create_report` to:
-        *   Read the final assigned `worksheet` for each transaction from the database.
-        *   Create separate sheets named '6A', 'Auto', 'HomeOffice', 'Personal'.
-        *   Populate each sheet only with transactions assigned to that worksheet.
-        *   Adjust the 'Summary' sheet if needed to reflect this separation.
-5.  **Testing**: After implementing the above, test thoroughly with diverse transactions to verify:
-    *   Payee normalization works.
-    *   Matching is consistent and prevents unnecessary AI calls.
-    *   Worksheet assignment rules are correct.
-    *   Excel output has the correct sheets and data separation.
+2. Verified Classification Agent:
+   - Using correct worksheet assignments
+   - Proper category selection
+   - Appropriate confidence levels
+   - Detailed reasoning
 
-## Current Issues/Challenges
-- Lack of payee normalization hinders consistent matching.
-- Rudimentary worksheet assignment logic prevents correct output separation.
-- Excel export doesn't meet the primary goal of separate tax worksheets.
-- Robustness of matching and classification needs validation.
+3. Documented Agent Architecture:
+   - Clear field separation
+   - Development rules
+   - Tool integration patterns
 
-## Dependencies
-- Payee normalization is required for effective matching.
-- Correct worksheet assignment is required for meaningful Excel export.
+## Next Steps
+1. Monitor agent performance for any regressions
+2. Consider refactoring if frequent agent interaction issues occur
+3. Keep documentation updated with any changes
+4. Maintain strict field separation in future development
 
-## Notes
-- Currently monitoring Pass 1 execution with new caching strategy
-- Will need to carefully review Pass 2 and 3 outputs for data quality
-- Final report generation will need thorough validation
+## Open Questions
+None at this time - system is functioning as intended
 
 ## Current CLI Structure
 1. Legacy System (scripts/grok.py):

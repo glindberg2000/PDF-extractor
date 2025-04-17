@@ -154,7 +154,8 @@ class Transaction(models.Model):
     confidence = models.CharField(
         max_length=50, blank=True, null=True
     )  # high, medium, low
-    reasoning = models.TextField(blank=True, null=True)
+    reasoning = models.TextField(blank=True, null=True)  # Classification reasoning
+    payee_reasoning = models.TextField(blank=True, null=True)  # Payee lookup reasoning
     business_context = models.TextField(blank=True, null=True)
     questions = models.TextField(blank=True, null=True)
 
@@ -185,14 +186,19 @@ class Transaction(models.Model):
             ("AI", "AI Only"),
             ("AI+Search", "AI with Search"),
             ("Human", "Human Override"),
+            ("None", "Not Processed"),  # Added this choice
         ],
-        default="AI",
+        default=None,  # Changed from "AI" to None
         help_text="Method used to extract the payee information",
     )
     classification_method = models.CharField(
         max_length=20,
-        choices=[("AI", "AI Classification"), ("Human", "Human Override")],
-        default="AI",
+        choices=[
+            ("AI", "AI Classification"),
+            ("Human", "Human Override"),
+            ("None", "Not Processed"),
+        ],
+        default=None,  # Changed from "AI" to None
         help_text="Method used to classify the transaction",
     )
 

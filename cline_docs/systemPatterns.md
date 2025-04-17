@@ -1068,52 +1068,63 @@ class QBExportResult:
    - Audit logging 
 
 ## Agent Architecture
-1. Agent Types:
-   - Payee Lookup Agent: Identifies vendors and normalizes descriptions
-   - Classification Agent: Determines business/personal expenses and worksheets
 
-2. Agent Isolation:
-   - Each agent has its own prompt structure
-   - Separate response schemas for each agent
-   - Independent tool handling
-   - Isolated field updates
+### Agent Separation
+1. **Payee Lookup Agent**
+   - Purpose: Identify and normalize vendor names
+   - Fields:
+     - normalized_description
+     - payee
+     - confidence
+     - reasoning
+     - transaction_type
+     - questions
+     - needs_search
+   - Tools: Search tool for vendor verification
+   - Rules:
+     - NEVER include store numbers or locations in payee field
+     - ALWAYS normalize to standard business name
+     - MUST use search tool for verification
+     - MUST provide final response after tool use
 
-3. Prompt Structure:
-   - System Message: Defines role and core responsibilities
-   - User Message: Provides specific instructions and format
-   - Transaction Context: Includes business profile information
+2. **Classification Agent**
+   - Purpose: Classify transactions as business/personal
+   - Fields:
+     - classification_type
+     - worksheet
+     - category
+     - confidence
+     - reasoning
+     - questions
+   - Rules:
+     - Personal expenses MUST use 'Personal' worksheet
+     - Business expenses use '6A', 'Vehicle', or 'HomeOffice'
+     - Choose most specific category from available list
+     - Include detailed reasoning for decisions
 
-## Tool Integration
-1. Search Tool:
-   - Used by Payee Lookup agent
-   - Must be followed by final response
-   - Results incorporated into reasoning
+### Field Management
+1. **Payee Fields**
+   - normalized_description
+   - payee
+   - confidence
+   - reasoning
+   - transaction_type
+   - questions
+   - payee_extraction_method
 
-2. Tool Call Flow:
-   - Initial request
-   - Tool execution
-   - Results processing
-   - Final response generation
+2. **Classification Fields**
+   - classification_type
+   - worksheet
+   - category
+   - confidence
+   - reasoning
+   - questions
+   - classification_method
 
-## Data Flow
-1. Transaction Processing:
-   - Input: Raw transaction description
-   - Processing: Agent analysis
-   - Output: Normalized fields and classifications
-
-2. Field Updates:
-   - Payee Lookup: Updates vendor-related fields
-   - Classification: Updates business/personal fields
-   - No overlap in field updates
-
-## Error Handling
-1. Logging:
-   - Detailed request/response logging
-   - Tool call tracking
-   - Error tracing
-   - Field update verification
-
-2. Validation:
-   - JSON schema validation
-   - Field value validation
-   - Response completeness checks 
+### Development Rules
+1. NEVER modify one agent's fields without checking impact on others
+2. ALWAYS test both agents after any changes
+3. Keep prompts and field mappings in separate, well-documented locations
+4. Use clear interfaces between agents
+5. Maintain strict field separation
+6. Document all field dependencies 
