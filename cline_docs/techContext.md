@@ -617,4 +617,46 @@ python-dotenv>=0.19.0
 questionary>=1.10.0
 thefuzz>=0.19.0
 colorama>=0.4.4
-``` 
+```
+
+## Background Processing
+- Django management commands for task processing
+- PostgreSQL for task queue
+- JSONB for flexible metadata storage
+- Admin interface for monitoring
+- Command-line execution
+
+## Task Processing
+- process_tasks.py management command
+- Transaction-level error handling
+- Progress tracking
+- Status management
+- Logging and monitoring
+
+## Database Schema
+- ProcessingTask model
+- Status tracking fields
+- Progress counters
+- Error details in JSONB
+- Metadata storage
+
+## Monitoring
+- Admin interface integration
+- Status display
+- Progress tracking
+- Error viewing
+- Log access
+
+## Execution
+- Manual command-line execution
+- Potential for cron scheduling
+- Single-user focused
+- Simple deployment
+- Easy monitoring
+
+## Backup Procedures
+- Database backup required
+- Regular backup schedule
+- Transaction safety
+- Error recovery
+- Data integrity checks 

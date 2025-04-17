@@ -538,3 +538,28 @@ Implementing new LLM integration with structured outputs and tools:
 - Each agent has its own specific prompt and schema
 - Tool calls must be properly handled to ensure final responses
 - Logging is crucial for debugging and monitoring 
+
+## Background Processing Implementation
+- Uses ProcessingTask model to track jobs
+- Supports both payee lookup and classification tasks
+- Provides monitoring interface in admin
+- Uses existing agent infrastructure
+- Maintains same processing logic as web interface
+
+## Current State
+- Basic functionality implemented and tested
+- Working with both payee lookup and classification agents
+- Monitoring interface accessible from transaction admin
+- Simple command-line execution for processing tasks
+
+## Technical Details
+- Task status tracking: pending, processing, completed, failed
+- Progress monitoring: transaction_count, processed_count, error_count
+- Error handling and logging
+- Uses same agent processing as web interface
+
+## Next Actions
+1. Verify backup procedures
+2. Test with larger transaction sets
+3. Consider adding periodic execution
+4. Document usage procedures 

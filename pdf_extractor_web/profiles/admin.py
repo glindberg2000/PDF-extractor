@@ -10,6 +10,7 @@ from .models import (
     IRSExpenseCategory,
     BusinessExpenseCategory,
     TransactionClassification,
+    ProcessingTask,
 )
 from django.utils.translation import gettext_lazy as _
 from django.http import HttpResponseRedirect
@@ -451,6 +452,44 @@ reset_processing_status.short_description = (
 )
 
 
+def create_batch_task(modeladmin, request, queryset, task_type):
+    """Create a batch processing task for the selected transactions."""
+    if not queryset.exists():
+        messages.error(request, "No transactions selected")
+        return
+
+    # Get the client from the first transaction (assuming all selected transactions are from the same client)
+    client = queryset.first().client
+
+    # Create the processing task
+    task = ProcessingTask.objects.create(
+        task_type=task_type,
+        client=client,
+        transaction_count=queryset.count(),
+        task_metadata={
+            "transaction_ids": list(queryset.values_list("id", flat=True)),
+            "user": request.user.username,
+        },
+    )
+
+    messages.success(
+        request,
+        f"Created {task_type} batch task for {queryset.count()} transactions. Task ID: {task.task_id}",
+    )
+
+
+def batch_payee_lookup(modeladmin, request, queryset):
+    create_batch_task(modeladmin, request, queryset, "payee_lookup")
+
+
+def batch_classification(modeladmin, request, queryset):
+    create_batch_task(modeladmin, request, queryset, "classification")
+
+
+batch_payee_lookup.short_description = "Batch process payee lookup"
+batch_classification.short_description = "Batch process classification"
+
+
 @admin.register(Transaction)
 class TransactionAdmin(admin.ModelAdmin):
     list_display = (
@@ -513,7 +552,14 @@ class TransactionAdmin(admin.ModelAdmin):
         "reasoning",
         "payee_reasoning",
     )
-    actions = ["reset_processing_status"]  # Add the new action
+    actions = [
+        "reset_processing_status",
+        "batch_payee_lookup",
+        "batch_classification",
+    ] + [
+        f"process_with_{agent.name.lower().replace(' ', '_')}"
+        for agent in Agent.objects.all()
+    ]
 
     def get_actions(self, request):
         actions = super().get_actions(request)
@@ -521,6 +567,16 @@ class TransactionAdmin(admin.ModelAdmin):
             reset_processing_status,
             "reset_processing_status",
             reset_processing_status.short_description,
+        )
+        actions["batch_payee_lookup"] = (
+            batch_payee_lookup,
+            "batch_payee_lookup",
+            batch_payee_lookup.short_description,
+        )
+        actions["batch_classification"] = (
+            batch_classification,
+            "batch_classification",
+            batch_classification.short_description,
         )
         # Add an action for each agent
         for agent in Agent.objects.all():
@@ -639,7 +695,22 @@ class TransactionAdmin(admin.ModelAdmin):
 
     def get_urls(self):
         urls = super().get_urls()
-        return urls
+        custom_urls = [
+            path(
+                "processing-tasks/",
+                self.admin_site.admin_view(self.view_processing_tasks),
+                name="profiles_transaction_processing_tasks",
+            ),
+        ]
+        return custom_urls + urls
+
+    def view_processing_tasks(self, request):
+        return HttpResponseRedirect("/admin/profiles/processingtask/")
+
+    def changelist_view(self, request, extra_context=None):
+        extra_context = extra_context or {}
+        extra_context["show_processing_tasks"] = True
+        return super().changelist_view(request, extra_context=extra_context)
 
 
 @admin.register(LLMConfig)
@@ -688,3 +759,34 @@ class BusinessExpenseCategoryAdmin(admin.ModelAdmin):
     search_fields = ("category_name", "description")
     list_filter = ("business", "worksheet", "is_active", "tax_year")
     ordering = ("business", "category_name")
+
+
+@admin.register(ProcessingTask)
+class ProcessingTaskAdmin(admin.ModelAdmin):
+    list_display = (
+        "task_id",
+        "status",
+        "task_type",
+        "client",
+        "created_at",
+        "updated_at",
+        "transaction_count",
+        "processed_count",
+        "error_count",
+    )
+    list_filter = ("status", "task_type", "client")
+    readonly_fields = (
+        "task_id",
+        "status",
+        "task_type",
+        "client",
+        "created_at",
+        "updated_at",
+        "transaction_count",
+        "processed_count",
+        "error_count",
+        "error_details",
+        "task_metadata",
+    )
+    search_fields = ("task_id", "client__client_id")
+    ordering = ("-created_at",)

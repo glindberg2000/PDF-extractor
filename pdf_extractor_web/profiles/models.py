@@ -1,5 +1,6 @@
 from django.db import models
 from django.db.models import JSONField
+import uuid
 
 # Create your models here.
 
@@ -381,3 +382,32 @@ class ClassificationOverride(models.Model):
 
     def __str__(self):
         return f"Override for {self.transaction} by {self.created_by}"
+
+
+class ProcessingTask(models.Model):
+    STATUS_CHOICES = [
+        ("pending", "Pending"),
+        ("processing", "Processing"),
+        ("completed", "Completed"),
+        ("failed", "Failed"),
+    ]
+
+    TASK_TYPES = [
+        ("payee_lookup", "Payee Lookup"),
+        ("classification", "Classification"),
+    ]
+
+    task_id = models.UUIDField(primary_key=True, default=uuid.uuid4)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
+    task_type = models.CharField(max_length=20, choices=TASK_TYPES)
+    client = models.ForeignKey(BusinessProfile, on_delete=models.CASCADE)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    transaction_count = models.IntegerField()
+    processed_count = models.IntegerField(default=0)
+    error_count = models.IntegerField(default=0)
+    error_details = models.JSONField(default=dict)
+    task_metadata = models.JSONField(default=dict)  # For storing dynamic configuration
+
+    def __str__(self):
+        return f"{self.task_type} task for {self.client.client_id} ({self.status})"
