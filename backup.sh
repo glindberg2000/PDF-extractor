@@ -1,102 +1,49 @@
 #!/bin/bash
 
-# Configuration
-BACKUP_DIR="backups"
-TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-BACKUP_NAME="backup_${TIMESTAMP}"
-BACKUP_PATH="${BACKUP_DIR}/${BACKUP_NAME}"
+# Create backup directory with timestamp
+BACKUP_DIR="backups/backup_$(date +%Y%m%d_%H%M%S)"
+mkdir -p "$BACKUP_DIR"
 
-# Database configurations
-MAIN_DB_NAME="mydatabase"
-MAIN_DB_USER="newuser"
-MAIN_DB_PASSWORD=""
-MAIN_PORT="8001"
+echo "Backing up main database (Port 5432)..."
+docker exec postgres_container pg_dump -U ${POSTGRES_USER} -d mydatabase > "$BACKUP_DIR/main_database.sql"
 
-TEST_DB_NAME="test_database"
-TEST_DB_USER="newuser"
-TEST_DB_PASSWORD=""
-TEST_PORT="8000"
+echo "Backing up test database (Port 5433)..."
+docker exec postgres_test pg_dump -U newuser -d mydatabase > "$BACKUP_DIR/test_database.sql"
 
-# Create backup directory
-mkdir -p "${BACKUP_PATH}"
-
-# 1. Main Database Backup (Port 8001)
-echo "Backing up main database (Port ${MAIN_PORT})..."
-if [ -n "$MAIN_DB_PASSWORD" ]; then
-    PGPASSWORD="${MAIN_DB_PASSWORD}" pg_dump -U "${MAIN_DB_USER}" "${MAIN_DB_NAME}" > "${BACKUP_PATH}/main_database.sql"
-else
-    pg_dump -U "${MAIN_DB_USER}" "${MAIN_DB_NAME}" > "${BACKUP_PATH}/main_database.sql"
-fi
-
-# 2. Test Database Backup (Port 8000)
-echo "Backing up test database (Port ${TEST_PORT})..."
-if [ -n "$TEST_DB_PASSWORD" ]; then
-    PGPASSWORD="${TEST_DB_PASSWORD}" pg_dump -U "${TEST_DB_USER}" "${TEST_DB_NAME}" > "${BACKUP_PATH}/test_database.sql"
-else
-    pg_dump -U "${TEST_DB_USER}" "${TEST_DB_NAME}" > "${BACKUP_PATH}/test_database.sql"
-fi
-
-# 3. Migrations Backup (both versions)
 echo "Backing up migrations..."
-mkdir -p "${BACKUP_PATH}/migrations"
-cp -r pdf_extractor_web/profiles/migrations/* "${BACKUP_PATH}/migrations/"
-cp -r test_django/pdf_extractor_web/profiles/migrations/* "${BACKUP_PATH}/migrations/"
+cp -r pdf_extractor_web/profiles/migrations "$BACKUP_DIR/"
 
-# 4. Memory Bank Backup
 echo "Backing up memory bank..."
-cp -r cline_docs "${BACKUP_PATH}/cline_docs"
+cp -r cline_docs "$BACKUP_DIR/"
 
-# 5. Code Snapshot
 echo "Creating code snapshot..."
 git add .
-git commit -m "Backup snapshot ${TIMESTAMP}" --no-verify
-git tag "backup_${TIMESTAMP}"
+git commit -m "Backup snapshot $(date +%Y%m%d_%H%M%S)"
 
-# 6. Create metadata
 echo "Creating backup metadata..."
-cat > "${BACKUP_PATH}/metadata.txt" << EOF
-Backup created: ${TIMESTAMP}
+cat > "$BACKUP_DIR/metadata.txt" << EOF
+Backup created: $(date)
 Git commit: $(git rev-parse HEAD)
-
-Main Instance (Port ${MAIN_PORT}):
-Database: ${MAIN_DB_NAME}
-User: ${MAIN_DB_USER}
-Database size: $(du -h "${BACKUP_PATH}/main_database.sql" | cut -f1)
-
-Test Instance (Port ${TEST_PORT}):
-Database: ${TEST_DB_NAME}
-User: ${TEST_DB_USER}
-Database size: $(du -h "${BACKUP_PATH}/test_database.sql" | cut -f1)
-
-Migration count: $(find "${BACKUP_PATH}/migrations" -name "*.py" | wc -l)
-Memory Bank: cline_docs
+Database versions:
+- Main: $(docker exec postgres_container psql -U ${POSTGRES_USER} -d mydatabase -c "SELECT version();" | tail -n 3 | head -n 1)
+- Test: $(docker exec postgres_test psql -U newuser -d mydatabase -c "SELECT version();" | tail -n 3 | head -n 1)
 EOF
 
-# 7. Create restore script
 echo "Creating restore script..."
-cat > "${BACKUP_PATH}/restore.sh" << EOF
+cat > "$BACKUP_DIR/restore.sh" << 'EOF'
 #!/bin/bash
 
 # Restore main database
 echo "Restoring main database..."
-if [ -n "$MAIN_DB_PASSWORD" ]; then
-    PGPASSWORD="${MAIN_DB_PASSWORD}" psql -U "${MAIN_DB_USER}" "${MAIN_DB_NAME}" < main_database.sql
-else
-    psql -U "${MAIN_DB_USER}" "${MAIN_DB_NAME}" < main_database.sql
-fi
+docker exec -i postgres_container psql -U ${POSTGRES_USER} -d mydatabase < main_database.sql
 
 # Restore test database
 echo "Restoring test database..."
-if [ -n "$TEST_DB_PASSWORD" ]; then
-    PGPASSWORD="${TEST_DB_PASSWORD}" psql -U "${TEST_DB_USER}" "${TEST_DB_NAME}" < test_database.sql
-else
-    psql -U "${TEST_DB_USER}" "${TEST_DB_NAME}" < test_database.sql
-fi
+docker exec -i postgres_test psql -U newuser -d mydatabase < test_database.sql
 
 # Restore migrations
 echo "Restoring migrations..."
-cp -r migrations/* pdf_extractor_web/profiles/migrations/
-cp -r migrations/* test_django/pdf_extractor_web/profiles/migrations/
+cp -r migrations/* ../pdf_extractor_web/profiles/migrations/
 
 # Restore memory bank
 echo "Restoring memory bank..."
@@ -105,6 +52,6 @@ cp -r cline_docs/* ../cline_docs/
 echo "Restore complete!"
 EOF
 
-chmod +x "${BACKUP_PATH}/restore.sh"
+chmod +x "$BACKUP_DIR/restore.sh"
 
-echo "Backup complete! Files stored in ${BACKUP_PATH}" 
+echo "Backup complete! Files stored in $BACKUP_DIR" 
