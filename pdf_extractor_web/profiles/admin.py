@@ -25,7 +25,6 @@ import logging
 import traceback
 from openai import OpenAI
 import sys
-from django.core.management import call_command
 
 # Add the root directory to the Python path
 sys.path.append(
@@ -80,9 +79,9 @@ def call_agent(agent_name, transaction, model="gpt-4o-mini"):
 4. Return a final response in the exact JSON format specified
 
 IMPORTANT RULES:
-1. You may make up to THREE search calls if needed
-2. After your searches (or immediately if no search needed), provide the final JSON response
-3. Format the response exactly as specified"""
+1. Make at most ONE search call
+2. After the search (or immediately if search not needed), provide the final JSON response
+5. Format the response exactly as specified"""
 
             user_prompt = f"""Analyze this transaction and return a JSON object with EXACTLY these field names:
 {{
@@ -100,8 +99,8 @@ Amount: ${transaction.amount}
 Date: {transaction.transaction_date}
 
 IMPORTANT INSTRUCTIONS:
-1. You may make up to THREE search calls to look up vendor information
-2. After your searches (or if no search needed), provide the final JSON response
+1. Make at most ONE search call to look up vendor information
+2. After the search (or if no search needed), provide the final JSON response
 3. Include the type of business and what was purchased in the normalized_description
 4. Reference any search results used in the reasoning field
 5. NEVER include store numbers, locations, or other non-standard elements in the payee field
@@ -110,45 +109,44 @@ IMPORTANT INSTRUCTIONS:
 
         else:
             # Classification prompt
-            # Get IRS categories from the database
-            worksheet_6a = IRSWorksheet.objects.get(name="6A")
-            irs_categories = IRSExpenseCategory.objects.filter(
-                is_active=True, worksheet=worksheet_6a
-            ).order_by("line_number")
-
-            # Get business expense categories
-            business_categories = BusinessExpenseCategory.objects.filter(
-                is_active=True
-            ).exclude(category_name="Other Expenses")
-
-            # Log the categories for debugging
-            logger.info("\n=== Categories ===")
-            logger.info("IRS Categories:")
-            for cat in irs_categories:
-                logger.info(f"- {cat.name}")
-
-            logger.info("\nBusiness Categories:")
-            for cat in business_categories:
-                logger.info(f"- {cat.category_name}")
-
-            # Combine categories from both sources
-            category_list = [cat.name for cat in irs_categories]
-            business_category_list = [
-                cat.category_name
-                for cat in business_categories
-                if cat.category_name not in category_list
+            category_list = [
+                "Advertising",
+                "Auto",
+                "Bank Charges",
+                "Business Insurance",
+                "Business Meals",
+                "Business Travel",
+                "Commissions",
+                "Contract Labor",
+                "Depreciation",
+                "Dues & Subscriptions",
+                "Equipment Rental",
+                "Equipment Purchase",
+                "Gas & Oil",
+                "Home Office",
+                "Interest",
+                "Legal & Professional",
+                "Licenses & Permits",
+                "Maintenance & Repairs",
+                "Marketing",
+                "Meals & Entertainment",
+                "Office Supplies",
+                "Other",
+                "Payroll",
+                "Postage",
+                "Printing",
+                "Professional Development",
+                "Property Taxes",
+                "Rent",
+                "Repairs & Maintenance",
+                "Software",
+                "Supplies",
+                "Taxes & Licenses",
+                "Telephone",
+                "Travel",
+                "Utilities",
+                "Wages",
             ]
-
-            # Sort the business categories for consistency
-            business_category_list.sort()
-
-            # Extend the main category list
-            category_list.extend(business_category_list)
-
-            logger.info("\nFinal Combined Categories:")
-            for cat in category_list:
-                logger.info(f"- {cat}")
-
             system_prompt = """You are an expert in business expense classification and tax preparation. Your role is to:
 1. Analyze transactions and determine if they are business or personal expenses
 2. For business expenses, determine the appropriate worksheet (6A, Vehicle, HomeOffice, or Personal)
@@ -161,26 +159,6 @@ Consider these factors:
 - Transaction patterns
 - Amount and frequency
 - Business rules and patterns"""
-
-            # Get business context
-            business_context = ""
-            if transaction.client:
-                try:
-                    business_profile = BusinessProfile.objects.get(
-                        client_id=transaction.client.client_id
-                    )
-                    business_context = f"""
-Business Context:
-Type: {business_profile.business_type}
-Description: {business_profile.business_description}
-Industry Keywords: {', '.join(business_profile.industry_keywords) if business_profile.industry_keywords else 'Not specified'}
-Common Expenses: {', '.join(business_profile.common_expenses) if business_profile.common_expenses else 'Not specified'}
-Category Patterns: {', '.join(business_profile.category_patterns) if business_profile.category_patterns else 'Not specified'}
-"""
-                except BusinessProfile.DoesNotExist:
-                    logger.warning(
-                        f"No business profile found for client {transaction.client.client_id}"
-                    )
 
             user_prompt = f"""Return your analysis in this exact JSON format:
 {{
@@ -196,8 +174,6 @@ Transaction: {transaction.description}
 Amount: ${transaction.amount}
 Date: {transaction.transaction_date}
 
-{business_context}
-
 Available Categories:
 {chr(10).join(category_list)}
 
@@ -211,7 +187,6 @@ IMPORTANT RULES:
 - For business expenses, choose the most specific category that matches
 - If no exact match, use the most appropriate IRS category
 - For custom business categories, use them when they match exactly
-- Consider the business context when making classification decisions
 
 IMPORTANT: Your response must be a valid JSON object."""
 
@@ -271,14 +246,12 @@ IMPORTANT: Your response must be a valid JSON object."""
 
             # Track if we've already made a tool call
             tool_call_made = False
-            max_tool_calls = 3  # Increased to allow up to 3 searches
 
             # Handle tool calls and final response
             while (
                 response.choices
                 and response.choices[0].message.tool_calls
                 and not tool_call_made
-                and max_tool_calls > 0
             ):
                 tool_call = response.choices[0].message.tool_calls[0]
                 tool_name = tool_call.function.name
@@ -287,10 +260,10 @@ IMPORTANT: Your response must be a valid JSON object."""
                 logger.info(f"Tool call: {tool_name} with args: {tool_args}")
 
                 # Execute the tool
-                if tool_name == "searxng_search":
-                    from tools.vendor_lookup.searxng_search import searxng_search
+                if tool_name == "brave_search":
+                    from tools.vendor_lookup.brave_search import brave_search
 
-                    search_results = searxng_search(tool_args["query"])
+                    search_results = brave_search(tool_args["query"])
                     logger.info(
                         f"Search results: {json.dumps(search_results, indent=2)}"
                     )
@@ -324,7 +297,6 @@ IMPORTANT: Your response must be a valid JSON object."""
                     response = client.chat.completions.create(**payload)
                     logger.info(f"Final response after tool: {response}")
                     tool_call_made = True
-                    max_tool_calls -= 1
 
             # Get the final content
             if not response.choices or not response.choices[0].message.content:
@@ -685,29 +657,8 @@ class AgentAdmin(admin.ModelAdmin):
 
 @admin.register(Tool)
 class ToolAdmin(admin.ModelAdmin):
-    list_display = ("name", "description", "module_path", "created_at", "updated_at")
+    list_display = ("name", "description", "module_path")
     search_fields = ("name", "description", "module_path")
-    readonly_fields = ("created_at", "updated_at")
-
-    def discover_tools(self, request):
-        try:
-            call_command("discover_tools")
-            messages.success(request, "Successfully discovered and registered tools")
-        except Exception as e:
-            messages.error(request, f"Error discovering tools: {str(e)}")
-        return HttpResponseRedirect("../")  # Redirect back to the tool list
-
-    def get_urls(self):
-        urls = super().get_urls()
-        custom_urls = [
-            path("discover/", self.discover_tools, name="discover_tools"),
-        ]
-        return custom_urls + urls
-
-    def changelist_view(self, request, extra_context=None):
-        extra_context = extra_context or {}
-        extra_context["show_discover_tools"] = True
-        return super().changelist_view(request, extra_context)
 
 
 @admin.register(IRSWorksheet)

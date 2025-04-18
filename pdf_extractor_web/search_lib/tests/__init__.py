@@ -1,3 +1,0 @@
-"""
-Search Library Tests Package
-"""

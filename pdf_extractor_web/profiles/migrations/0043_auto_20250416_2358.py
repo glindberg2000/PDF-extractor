@@ -10,50 +10,63 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AddField(
-            model_name="transaction",
-            name="business_percentage",
-            field=models.IntegerField(default=100, null=True, blank=True),
-        ),
-        migrations.AddField(
-            model_name="transaction",
-            name="classification_type",
-            field=models.CharField(max_length=50, null=True, blank=True),
-        ),
-        migrations.AddField(
-            model_name="transaction",
-            name="worksheet",
-            field=models.CharField(max_length=50, null=True, blank=True),
-        ),
-        migrations.AlterField(
-            model_name="transaction",
-            name="classification_method",
-            field=models.CharField(
-                max_length=20,
-                choices=[
-                    ("AI", "AI Classification"),
-                    ("Human", "Human Override"),
-                    ("None", "Not Processed"),
-                ],
-                default=None,
-                null=True,
-                blank=True,
-            ),
-        ),
-        migrations.AlterField(
-            model_name="transaction",
-            name="payee_extraction_method",
-            field=models.CharField(
-                max_length=20,
-                choices=[
-                    ("AI", "AI Only"),
-                    ("AI+Search", "AI with Search"),
-                    ("Human", "Human Override"),
-                    ("None", "Not Processed"),
-                ],
-                default=None,
-                null=True,
-                blank=True,
-            ),
+        migrations.RunSQL(
+            sql="""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns 
+                    WHERE table_name = 'profiles_transaction' 
+                    AND column_name = 'business_percentage'
+                ) THEN
+                    ALTER TABLE profiles_transaction
+                    ADD COLUMN business_percentage integer DEFAULT 100 NULL;
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns 
+                    WHERE table_name = 'profiles_transaction' 
+                    AND column_name = 'classification_type'
+                ) THEN
+                    ALTER TABLE profiles_transaction
+                    ADD COLUMN classification_type varchar(50) NULL;
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns 
+                    WHERE table_name = 'profiles_transaction' 
+                    AND column_name = 'worksheet'
+                ) THEN
+                    ALTER TABLE profiles_transaction
+                    ADD COLUMN worksheet varchar(50) NULL;
+                END IF;
+
+                -- Update classification_method field
+                ALTER TABLE profiles_transaction
+                ALTER COLUMN classification_method TYPE varchar(20),
+                ALTER COLUMN classification_method DROP NOT NULL,
+                ALTER COLUMN classification_method SET DEFAULT NULL;
+
+                -- Update payee_extraction_method field
+                ALTER TABLE profiles_transaction
+                ALTER COLUMN payee_extraction_method TYPE varchar(20),
+                ALTER COLUMN payee_extraction_method DROP NOT NULL,
+                ALTER COLUMN payee_extraction_method SET DEFAULT NULL;
+            END $$;
+            """,
+            reverse_sql="""
+            ALTER TABLE profiles_transaction
+            DROP COLUMN IF EXISTS business_percentage,
+            DROP COLUMN IF EXISTS classification_type,
+            DROP COLUMN IF EXISTS worksheet;
+
+            ALTER TABLE profiles_transaction
+            ALTER COLUMN classification_method SET NOT NULL,
+            ALTER COLUMN classification_method DROP DEFAULT;
+
+            ALTER TABLE profiles_transaction
+            ALTER COLUMN payee_extraction_method SET NOT NULL,
+            ALTER COLUMN payee_extraction_method DROP DEFAULT;
+            """,
         ),
     ]

@@ -30,11 +30,11 @@ def migrate_data(apps, schema_editor):
             ELSE '{}'::jsonb
             END,
         custom_categories = CASE
-            WHEN custom_6a_expense_categories IS NOT NULL AND custom_6a_expense_categories != ''
+            WHEN "custom_6A_expense_categories" IS NOT NULL AND "custom_6A_expense_categories" != ''
             THEN jsonb_build_object('categories', CASE
-                WHEN custom_6a_expense_categories::jsonb IS NOT NULL
-                THEN custom_6a_expense_categories::jsonb
-                ELSE jsonb_build_array(custom_6a_expense_categories)
+                WHEN "custom_6A_expense_categories"::jsonb IS NOT NULL
+                THEN "custom_6A_expense_categories"::jsonb
+                ELSE jsonb_build_array("custom_6A_expense_categories")
                 END)
             ELSE '{}'::jsonb
             END
@@ -52,7 +52,7 @@ def reverse_migrate(apps, schema_editor):
             THEN common_expenses->>'expenses'
             ELSE NULL
             END,
-        custom_6a_expense_categories = CASE
+        "custom_6A_expense_categories" = CASE
             WHEN custom_categories ? 'categories'
             THEN custom_categories->>'categories'
             ELSE NULL

@@ -1,3 +1,0 @@
-"""
-Search Tool Tests Package
-"""

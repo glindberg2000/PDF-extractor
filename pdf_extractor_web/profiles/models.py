@@ -177,10 +177,7 @@ class Transaction(models.Model):
         blank=True,
     )
     business_percentage = models.IntegerField(
-        default=100,
-        help_text="Percentage of the transaction that is business-related",
-        null=True,
-        blank=True,
+        default=100, help_text="Percentage of the transaction that is business-related"
     )
 
     # Processing method tracking
@@ -411,6 +408,9 @@ class ProcessingTask(models.Model):
     error_count = models.IntegerField(default=0)
     error_details = models.JSONField(default=dict)
     task_metadata = models.JSONField(default=dict)  # For storing dynamic configuration
+    transactions = models.ManyToManyField(
+        "Transaction", related_name="processing_tasks"
+    )
 
     def __str__(self):
         return f"{self.task_type} task for {self.client.client_id} ({self.status})"

@@ -13,77 +13,35 @@ class Migration(migrations.Migration):
             name="transaction",
             options={"ordering": ["-date"]},
         ),
-        migrations.CreateModel(
-            name="ClassificationOverride",
-            fields=[
-                (
-                    "id",
-                    models.BigAutoField(
-                        auto_created=True,
-                        primary_key=True,
-                        serialize=False,
-                        verbose_name="ID",
-                    ),
-                ),
-                ("created_at", models.DateTimeField(auto_now_add=True)),
-                ("updated_at", models.DateTimeField(auto_now=True)),
-                (
-                    "classification_type",
-                    models.CharField(
-                        choices=[
-                            ("income", "Income"),
-                            ("expense", "Expense"),
-                            ("transfer", "Transfer"),
-                        ],
-                        max_length=20,
-                    ),
-                ),
-                (
-                    "worksheet",
-                    models.CharField(
-                        choices=[
-                            ("6a", "6a"),
-                            ("6b", "6b"),
-                            ("6c", "6c"),
-                            ("6d", "6d"),
-                            ("6e", "6e"),
-                            ("6f", "6f"),
-                            ("6g", "6g"),
-                            ("6h", "6h"),
-                            ("6i", "6i"),
-                            ("6j", "6j"),
-                            ("6k", "6k"),
-                            ("6l", "6l"),
-                            ("6m", "6m"),
-                            ("6n", "6n"),
-                            ("6o", "6o"),
-                            ("6p", "6p"),
-                            ("6q", "6q"),
-                            ("6r", "6r"),
-                            ("6s", "6s"),
-                            ("6t", "6t"),
-                            ("6u", "6u"),
-                            ("6v", "6v"),
-                            ("6w", "6w"),
-                            ("6x", "6x"),
-                            ("6y", "6y"),
-                            ("6z", "6z"),
-                        ],
-                        max_length=20,
-                    ),
-                ),
-                ("reasoning", models.TextField()),
-                (
-                    "transaction",
-                    models.OneToOneField(
-                        on_delete=django.db.models.deletion.CASCADE,
-                        related_name="classification_override",
-                        to="profiles.transaction",
-                    ),
-                ),
-            ],
-            options={
-                "abstract": False,
-            },
+        migrations.RunSQL(
+            sql="""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.tables 
+                    WHERE table_name = 'profiles_classificationoverride'
+                ) THEN
+                    CREATE TABLE profiles_classificationoverride (
+                        id bigserial NOT NULL PRIMARY KEY,
+                        created_at timestamp with time zone NOT NULL,
+                        updated_at timestamp with time zone NOT NULL,
+                        classification_type varchar(20) NOT NULL,
+                        worksheet varchar(20) NOT NULL,
+                        reasoning text NOT NULL,
+                        transaction_id bigint NOT NULL REFERENCES profiles_transaction(id) ON DELETE CASCADE
+                    );
+
+                    CREATE INDEX profiles_classificationoverride_transaction_id_idx
+                    ON profiles_classificationoverride(transaction_id);
+
+                    ALTER TABLE profiles_classificationoverride
+                    ADD CONSTRAINT profiles_classificationoverride_transaction_id_key
+                    UNIQUE (transaction_id);
+                END IF;
+            END $$;
+            """,
+            reverse_sql="""
+            DROP TABLE IF EXISTS profiles_classificationoverride;
+            """,
         ),
     ]

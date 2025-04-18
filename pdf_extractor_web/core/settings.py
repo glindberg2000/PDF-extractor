@@ -44,7 +44,6 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "profiles",
     "simple_classifications",
-    "experimental_admin",
 ]
 
 MIDDLEWARE = [
@@ -83,7 +82,7 @@ WSGI_APPLICATION = "core.wsgi.application"
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
-        "NAME": "pdf_extractor",
+        "NAME": "mydatabase",
         "USER": "newuser",
         "PASSWORD": "newpassword",
         "HOST": "localhost",

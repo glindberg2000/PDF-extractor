@@ -2,6 +2,8 @@
 import sqlite3
 import os
 import pandas as pd
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 print("Database Structure Check")
 print("=======================")
@@ -106,3 +108,72 @@ for db_path in db_files:
     except Exception as e:
         print(f"Error accessing database {db_path}: {e}")
         continue
+
+# Database connection parameters
+db_params = {
+    "dbname": "mydatabase",
+    "user": "newuser",
+    "password": "newpassword",
+    "host": "localhost",
+    "port": "5432",
+}
+
+
+def check_database():
+    try:
+        # Connect to the database
+        conn = psycopg2.connect(**db_params)
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Check transaction table structure
+        print("\nTransaction table structure:")
+        cur.execute(
+            """
+            SELECT column_name, data_type, is_nullable 
+            FROM information_schema.columns 
+            WHERE table_name = 'profiles_transaction'
+            ORDER BY ordinal_position;
+        """
+        )
+        for row in cur.fetchall():
+            print(
+                f"{row['column_name']}: {row['data_type']} (nullable: {row['is_nullable']})"
+            )
+
+        # Check if payee field exists and has data
+        print("\nChecking payee field data:")
+        cur.execute(
+            """
+            SELECT COUNT(*) as total,
+                   COUNT(payee) as has_payee,
+                   COUNT(CASE WHEN payee IS NOT NULL THEN 1 END) as non_null_payee
+            FROM profiles_transaction;
+        """
+        )
+        payee_stats = cur.fetchone()
+        print(f"Total records: {payee_stats['total']}")
+        print(f"Records with payee field: {payee_stats['has_payee']}")
+        print(f"Records with non-null payee: {payee_stats['non_null_payee']}")
+
+        # Check applied migrations
+        print("\nApplied migrations:")
+        cur.execute(
+            """
+            SELECT id, name, applied 
+            FROM django_migrations 
+            WHERE app = 'profiles' 
+            ORDER BY id;
+        """
+        )
+        for row in cur.fetchall():
+            print(f"{row['id']}: {row['name']} (applied: {row['applied']})")
+
+        cur.close()
+        conn.close()
+
+    except Exception as e:
+        print(f"Error: {e}")
+
+
+if __name__ == "__main__":
+    check_database()
