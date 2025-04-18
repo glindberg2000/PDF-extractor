@@ -4,12 +4,20 @@
 - Maintaining and improving the main instance (Port 8001)
 - Keeping test instance (Port 8000) as backup/development environment
 - Ensuring proper backup and restore procedures for both instances
+- Monitoring agent performance
+- Addressing search tool discrepancy
+- Enhancing logging for long-running operations
 
 ## Recent Changes
 - Moved main instance to Port 8001
 - Fixed search tool implementation in main instance
 - Updated backup script to handle both instances
 - Documented new instance structure in tech context
+- Added detailed logging for debugging
+- Fixed Payee Lookup agent functionality
+- Fixed Classification agent functionality
+- Identified search tool discrepancy (brave_search vs searxng)
+- Enhanced logging for transaction processing
 
 ## Next Steps
 1. Verify backup functionality for both instances
@@ -17,6 +25,18 @@
 3. Monitor main instance performance
 4. Consider cleanup of test instance if not needed
 5. Update any remaining documentation to reflect new structure
+6. Resolve search tool discrepancy:
+   - Verify which tool is actually being used
+   - Update tool configuration in database if needed
+   - Ensure consistent tool usage across agents
+7. Improve logging:
+   - Add progress indicators for long-running operations
+   - Implement better transaction processing monitoring
+   - Consider routing output to main terminal log
+8. Continue monitoring agent performance:
+   - Payee Lookup agent
+   - Classification agent
+   - Other system agents
 
 ## Current Focus
 - Ensuring data integrity across both instances
@@ -29,6 +49,11 @@
 - Verified both Payee Lookup and Classification agents working correctly
 - Created backup of current working state
 - Updated system patterns with detailed agent documentation
+- Payee Lookup agent is working correctly
+- Classification agent is working correctly
+- Search tool discrepancy identified (brave_search vs searxng)
+- Detailed logging added for debugging
+- Need to verify and standardize search tool usage
 
 ## Recent Changes
 1. Fixed Payee Lookup Agent:
@@ -506,81 +531,21 @@ Cache key strategy:
 ### Active Task
 Implementing new LLM integration with structured outputs and tools:
 - Creating `LLMIntegration` class in `pdf_extractor_web/llm/integration.py`
-- Updating transaction processing in `pdf_extractor_web/profiles/admin.py`
-- Implementing response schemas for payee lookup and classification
-- Adding tool execution and result integration
 
-### Recent Changes
-- Created comprehensive LLM integration architecture plan
-- Defined response schemas for both payee lookup and classification
-- Outlined tool integration strategy
-- Planned status tracking for payee identification methods
-
-### Next Steps
-1. Create `LLMIntegration` class with core functionality
-2. Implement response schemas
-3. Add tool execution handling
-4. Update transaction processing
-5. Add comprehensive logging
-6. Test with existing agents
-
-### Key Decisions
-- Maintain two-pass approach for payee lookup and classification
-- Track payee identification method (AI, AI+Search, Human)
-- Use JSON schema validation for responses
-- Implement dynamic tool loading from database
-
-### Dependencies
-- OpenAI API
-- Django models (Agent, Tool)
-- JSON schema validation
-- Logging system 
+## Current Status
+- Fixed search tool discrepancy
+- Enhanced logging system
+- Added ProcessingTask admin interface
+- Improved transaction processing monitoring
 
 ## Recent Changes
-1. Payee Lookup Agent:
-   - Split prompts into system and user messages
-   - Added explicit instructions for tool usage
-   - Improved normalized_description handling
-   - Fixed tool call flow to ensure final response
-
-2. Classification Agent:
-   - Maintained original classification logic
-   - Updated prompt structure to match new format
-   - Preserved all business rules and worksheet assignments
+1. Updated search tool configuration
+2. Enhanced logging with progress indicators
+3. Added ProcessingTask admin interface
+4. Improved transaction processing monitoring
 
 ## Next Steps
-1. Test both agents thoroughly
-2. Monitor logs for any issues
-3. Consider adding more detailed logging for tool calls
-4. Review agent response schemas for consistency
-
-## Critical Notes
-- Agents must be kept isolated - changes to one should not affect others
-- Each agent has its own specific prompt and schema
-- Tool calls must be properly handled to ensure final responses
-- Logging is crucial for debugging and monitoring 
-
-## Current Safety Practices
-
-### Active Development Rules
-1. **Code Changes**
-   - Making changes to batch processing system
-   - Keeping Celery intact while adding new system
-   - Following incremental development approach
-
-2. **Backup Status**
-   - Full backup created: backups/backup_20250417_204218
-   - Code backup in: backups/code_backups/
-   - Rollback script ready: rollback.sh
-
-3. **Safety Measures**
-   - Never removing working code
-   - Adding new features alongside existing ones
-   - Testing in isolation before integration
-   - Ready to rollback if needed
-
-4. **Next Steps**
-   - Add new task processing system
-   - Keep existing Celery system running
-   - Test new system in isolation
-   - Verify old system still works 
+1. Test search tool functionality
+2. Verify logging improvements
+3. Test ProcessingTask admin interface
+4. Monitor transaction processing

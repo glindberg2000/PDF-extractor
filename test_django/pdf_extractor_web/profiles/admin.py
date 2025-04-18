@@ -28,6 +28,11 @@ from openai import OpenAI
 import sys
 from datetime import datetime
 from django.urls import reverse
+from pathlib import Path
+import subprocess
+from django.conf import settings
+from django.utils.html import format_html
+import signal
 
 # Add the root directory to the Python path
 sys.path.append(
@@ -275,8 +280,8 @@ IMPORTANT: Your response must be a valid JSON object."""
                     module_path = tool.module_path
                     module_name = module_path.split(".")[-1]
                     module = __import__(module_path, fromlist=[module_name])
-                    # Get the tool function - use search_web for searxng_search tool
-                    if tool_name == "searxng_search":
+                    # Get the tool function - use search_web for search tools
+                    if tool_name in ["searxng_search", "brave_search"]:
                         tool_function = getattr(module, "search_web")
                     else:
                         tool_function = getattr(module, module_name)
@@ -561,6 +566,15 @@ class TransactionAdmin(admin.ModelAdmin):
             messages.error(request, "No transactions selected.")
             return
 
+        # Get the correct "Lookup Payee" agent
+        try:
+            agent = Agent.objects.get(name="Lookup Payee")
+        except Agent.DoesNotExist:
+            messages.error(
+                request, "Lookup Payee agent not found. Please create it first."
+            )
+            return
+
         # Group transactions by client
         client_transactions = {}
         for transaction in queryset:
@@ -581,7 +595,8 @@ class TransactionAdmin(admin.ModelAdmin):
                 transaction_count=len(data["transactions"]),
                 status="pending",
                 task_metadata={
-                    "description": f"Batch payee lookup for {len(data['transactions'])} transactions"
+                    "description": f"Batch payee lookup for {len(data['transactions'])} transactions",
+                    "agent_id": agent.id,  # Store the agent ID in task metadata
                 },
             )
             task.transactions.add(*data["transactions"])
@@ -810,7 +825,7 @@ class ProcessingTaskAdmin(admin.ModelAdmin):
         "task_id",
         "task_type",
         "client",
-        "status",
+        "get_status_with_progress",
         "transaction_count",
         "processed_count",
         "error_count",
@@ -842,6 +857,33 @@ class ProcessingTaskAdmin(admin.ModelAdmin):
     )
     actions = ["retry_failed_tasks", "cancel_tasks", "run_task"]
 
+    def get_status_with_progress(self, obj):
+        """Return status with progress bar for processing tasks."""
+        if obj.status == "processing":
+            percent = int(
+                (obj.processed_count / obj.transaction_count * 100)
+                if obj.transaction_count
+                else 0
+            )
+            return format_html(
+                "<div>{}</div>"
+                '<div class="progress-bar" style="background: #f0f0f0; border: 1px solid #ccc; height: 20px; width: 200px; margin-top: 5px;">'
+                '<div style="background: #79aec8; height: 100%; width: {}%;"></div>'
+                "</div>"
+                '<div style="font-size: 12px; color: #666; margin-top: 2px;">{} / {}</div>',
+                obj.status,
+                percent,
+                obj.processed_count,
+                obj.transaction_count,
+            )
+        return obj.status
+
+    get_status_with_progress.short_description = "Status"
+    get_status_with_progress.admin_order_field = "status"
+
+    class Media:
+        js = ("admin/js/task_refresh.js",)
+
     def run_task(self, request, queryset):
         """Execute the selected task and show progress."""
         if queryset.count() > 1:
@@ -855,117 +897,52 @@ class ProcessingTaskAdmin(admin.ModelAdmin):
 
         # Update task status
         task.status = "processing"
+        task.error_count = 0
+        task.error_details = {}
+        task.processed_count = 0
         task.save()
 
         try:
-            # Process transactions based on task type
-            if task.task_type == "payee_lookup":
-                agent = Agent.objects.filter(name__icontains="payee").first()
-            else:  # classification
-                agent = Agent.objects.filter(name__icontains="classify").first()
+            # Start the processing in a separate process
+            log_dir = Path(settings.BASE_DIR) / "logs" / "tasks"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_file = log_dir / f"task_{task.task_id}.log"
 
-            if not agent:
-                raise ValueError(f"No agent found for task type {task.task_type}")
+            cmd = [
+                sys.executable,
+                "manage.py",
+                "process_task",
+                str(task.task_id),
+                "--log-file",
+                str(log_file),
+            ]
 
-            # Process each transaction
-            total = task.transactions.count()
-            success_count = 0
-            error_count = 0
-            error_details = {}
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=settings.BASE_DIR,
+            )
 
-            for idx, transaction in enumerate(task.transactions.all(), 1):
-                try:
-                    # Call the agent
-                    response = call_agent(agent.name, transaction)
-
-                    # Update transaction with the response
-                    update_fields = {
-                        "normalized_description": response.get(
-                            "normalized_description"
-                        ),
-                        "payee": response.get("payee"),
-                        "confidence": response.get("confidence"),
-                        "reasoning": response.get("reasoning"),
-                        "payee_reasoning": (
-                            response.get("reasoning")
-                            if task.task_type == "payee_lookup"
-                            else None
-                        ),
-                        "transaction_type": response.get("transaction_type"),
-                        "questions": response.get("questions"),
-                        "classification_type": response.get("classification_type"),
-                        "worksheet": response.get("worksheet"),
-                        "business_percentage": response.get("business_percentage"),
-                        "payee_extraction_method": (
-                            "AI+Search" if task.task_type == "payee_lookup" else None
-                        ),
-                        "classification_method": (
-                            "AI" if task.task_type == "classification" else None
-                        ),
-                        "business_context": response.get("business_context"),
-                        "category": response.get("category"),
-                    }
-
-                    # Clean up fields
-                    update_fields = {
-                        k: v for k, v in update_fields.items() if v is not None
-                    }
-
-                    # For payee lookups, only update payee-related fields
-                    if task.task_type == "payee_lookup":
-                        update_fields = {
-                            k: v
-                            for k, v in update_fields.items()
-                            if k
-                            in [
-                                "normalized_description",
-                                "payee",
-                                "confidence",
-                                "payee_reasoning",
-                                "transaction_type",
-                                "questions",
-                                "payee_extraction_method",
-                            ]
-                        }
-                    else:
-                        # For classification, ensure personal expenses have correct worksheet
-                        if update_fields.get("classification_type") == "personal":
-                            update_fields["worksheet"] = "Personal"
-                            update_fields["category"] = "Personal"
-
-                    # Update the transaction
-                    Transaction.objects.filter(id=transaction.id).update(
-                        **update_fields
-                    )
-                    success_count += 1
-
-                except Exception as e:
-                    error_count += 1
-                    error_details[str(transaction.id)] = str(e)
-                    logger.error(
-                        f"Error processing transaction {transaction.id}: {str(e)}"
-                    )
-
-                # Update task progress
-                task.processed_count = idx
-                task.error_count = error_count
-                task.error_details = error_details
-                task.save()
-
-            # Update final task status
-            task.status = "completed" if error_count == 0 else "failed"
+            # Store process info in task metadata
+            task.task_metadata.update(
+                {
+                    "pid": process.pid,
+                    "start_time": datetime.now().isoformat(),
+                    "log_file": str(log_file),
+                }
+            )
             task.save()
 
             messages.success(
-                request,
-                f"Task completed: {success_count} successful, {error_count} failed",
+                request, f"Task {task.task_id} started. View progress in task details."
             )
 
         except Exception as e:
             task.status = "failed"
             task.error_details = {"error": str(e)}
             task.save()
-            messages.error(request, f"Task failed: {str(e)}")
+            messages.error(request, f"Failed to start task: {str(e)}")
 
     run_task.short_description = "Run selected task"
 
@@ -986,6 +963,12 @@ class ProcessingTaskAdmin(admin.ModelAdmin):
     def cancel_tasks(self, request, queryset):
         """Cancel selected processing tasks."""
         for task in queryset.filter(status__in=["pending", "processing"]):
+            if task.status == "processing" and task.task_metadata.get("pid"):
+                try:
+                    os.kill(task.task_metadata["pid"], signal.SIGTERM)
+                except (ProcessLookupError, OSError):
+                    pass  # Process already ended
+
             task.status = "failed"
             task.error_details = {
                 "cancelled": True,
@@ -1025,3 +1008,57 @@ class ProcessingTaskAdmin(admin.ModelAdmin):
                 "opts": self.model._meta,
             },
         )
+
+    def process_task(self, task):
+        """Process a batch task in a subprocess"""
+        try:
+            # Create log directory if it doesn't exist
+            log_dir = Path(settings.BASE_DIR) / "logs" / "tasks"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_file = log_dir / f"{task.task_id}.log"
+
+            # Start the task processor
+            cmd = [
+                sys.executable,
+                "manage.py",
+                "process_task",
+                str(task.task_id),
+                "--log-file",
+                str(log_file),
+            ]
+
+            # Run the command and capture output
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                universal_newlines=True,
+            )
+
+            # Log output in real-time
+            while True:
+                output = process.stdout.readline()
+                if output == "" and process.poll() is not None:
+                    break
+                if output:
+                    print(f"Task {task.task_id}: {output.strip()}")
+                    sys.stdout.flush()
+
+            # Get the return code
+            return_code = process.poll()
+            if return_code != 0:
+                print(f"Task {task.task_id} failed with return code {return_code}")
+                task.status = "failed"
+                task.error_details = {
+                    "error": f"Process failed with return code {return_code}"
+                }
+                task.save()
+
+        except Exception as e:
+            print(f"Error processing task {task.task_id}: {str(e)}")
+            traceback.print_exc()
+            task.status = "failed"
+            task.error_details = {"error": str(e)}
+            task.save()

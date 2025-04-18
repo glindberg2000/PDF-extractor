@@ -1069,38 +1069,30 @@ class QBExportResult:
 
 ## Agent Architecture
 
-### Agent Separation
-1. **Payee Lookup Agent**
-   - Purpose: Identify and normalize vendor names
-   - Fields:
-     - normalized_description
-     - payee
-     - confidence
-     - reasoning
-     - transaction_type
-     - questions
-     - needs_search
-   - Tools: Search tool for vendor verification
-   - Rules:
-     - NEVER include store numbers or locations in payee field
-     - ALWAYS normalize to standard business name
-     - MUST use search tool for verification
-     - MUST provide final response after tool use
+### Agent Types
+1. Payee Lookup Agent
+   - Purpose: Identify and normalize payee names
+   - Tools: Search tool (currently using brave_search, discrepancy with searxng)
+   - Response Schema: Structured payee information
+   - Logging: Detailed operation logging
 
-2. **Classification Agent**
-   - Purpose: Classify transactions as business/personal
-   - Fields:
-     - classification_type
-     - worksheet
-     - category
-     - confidence
-     - reasoning
-     - questions
-   - Rules:
-     - Personal expenses MUST use 'Personal' worksheet
-     - Business expenses use '6A', 'Vehicle', or 'HomeOffice'
-     - Choose most specific category from available list
-     - Include detailed reasoning for decisions
+2. Classification Agent
+   - Purpose: Categorize transactions
+   - Tools: None currently
+   - Response Schema: Classification details
+   - Logging: Detailed operation logging
+
+### Tool Integration
+- Tools are loaded from database
+- Each tool has a specific module path
+- Tools can be enabled/disabled per agent
+- Current discrepancy: brave_search vs searxng search tools
+
+### Logging System
+- Detailed operation logging
+- Progress indicators for long-running operations
+- Transaction processing monitoring
+- Terminal log integration
 
 ### Field Management
 1. **Payee Fields**

@@ -1271,3 +1271,27 @@ colorama>=0.4.4
 - Docker Compose for container orchestration
 - Git for version control
 - Backup scripts for data preservation 
+
+## Development Environment
+- Python 3.11
+- Django 5.0.4
+- PostgreSQL 16
+- Docker for containerization
+- Ports:
+  - Main instance: 8001
+  - Test instance: 8000
+  - PostgreSQL main: 5432
+  - PostgreSQL test: 5433
+
+## Search Tools
+- Current tool: brave_search
+- Discrepancy: Database configuration points to searxng
+- Tool paths:
+  - brave_search: tools.search_tool.brave_search
+  - searxng: tools.search_tool.search_standalone
+
+## Logging System
+- Detailed operation logging
+- Progress indicators
+- Transaction processing monitoring
+- Terminal log integration
