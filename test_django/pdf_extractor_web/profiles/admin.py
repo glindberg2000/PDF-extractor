@@ -549,7 +549,85 @@ class TransactionAdmin(admin.ModelAdmin):
         "reasoning",
         "payee_reasoning",
     )
-    actions = ["reset_processing_status"]  # Add the new action
+    actions = [
+        "reset_processing_status",
+        "batch_payee_lookup",
+        "batch_classify",
+    ]  # Add new actions
+
+    def batch_payee_lookup(self, request, queryset):
+        """Create a batch processing task for payee lookup."""
+        if not queryset:
+            messages.error(request, "No transactions selected.")
+            return
+
+        # Group transactions by client
+        client_transactions = {}
+        for transaction in queryset:
+            if transaction.client_id not in client_transactions:
+                client_transactions[transaction.client_id] = {
+                    "client": transaction.client,
+                    "transactions": [],
+                }
+            client_transactions[transaction.client_id]["transactions"].append(
+                transaction
+            )
+
+        # Create a task for each client's transactions
+        for client_id, data in client_transactions.items():
+            task = ProcessingTask.objects.create(
+                task_type="payee_lookup",
+                client=data["client"],
+                transaction_count=len(data["transactions"]),
+                status="pending",
+                task_metadata={
+                    "description": f"Batch payee lookup for {len(data['transactions'])} transactions"
+                },
+            )
+            task.transactions.add(*data["transactions"])
+            messages.success(
+                request,
+                f"Created payee lookup task for client {client_id} with {len(data['transactions'])} transactions",
+            )
+
+    batch_payee_lookup.short_description = "Create batch payee lookup task"
+
+    def batch_classify(self, request, queryset):
+        """Create a batch processing task for classification."""
+        if not queryset:
+            messages.error(request, "No transactions selected.")
+            return
+
+        # Group transactions by client
+        client_transactions = {}
+        for transaction in queryset:
+            if transaction.client_id not in client_transactions:
+                client_transactions[transaction.client_id] = {
+                    "client": transaction.client,
+                    "transactions": [],
+                }
+            client_transactions[transaction.client_id]["transactions"].append(
+                transaction
+            )
+
+        # Create a task for each client's transactions
+        for client_id, data in client_transactions.items():
+            task = ProcessingTask.objects.create(
+                task_type="classification",
+                client=data["client"],
+                transaction_count=len(data["transactions"]),
+                status="pending",
+                task_metadata={
+                    "description": f"Batch classification for {len(data['transactions'])} transactions"
+                },
+            )
+            task.transactions.add(*data["transactions"])
+            messages.success(
+                request,
+                f"Created classification task for client {client_id} with {len(data['transactions'])} transactions",
+            )
+
+    batch_classify.short_description = "Create batch classification task"
 
     def get_actions(self, request):
         actions = super().get_actions(request)
@@ -558,7 +636,7 @@ class TransactionAdmin(admin.ModelAdmin):
             "reset_processing_status",
             reset_processing_status.short_description,
         )
-        # Add an action for each agent
+        # Keep existing agent-specific actions
         for agent in Agent.objects.all():
             action_name = f'process_with_{agent.name.lower().replace(" ", "_")}'
             action_function = self._create_agent_action(agent)
