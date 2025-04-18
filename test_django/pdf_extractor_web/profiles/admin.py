@@ -840,7 +840,134 @@ class ProcessingTaskAdmin(admin.ModelAdmin):
         "error_details",
         "task_metadata",
     )
-    actions = ["retry_failed_tasks", "cancel_tasks"]
+    actions = ["retry_failed_tasks", "cancel_tasks", "run_task"]
+
+    def run_task(self, request, queryset):
+        """Execute the selected task and show progress."""
+        if queryset.count() > 1:
+            messages.error(request, "Please select only one task to run at a time.")
+            return
+
+        task = queryset.first()
+        if task.status not in ["pending", "failed"]:
+            messages.error(request, f"Task {task.task_id} is already {task.status}.")
+            return
+
+        # Update task status
+        task.status = "processing"
+        task.save()
+
+        try:
+            # Process transactions based on task type
+            if task.task_type == "payee_lookup":
+                agent = Agent.objects.filter(name__icontains="payee").first()
+            else:  # classification
+                agent = Agent.objects.filter(name__icontains="classify").first()
+
+            if not agent:
+                raise ValueError(f"No agent found for task type {task.task_type}")
+
+            # Process each transaction
+            total = task.transactions.count()
+            success_count = 0
+            error_count = 0
+            error_details = {}
+
+            for idx, transaction in enumerate(task.transactions.all(), 1):
+                try:
+                    # Call the agent
+                    response = call_agent(agent.name, transaction)
+
+                    # Update transaction with the response
+                    update_fields = {
+                        "normalized_description": response.get(
+                            "normalized_description"
+                        ),
+                        "payee": response.get("payee"),
+                        "confidence": response.get("confidence"),
+                        "reasoning": response.get("reasoning"),
+                        "payee_reasoning": (
+                            response.get("reasoning")
+                            if task.task_type == "payee_lookup"
+                            else None
+                        ),
+                        "transaction_type": response.get("transaction_type"),
+                        "questions": response.get("questions"),
+                        "classification_type": response.get("classification_type"),
+                        "worksheet": response.get("worksheet"),
+                        "business_percentage": response.get("business_percentage"),
+                        "payee_extraction_method": (
+                            "AI+Search" if task.task_type == "payee_lookup" else None
+                        ),
+                        "classification_method": (
+                            "AI" if task.task_type == "classification" else None
+                        ),
+                        "business_context": response.get("business_context"),
+                        "category": response.get("category"),
+                    }
+
+                    # Clean up fields
+                    update_fields = {
+                        k: v for k, v in update_fields.items() if v is not None
+                    }
+
+                    # For payee lookups, only update payee-related fields
+                    if task.task_type == "payee_lookup":
+                        update_fields = {
+                            k: v
+                            for k, v in update_fields.items()
+                            if k
+                            in [
+                                "normalized_description",
+                                "payee",
+                                "confidence",
+                                "payee_reasoning",
+                                "transaction_type",
+                                "questions",
+                                "payee_extraction_method",
+                            ]
+                        }
+                    else:
+                        # For classification, ensure personal expenses have correct worksheet
+                        if update_fields.get("classification_type") == "personal":
+                            update_fields["worksheet"] = "Personal"
+                            update_fields["category"] = "Personal"
+
+                    # Update the transaction
+                    Transaction.objects.filter(id=transaction.id).update(
+                        **update_fields
+                    )
+                    success_count += 1
+
+                except Exception as e:
+                    error_count += 1
+                    error_details[str(transaction.id)] = str(e)
+                    logger.error(
+                        f"Error processing transaction {transaction.id}: {str(e)}"
+                    )
+
+                # Update task progress
+                task.processed_count = idx
+                task.error_count = error_count
+                task.error_details = error_details
+                task.save()
+
+            # Update final task status
+            task.status = "completed" if error_count == 0 else "failed"
+            task.save()
+
+            messages.success(
+                request,
+                f"Task completed: {success_count} successful, {error_count} failed",
+            )
+
+        except Exception as e:
+            task.status = "failed"
+            task.error_details = {"error": str(e)}
+            task.save()
+            messages.error(request, f"Task failed: {str(e)}")
+
+    run_task.short_description = "Run selected task"
 
     def retry_failed_tasks(self, request, queryset):
         """Retry failed processing tasks."""
