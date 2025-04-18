@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-4">
+    <h1>Business Profiles</h1>
+    <div class="row">
+        {% for profile in profiles %}
+        <div class="col-md-6 mb-4">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">{{ profile.client_id }}</h5>
+                    <p class="card-text">
+                        <strong>Business Type:</strong> {{ profile.business_type }}<br>
+                        <strong>Created:</strong> {{ profile.created_at|date:"F j, Y" }}
+                    </p>
+                    <a href="{% url 'upload-transactions' %}" class="btn btn-primary">Upload Transactions</a>
+                </div>
+            </div>
+        </div>
+        {% empty %}
+        <div class="col-12">
+            <p>No business profiles found.</p>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}

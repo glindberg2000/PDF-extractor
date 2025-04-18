@@ -6,7 +6,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("profiles", "0051_alter_classificationoverride_options_and_more"),
+        ("profiles", "0052_alter_classificationoverride_options_and_more"),
     ]
 
     operations = [

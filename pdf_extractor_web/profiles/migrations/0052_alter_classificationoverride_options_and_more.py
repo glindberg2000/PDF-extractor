@@ -14,7 +14,7 @@ def set_default_classification_method(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("profiles", "0050_add_transaction_fields"),
+        ("profiles", "0051_create_classificationoverride"),
     ]
 
     operations = [
