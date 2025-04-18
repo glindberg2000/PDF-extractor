@@ -1,26 +1,48 @@
 import json
 import logging
+import importlib.util
+import os
+import sys
 from pathlib import Path
 from django.core.management.base import BaseCommand
 from django.utils import timezone
-from profiles.models import ProcessingTask, Agent
+from django.conf import settings
+from profiles.models import ProcessingTask, Agent, Tool, Transaction
 from ...admin import call_agent
+import traceback
+
+# Configure logging to output to console
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+console_handler = logging.StreamHandler(sys.stdout)
+console_handler.setFormatter(
+    logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+)
+logger.addHandler(console_handler)
 
 
 class TaskLogger:
     def __init__(self, log_file):
         self.log_file = Path(log_file)
         self.log_file.parent.mkdir(parents=True, exist_ok=True)
+        self.logger = logger
 
     def log(self, level, message, **kwargs):
+        # Create the log entry
         entry = {
             "timestamp": timezone.now().isoformat(),
             "level": level,
             "message": message,
             **kwargs,
         }
+
+        # Write to file
         with open(self.log_file, "a") as f:
             f.write(json.dumps(entry) + "\n")
+
+        # Also log to console
+        log_method = getattr(self.logger, level.lower(), self.logger.info)
+        log_method(f"{message} {json.dumps(kwargs) if kwargs else ''}")
 
 
 class Command(BaseCommand):
@@ -43,7 +65,13 @@ class Command(BaseCommand):
 
             # Get the appropriate agent
             if task.task_type == "payee_lookup":
-                agent = Agent.objects.filter(name__icontains="payee").first()
+                # First try to get the agent from task metadata
+                agent_id = task.task_metadata.get("agent_id")
+                if agent_id:
+                    agent = Agent.objects.get(id=agent_id)
+                else:
+                    # Fall back to getting the specific "Lookup Payee" agent
+                    agent = Agent.objects.get(name="Lookup Payee")
             else:  # classification
                 agent = Agent.objects.filter(name__icontains="classify").first()
 
@@ -51,6 +79,9 @@ class Command(BaseCommand):
                 raise ValueError(f"No agent found for task type {task.task_type}")
 
             logger.log("info", f"Using agent: {agent.name}")
+            logger.log(
+                "info", "Agent tools:", tools=[t.name for t in agent.tools.all()]
+            )
 
             # Process each transaction
             total = task.transactions.count()
@@ -64,10 +95,12 @@ class Command(BaseCommand):
                         "info",
                         f"Processing transaction {idx}/{total}",
                         transaction_id=transaction.id,
+                        description=transaction.description,
                     )
 
-                    # Call the agent
+                    # Call the agent using the exact same code path as admin.py
                     response = call_agent(agent.name, transaction)
+                    logger.log("info", "Got response from agent", response=response)
 
                     # Update transaction with the response
                     update_fields = {
@@ -125,7 +158,7 @@ class Command(BaseCommand):
                             update_fields["category"] = "Personal"
 
                     # Update the transaction
-                    transaction.objects.filter(id=transaction.id).update(
+                    Transaction.objects.filter(id=transaction.id).update(
                         **update_fields
                     )
                     success_count += 1
@@ -144,6 +177,7 @@ class Command(BaseCommand):
                         f"Error processing transaction: {str(e)}",
                         transaction_id=transaction.id,
                         error=str(e),
+                        traceback=traceback.format_exc(),
                     )
 
                 # Update task progress
@@ -151,6 +185,13 @@ class Command(BaseCommand):
                 task.error_count = error_count
                 task.error_details = error_details
                 task.save()
+                logger.log(
+                    "info",
+                    "Updated task progress",
+                    processed=idx,
+                    total=total,
+                    errors=error_count,
+                )
 
             # Update final task status
             task.status = "completed" if error_count == 0 else "failed"
@@ -164,7 +205,12 @@ class Command(BaseCommand):
             )
 
         except Exception as e:
-            logger.log("error", f"Task failed: {str(e)}", error=str(e))
+            logger.log(
+                "error",
+                f"Task failed: {str(e)}",
+                error=str(e),
+                traceback=traceback.format_exc(),
+            )
             if "task" in locals():
                 task.status = "failed"
                 task.error_details = {"error": str(e)}
