@@ -1,0 +1,82 @@
+{% extends "admin/base_site.html" %}
+{% load i18n admin_urls %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+    <a href="{% url 'admin:index' %}">{% translate 'Home' %}</a>
+    &rsaquo; <a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_config.verbose_name }}</a>
+    &rsaquo; <a href="{% url 'admin:profiles_processingtask_changelist' %}">{{ opts.verbose_name_plural|capfirst }}</a>
+    &rsaquo; {{ title }}
+</div>
+{% endblock %}
+
+{% block content %}
+<div id="content-main">
+    <div class="module">
+        <h2>Task Details</h2>
+        <table>
+            <tr>
+                <th>Task ID</th>
+                <td>{{ task.task_id }}</td>
+            </tr>
+            <tr>
+                <th>Task Type</th>
+                <td>{{ task.task_type }}</td>
+            </tr>
+            <tr>
+                <th>Status</th>
+                <td>{{ task.status }}</td>
+            </tr>
+            <tr>
+                <th>Client</th>
+                <td>{{ task.client }}</td>
+            </tr>
+            <tr>
+                <th>Progress</th>
+                <td>{{ task.processed_count }} of {{ task.transaction_count }} processed</td>
+            </tr>
+            <tr>
+                <th>Errors</th>
+                <td>{{ task.error_count }}</td>
+            </tr>
+        </table>
+    </div>
+
+    <div class="module">
+        <h2>Associated Transactions</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Transaction Date</th>
+                    <th>Amount</th>
+                    <th>Description</th>
+                    <th>Payee</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for transaction in transactions %}
+                <tr>
+                    <td>{{ transaction.transaction_date }}</td>
+                    <td>{{ transaction.amount }}</td>
+                    <td>{{ transaction.description }}</td>
+                    <td>{{ transaction.payee }}</td>
+                    <td>{{ transaction.processing_status }}</td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="5">No transactions found for this task.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    {% if task.error_details %}
+    <div class="module">
+        <h2>Error Details</h2>
+        <pre>{{ task.error_details|pprint }}</pre>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

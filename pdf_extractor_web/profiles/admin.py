@@ -10,11 +10,12 @@ from .models import (
     IRSExpenseCategory,
     BusinessExpenseCategory,
     TransactionClassification,
+    ProcessingTask,
 )
 from django.utils.translation import gettext_lazy as _
 from django.http import HttpResponseRedirect
 from django.urls import path
-from django.shortcuts import render
+from django.shortcuts import render, get_object_or_404
 from django.contrib import messages
 import json
 from jsonschema import validate, ValidationError
@@ -25,6 +26,7 @@ import logging
 import traceback
 from openai import OpenAI
 import sys
+from datetime import datetime
 
 # Add the root directory to the Python path
 sys.path.append(
@@ -688,3 +690,99 @@ class BusinessExpenseCategoryAdmin(admin.ModelAdmin):
     search_fields = ("category_name", "description")
     list_filter = ("business", "worksheet", "is_active", "tax_year")
     ordering = ("business", "category_name")
+
+
+@admin.register(ProcessingTask)
+class ProcessingTaskAdmin(admin.ModelAdmin):
+    list_display = (
+        "task_id",
+        "task_type",
+        "client",
+        "status",
+        "transaction_count",
+        "processed_count",
+        "error_count",
+        "created_at",
+        "updated_at",
+    )
+    list_filter = (
+        "task_type",
+        "status",
+        "client",
+        "created_at",
+        "updated_at",
+    )
+    search_fields = (
+        "task_id",
+        "client__client_id",
+        "error_details",
+        "task_metadata",
+    )
+    readonly_fields = (
+        "task_id",
+        "created_at",
+        "updated_at",
+        "transaction_count",
+        "processed_count",
+        "error_count",
+        "error_details",
+        "task_metadata",
+    )
+    actions = ["retry_failed_tasks", "cancel_tasks"]
+
+    def retry_failed_tasks(self, request, queryset):
+        """Retry failed processing tasks."""
+        for task in queryset.filter(status="failed"):
+            task.status = "pending"
+            task.error_count = 0
+            task.error_details = {}
+            task.save()
+            messages.success(request, f"Retrying task {task.task_id}")
+        messages.success(
+            request, f"Retried {queryset.filter(status='failed').count()} failed tasks"
+        )
+
+    retry_failed_tasks.short_description = "Retry failed tasks"
+
+    def cancel_tasks(self, request, queryset):
+        """Cancel selected processing tasks."""
+        for task in queryset.filter(status__in=["pending", "processing"]):
+            task.status = "failed"
+            task.error_details = {
+                "cancelled": True,
+                "cancelled_at": str(datetime.now()),
+            }
+            task.save()
+            messages.success(request, f"Cancelled task {task.task_id}")
+        messages.success(
+            request,
+            f"Cancelled {queryset.filter(status__in=['pending', 'processing']).count()} tasks",
+        )
+
+    cancel_tasks.short_description = "Cancel selected tasks"
+
+    def get_urls(self):
+        urls = super().get_urls()
+        custom_urls = [
+            path(
+                "<uuid:task_id>/transactions/",
+                self.admin_site.admin_view(self.view_task_transactions),
+                name="profiles_processingtask_transactions",
+            ),
+        ]
+        return custom_urls + urls
+
+    def view_task_transactions(self, request, task_id):
+        """View transactions associated with a processing task."""
+        task = get_object_or_404(ProcessingTask, task_id=task_id)
+        transactions = task.transactions.all()
+        return render(
+            request,
+            "admin/processing_task_transactions.html",
+            context={
+                "task": task,
+                "transactions": transactions,
+                "title": f"Transactions for Task {task_id}",
+                "opts": self.model._meta,
+            },
+        )

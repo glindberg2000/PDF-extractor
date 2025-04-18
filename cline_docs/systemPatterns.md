@@ -1128,3 +1128,69 @@ class QBExportResult:
 4. Use clear interfaces between agents
 5. Maintain strict field separation
 6. Document all field dependencies 
+
+## Critical Safety Patterns
+
+### Code Change Methodology
+1. **Backup Before Changes**
+   - Always create full backups (code + database) before making changes
+   - Use `backup.sh` to create timestamped backups
+   - Keep `rollback.sh` ready for quick restoration
+
+2. **Incremental Development**
+   - NEVER remove working code when adding new features
+   - Keep old features active until new ones are proven stable
+   - Add new features alongside existing ones
+   - Test new features in isolation first
+
+3. **Feature Addition Rules**
+   - When adding new actions/features:
+     - DO NOT remove or modify existing actions
+     - Keep all working functionality intact
+     - Add new features as additional options
+     - Test new features without affecting existing ones
+
+4. **Rollback Strategy**
+   - Always have a working rollback plan
+   - Use `rollback.sh` for quick restoration
+   - Test rollback process regularly
+   - Document rollback steps clearly
+
+5. **Testing Protocol**
+   - Test new features in isolation
+   - Verify existing features still work
+   - Create test endpoints for new functionality
+   - Document test procedures
+
+### Database Safety
+1. **Never Assume Empty**
+   - Always verify database state
+   - Check for existing data before operations
+   - Never delete or modify without backup
+
+2. **Migration Safety**
+   - Test migrations on test database first
+   - Keep rollback migrations ready
+   - Document migration dependencies
+
+3. **Data Integrity**
+   - Verify data before and after changes
+   - Use transactions for data modifications
+   - Keep audit trails of changes
+
+### Feature Development Process
+1. **Add, Don't Replace**
+   - New features should be additive
+   - Keep existing functionality intact
+   - Document feature coexistence
+
+2. **Testing Before Removal**
+   - Only remove old features after:
+     - New features are proven stable
+     - Users have migrated to new features
+     - No dependencies remain
+
+3. **Documentation**
+   - Document all feature additions
+   - Keep track of feature dependencies
+   - Maintain clear upgrade paths 

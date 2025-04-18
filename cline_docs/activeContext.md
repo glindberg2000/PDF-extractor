@@ -559,3 +559,28 @@ Implementing new LLM integration with structured outputs and tools:
 - Each agent has its own specific prompt and schema
 - Tool calls must be properly handled to ensure final responses
 - Logging is crucial for debugging and monitoring 
+
+## Current Safety Practices
+
+### Active Development Rules
+1. **Code Changes**
+   - Making changes to batch processing system
+   - Keeping Celery intact while adding new system
+   - Following incremental development approach
+
+2. **Backup Status**
+   - Full backup created: backups/backup_20250417_204218
+   - Code backup in: backups/code_backups/
+   - Rollback script ready: rollback.sh
+
+3. **Safety Measures**
+   - Never removing working code
+   - Adding new features alongside existing ones
+   - Testing in isolation before integration
+   - Ready to rollback if needed
+
+4. **Next Steps**
+   - Add new task processing system
+   - Keep existing Celery system running
+   - Test new system in isolation
+   - Verify old system still works 
