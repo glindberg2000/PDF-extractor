@@ -1,7 +1,28 @@
 # Active Context
 
+## Current Work
+- Maintaining and improving the main instance (Port 8001)
+- Keeping test instance (Port 8000) as backup/development environment
+- Ensuring proper backup and restore procedures for both instances
+
+## Recent Changes
+- Moved main instance to Port 8001
+- Fixed search tool implementation in main instance
+- Updated backup script to handle both instances
+- Documented new instance structure in tech context
+
+## Next Steps
+1. Verify backup functionality for both instances
+2. Test restore procedures
+3. Monitor main instance performance
+4. Consider cleanup of test instance if not needed
+5. Update any remaining documentation to reflect new structure
+
 ## Current Focus
-Refining the transaction classification system to achieve the core goal: producing tax-ready Excel reports with transactions accurately separated into 6A, Auto, HomeOffice, and Personal worksheets, ensuring consistency through enhanced matching logic.
+- Ensuring data integrity across both instances
+- Maintaining proper backup procedures
+- Documenting instance-specific configurations
+- Monitoring system performance and stability
 
 ## Current State
 - Successfully fixed agent separation issues

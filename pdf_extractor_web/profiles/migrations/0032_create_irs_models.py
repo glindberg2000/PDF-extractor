@@ -1,4 +1,37 @@
 from django.db import migrations, models
+from django.db.migrations.operations.base import Operation
+
+
+class CheckTableExists(Operation):
+    def __init__(self, table_name):
+        self.table_name = table_name
+
+    def state_forwards(self, app_label, state):
+        pass
+
+    def database_forwards(self, app_label, schema_editor, from_state, to_state):
+        schema_editor.execute(
+            f"""
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_schema = 'public' 
+                    AND table_name = '{self.table_name}'
+                ) THEN
+                    RAISE NOTICE 'Table % already exists', '{self.table_name}';
+                ELSE
+                    RAISE NOTICE 'Table % does not exist', '{self.table_name}';
+                END IF;
+            END $$;
+            """
+        )
+
+    def database_backwards(self, app_label, schema_editor, from_state, to_state):
+        pass
+
+    def describe(self):
+        return f"Checks if table {self.table_name} exists"
 
 
 class Migration(migrations.Migration):
@@ -7,60 +40,35 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.CreateModel(
-            name="IRSWorksheet",
-            fields=[
-                (
-                    "id",
-                    models.BigAutoField(
-                        auto_created=True,
-                        primary_key=True,
-                        serialize=False,
-                        verbose_name="ID",
-                    ),
-                ),
-                ("name", models.CharField(max_length=255, unique=True)),
-                ("description", models.TextField(blank=True)),
-                ("is_active", models.BooleanField(default=True)),
-                ("created_at", models.DateTimeField(auto_now_add=True)),
-                ("updated_at", models.DateTimeField(auto_now=True)),
-            ],
-            options={
-                "verbose_name": "IRS Worksheet",
-                "verbose_name_plural": "IRS Worksheets",
-            },
+        CheckTableExists("profiles_irsworksheet"),
+        migrations.RunSQL(
+            sql="""
+            CREATE TABLE IF NOT EXISTS profiles_irsworksheet (
+                id bigserial PRIMARY KEY,
+                name varchar(255) UNIQUE NOT NULL,
+                description text,
+                is_active boolean NOT NULL DEFAULT true,
+                created_at timestamp with time zone NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at timestamp with time zone NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            """,
+            reverse_sql="DROP TABLE IF EXISTS profiles_irsworksheet;",
         ),
-        migrations.CreateModel(
-            name="IRSExpenseCategory",
-            fields=[
-                (
-                    "id",
-                    models.BigAutoField(
-                        auto_created=True,
-                        primary_key=True,
-                        serialize=False,
-                        verbose_name="ID",
-                    ),
-                ),
-                ("name", models.CharField(max_length=255)),
-                ("description", models.TextField(blank=True)),
-                ("line_number", models.CharField(max_length=10)),
-                ("is_active", models.BooleanField(default=True)),
-                ("created_at", models.DateTimeField(auto_now_add=True)),
-                ("updated_at", models.DateTimeField(auto_now=True)),
-                (
-                    "worksheet",
-                    models.ForeignKey(
-                        on_delete=models.CASCADE,
-                        related_name="expense_categories",
-                        to="profiles.irsworksheet",
-                    ),
-                ),
-            ],
-            options={
-                "verbose_name": "IRS Expense Category",
-                "verbose_name_plural": "IRS Expense Categories",
-                "unique_together": {("worksheet", "name")},
-            },
+        CheckTableExists("profiles_irsexpensecategory"),
+        migrations.RunSQL(
+            sql="""
+            CREATE TABLE IF NOT EXISTS profiles_irsexpensecategory (
+                id bigserial PRIMARY KEY,
+                name varchar(255) NOT NULL,
+                description text,
+                line_number varchar(10) NOT NULL,
+                is_active boolean NOT NULL DEFAULT true,
+                created_at timestamp with time zone NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at timestamp with time zone NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                worksheet_id bigint REFERENCES profiles_irsworksheet(id) ON DELETE CASCADE,
+                UNIQUE(worksheet_id, name)
+            );
+            """,
+            reverse_sql="DROP TABLE IF EXISTS profiles_irsexpensecategory;",
         ),
     ]

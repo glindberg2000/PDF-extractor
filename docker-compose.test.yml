@@ -1,0 +1,21 @@
+version: '3'
+services:
+  postgres_test:
+    image: postgres:latest
+    environment:
+      POSTGRES_USER: newuser
+      POSTGRES_PASSWORD: newpassword
+      POSTGRES_DB: mydatabase
+    volumes:
+      - postgres_test_data:/var/lib/postgresql/data
+      - ./backups:/backups
+    ports:
+      - "5433:5432"  # Different port to avoid conflicts
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U newuser -d mydatabase"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_test_data: 

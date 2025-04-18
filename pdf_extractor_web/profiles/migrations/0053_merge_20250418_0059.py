@@ -6,8 +6,8 @@ from django.db import migrations
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("profiles", "0050_create_classificationoverride"),
-        ("profiles", "0052_rename_custom_6a_categories_to_additional_info"),
+        ("profiles", "0051_create_classificationoverride"),
+        ("profiles", "0053_rename_custom_6a_categories_to_additional_info"),
     ]
 
     operations = []

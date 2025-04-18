@@ -617,4 +617,55 @@ python-dotenv>=0.19.0
 questionary>=1.10.0
 thefuzz>=0.19.0
 colorama>=0.4.4
-``` 
+```
+
+## Development Setup
+
+### Instance Structure
+- Main Instance (Port 8001)
+  - Database: mydatabase
+  - User: newuser
+  - Path: /test_django/pdf_extractor_web
+  - Status: Live/Production
+
+- Test Instance (Port 8000)
+  - Database: test_database
+  - User: newuser
+  - Path: /pdf_extractor_web
+  - Status: Backup/Development
+
+### Database Configuration
+- PostgreSQL
+- Main database: mydatabase
+- Test database: test_database
+- User: newuser
+- Port: 5432
+
+### Search Tool Configuration
+- SearXNG search implementation
+- Located in: /tools/search_tool/search_standalone.py
+- Environment variables:
+  - SEARXNG_HOST: http://localhost:8080
+
+### Backup Strategy
+- Automated backups via backup.sh
+- Backs up both main and test instances
+- Includes:
+  - Database dumps
+  - Migrations
+  - Memory bank
+  - Git state
+- Creates restore script for emergency recovery
+
+### Port Configuration
+- Main instance: 8001
+- Test instance: 8000
+- Database: 5432
+- SearXNG: 8080
+
+## Development Tools
+- Django Admin interface
+- PostgreSQL management tools
+- Docker Compose for container orchestration
+- Git for version control
+- Backup scripts for data preservation 
