@@ -474,78 +474,71 @@ Implemented stricter IRS-compliant business expense classification with:
 
 # Active Development Context
 
-## Current Task
-Debugging transaction classifier caching mechanism in `dataextractai/agents/transaction_classifier.py`.
+## Current Task: Fix Task Processing System
 
-### Issue
-- Cache mechanism in `_get_payee` method is not working effectively
-- Initial implementation tried to use standardized payee names for cache keys
-- Multiple attempts to fix have caused various issues including:
-  - NoneType errors from accessing undefined variables
-  - Control flow issues with cache checking
-  - Inconsistent cache key generation
+## Issue Description
+The task processing system is failing due to a complex interaction between multiple Django projects and database connections. The core issue appears to be:
 
-### Recent Changes
-1. Attempted to use standardized payee names from LLM analysis for cache keys
-2. Modified control flow to check cache earlier in process
-3. Fixed variable scope and error handling
-4. Implemented consistent cache key generation using `_get_cache_key` method
+1. **Directory Structure Confusion**:
+   ```
+   /test_django/
+     pdf_extractor_web/
+       settings.py (port 5433)
+       pdf_extractor_web/
+         settings.py (port 5432)
+   ```
+   This nested structure is causing Python import path confusion.
 
-### Current State
-- Code has been modified to:
-  1. Check cache early with description-only key
-  2. Use `_get_cache_key` consistently throughout
-  3. Handle errors gracefully
-  4. Cache results with appropriate payee names when available
+2. **Database Connection Issues**:
+   - Tasks are being created in one database (port 5432)
+   - The processing command is looking for them in another database (port 5433)
+   - This is causing "Task not found" errors
 
-### Next Steps
-1. Verify cache effectiveness through logs
-2. Ensure cache keys are consistent
-3. Optimize cache hit rate for similar transactions
-4. Consider additional improvements to caching strategy if needed
+3. **Session Data Corruption**:
+   - We're seeing "Session data corrupted" messages in the logs
+   - This suggests potential issues with session handling across the different Django instances
 
-## Technical Details
-Key methods involved:
-- `_get_payee`: Main method for payee identification
-- `_get_cache_key`: Generates cache keys from description/payee
-- `_get_cached_result`: Retrieves cached results
-- `_cache_result`: Stores results in cache
-
-Cache key strategy:
-1. First try with cleaned description
-2. If standardized payee available, use that for more precise matching
-3. Fall back to description-only if no standardized payee
-
-## Dependencies
-- SQLite database for caching
-- OpenAI API for LLM analysis
-- Brave Search API for vendor lookups
-
-## Notes
-- Cache effectiveness needs verification through logs
-- Balance needed between cache hit rate and accuracy
-- Consider impact of cache key strategy on performance 
-
-## Current Focus: LLM Integration Implementation
-
-### Active Task
-Implementing new LLM integration with structured outputs and tools:
-- Creating `LLMIntegration` class in `pdf_extractor_web/llm/integration.py`
-
-## Current Status
-- Fixed search tool discrepancy
-- Enhanced logging system
-- Added ProcessingTask admin interface
-- Improved transaction processing monitoring
-
-## Recent Changes
-1. Updated search tool configuration
-2. Enhanced logging with progress indicators
-3. Added ProcessingTask admin interface
-4. Improved transaction processing monitoring
+## Current State
+- The app starts but task processing fails
+- Tasks are created but not found during processing
+- Multiple Django projects are running simultaneously
+- Database connections are inconsistent
 
 ## Next Steps
-1. Test search tool functionality
-2. Verify logging improvements
-3. Test ProcessingTask admin interface
-4. Monitor transaction processing
+1. **Project Structure Cleanup**:
+   - Consolidate the nested Django projects
+   - Create a clear separation between test and production environments
+   - Standardize database connection settings
+
+2. **Database Consistency**:
+   - Ensure all components use the same database connection
+   - Implement proper database routing
+   - Add connection verification checks
+
+3. **Session Management**:
+   - Investigate session data corruption
+   - Implement proper session handling
+   - Add session verification
+
+4. **Task Processing Improvements**:
+   - Add better error handling
+   - Implement proper transaction management
+   - Add logging for debugging
+
+## Technical Details
+- Current Django version: 5.2
+- Database: PostgreSQL
+- Ports in use: 5432, 5433
+- Redis for Celery: 6379
+
+## Critical Files
+1. `test_django/pdf_extractor_web/pdf_extractor_web/settings.py`
+2. `test_django/pdf_extractor_web/profiles/management/commands/process_task.py`
+3. `test_django/pdf_extractor_web/profiles/admin.py`
+
+## Required Changes
+1. Restructure the project to eliminate nested Django projects
+2. Standardize database connections
+3. Implement proper session handling
+4. Add comprehensive error handling and logging
+5. Create a clear separation between test and production environments

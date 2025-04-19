@@ -28,11 +28,11 @@ from openai import OpenAI
 import sys
 from datetime import datetime
 from django.urls import reverse
+from django.utils import timezone
 from pathlib import Path
 import subprocess
 from django.conf import settings
-from django.utils.html import format_html
-import signal
+from django.db import transaction as db_transaction
 
 # Add the root directory to the Python path
 sys.path.append(
@@ -280,8 +280,8 @@ IMPORTANT: Your response must be a valid JSON object."""
                     module_path = tool.module_path
                     module_name = module_path.split(".")[-1]
                     module = __import__(module_path, fromlist=[module_name])
-                    # Get the tool function - use search_web for search tools
-                    if tool_name in ["searxng_search", "brave_search"]:
+                    # Get the tool function - use search_web for searxng_search tool
+                    if tool_name == "searxng_search":
                         tool_function = getattr(module, "search_web")
                     else:
                         tool_function = getattr(module, module_name)
@@ -566,15 +566,6 @@ class TransactionAdmin(admin.ModelAdmin):
             messages.error(request, "No transactions selected.")
             return
 
-        # Get the correct "Lookup Payee" agent
-        try:
-            agent = Agent.objects.get(name="Lookup Payee")
-        except Agent.DoesNotExist:
-            messages.error(
-                request, "Lookup Payee agent not found. Please create it first."
-            )
-            return
-
         # Group transactions by client
         client_transactions = {}
         for transaction in queryset:
@@ -582,28 +573,32 @@ class TransactionAdmin(admin.ModelAdmin):
                 client_transactions[transaction.client_id] = {
                     "client": transaction.client,
                     "transactions": [],
+                    "transaction_ids": [],
                 }
             client_transactions[transaction.client_id]["transactions"].append(
                 transaction
             )
+            client_transactions[transaction.client_id]["transaction_ids"].append(
+                transaction.id
+            )
 
         # Create a task for each client's transactions
         for client_id, data in client_transactions.items():
-            task = ProcessingTask.objects.create(
-                task_type="payee_lookup",
-                client=data["client"],
-                transaction_count=len(data["transactions"]),
-                status="pending",
-                task_metadata={
-                    "description": f"Batch payee lookup for {len(data['transactions'])} transactions",
-                    "agent_id": agent.id,  # Store the agent ID in task metadata
-                },
-            )
-            task.transactions.add(*data["transactions"])
-            messages.success(
-                request,
-                f"Created payee lookup task for client {client_id} with {len(data['transactions'])} transactions",
-            )
+            with db_transaction.atomic():
+                task = ProcessingTask.objects.create(
+                    task_type="payee_lookup",
+                    client=data["client"],
+                    transaction_count=len(data["transactions"]),
+                    status="pending",
+                    task_metadata={
+                        "description": f"Batch payee lookup for {len(data['transactions'])} transactions"
+                    },
+                )
+                task.transactions.add(*data["transaction_ids"])
+                messages.success(
+                    request,
+                    f"Created payee lookup task for client {client_id} with {len(data['transactions'])} transactions",
+                )
 
     batch_payee_lookup.short_description = "Create batch payee lookup task"
 
@@ -620,27 +615,32 @@ class TransactionAdmin(admin.ModelAdmin):
                 client_transactions[transaction.client_id] = {
                     "client": transaction.client,
                     "transactions": [],
+                    "transaction_ids": [],
                 }
             client_transactions[transaction.client_id]["transactions"].append(
                 transaction
             )
+            client_transactions[transaction.client_id]["transaction_ids"].append(
+                transaction.id
+            )
 
         # Create a task for each client's transactions
         for client_id, data in client_transactions.items():
-            task = ProcessingTask.objects.create(
-                task_type="classification",
-                client=data["client"],
-                transaction_count=len(data["transactions"]),
-                status="pending",
-                task_metadata={
-                    "description": f"Batch classification for {len(data['transactions'])} transactions"
-                },
-            )
-            task.transactions.add(*data["transactions"])
-            messages.success(
-                request,
-                f"Created classification task for client {client_id} with {len(data['transactions'])} transactions",
-            )
+            with db_transaction.atomic():
+                task = ProcessingTask.objects.create(
+                    task_type="classification",
+                    client=data["client"],
+                    transaction_count=len(data["transactions"]),
+                    status="pending",
+                    task_metadata={
+                        "description": f"Batch classification for {len(data['transactions'])} transactions"
+                    },
+                )
+                task.transactions.add(*data["transaction_ids"])
+                messages.success(
+                    request,
+                    f"Created classification task for client {client_id} with {len(data['transactions'])} transactions",
+                )
 
     batch_classify.short_description = "Create batch classification task"
 
@@ -825,7 +825,7 @@ class ProcessingTaskAdmin(admin.ModelAdmin):
         "task_id",
         "task_type",
         "client",
-        "get_status_with_progress",
+        "status",
         "transaction_count",
         "processed_count",
         "error_count",
@@ -857,33 +857,6 @@ class ProcessingTaskAdmin(admin.ModelAdmin):
     )
     actions = ["retry_failed_tasks", "cancel_tasks", "run_task"]
 
-    def get_status_with_progress(self, obj):
-        """Return status with progress bar for processing tasks."""
-        if obj.status == "processing":
-            percent = int(
-                (obj.processed_count / obj.transaction_count * 100)
-                if obj.transaction_count
-                else 0
-            )
-            return format_html(
-                "<div>{}</div>"
-                '<div class="progress-bar" style="background: #f0f0f0; border: 1px solid #ccc; height: 20px; width: 200px; margin-top: 5px;">'
-                '<div style="background: #79aec8; height: 100%; width: {}%;"></div>'
-                "</div>"
-                '<div style="font-size: 12px; color: #666; margin-top: 2px;">{} / {}</div>',
-                obj.status,
-                percent,
-                obj.processed_count,
-                obj.transaction_count,
-            )
-        return obj.status
-
-    get_status_with_progress.short_description = "Status"
-    get_status_with_progress.admin_order_field = "status"
-
-    class Media:
-        js = ("admin/js/task_refresh.js",)
-
     def run_task(self, request, queryset):
         """Execute the selected task and show progress."""
         if queryset.count() > 1:
@@ -891,58 +864,126 @@ class ProcessingTaskAdmin(admin.ModelAdmin):
             return
 
         task = queryset.first()
-        if task.status not in ["pending", "failed"]:
-            messages.error(request, f"Task {task.task_id} is already {task.status}.")
+        if task.status != "pending":
+            messages.error(request, f"Task {task.task_id} is not in pending state.")
             return
 
-        # Update task status
-        task.status = "processing"
-        task.error_count = 0
-        task.error_details = {}
-        task.processed_count = 0
-        task.save()
+        # Create log file first
+        log_file = Path(settings.BASE_DIR) / "logs" / f"task_{task.task_id}.log"
+        log_file.parent.mkdir(exist_ok=True)
+        with open(log_file, "w") as f:
+            f.write(f"[{timezone.now()}] [INFO] Starting task {task.task_id}\n")
 
         try:
-            # Start the processing in a separate process
-            log_dir = Path(settings.BASE_DIR) / "logs" / "tasks"
-            log_dir.mkdir(parents=True, exist_ok=True)
-            log_file = log_dir / f"task_{task.task_id}.log"
+            # Verify the task exists and is in pending state
+            task.refresh_from_db()
+            if task.status != "pending":
+                messages.error(request, f"Task {task.task_id} is not in pending state.")
+                return
 
+            # Update task status to processing and commit it
+            with db_transaction.atomic():
+                task.status = "processing"
+                task.started_at = timezone.now()
+                task.save(force_update=True)
+
+            # Start the task processing command
+            python_executable = sys.executable
+            manage_py = str(
+                Path(settings.BASE_DIR).parent / "manage.py"
+            )  # Use the manage.py in the test_django directory
             cmd = [
-                sys.executable,
-                "manage.py",
+                python_executable,
+                manage_py,
                 "process_task",
                 str(task.task_id),
                 "--log-file",
                 str(log_file),
             ]
 
+            # Set up environment variables
+            env = os.environ.copy()
+            project_root = str(Path(settings.BASE_DIR).parent)
+            env["PYTHONPATH"] = f"{project_root}:{env.get('PYTHONPATH', '')}"
+            env["DJANGO_SETTINGS_MODULE"] = "pdf_extractor_web.settings"
+
+            # Start the process in the background
             process = subprocess.Popen(
                 cmd,
+                env=env,
+                cwd=str(settings.BASE_DIR),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                cwd=settings.BASE_DIR,
+                universal_newlines=True,
+                start_new_session=True,
+                bufsize=1,
             )
 
-            # Store process info in task metadata
-            task.task_metadata.update(
-                {
-                    "pid": process.pid,
-                    "start_time": datetime.now().isoformat(),
-                    "log_file": str(log_file),
-                }
-            )
-            task.save()
+            # Log the process start
+            logger.info(f"Started task {task.task_id} with PID {process.pid}")
+            self.message_user(request, f"Started task {task.task_id}")
 
-            messages.success(
-                request, f"Task {task.task_id} started. View progress in task details."
-            )
+            # Start a thread to read the output
+            def read_output():
+                while True:
+                    output = process.stdout.readline()
+                    if output == "" and process.poll() is not None:
+                        break
+                    if output:
+                        logger.info(output.strip())
+                        with open(log_file, "a") as f:
+                            f.write(output)
+
+            import threading
+
+            output_thread = threading.Thread(target=read_output)
+            output_thread.daemon = True
+            output_thread.start()
+
+            # Start a thread to read errors
+            def read_errors():
+                while True:
+                    error = process.stderr.readline()
+                    if error == "" and process.poll() is not None:
+                        break
+                    if error:
+                        logger.error(error.strip())
+                        with open(log_file, "a") as f:
+                            f.write(f"[ERROR] {error}")
+
+            error_thread = threading.Thread(target=read_errors)
+            error_thread.daemon = True
+            error_thread.start()
+
+            # Wait for the process to complete
+            def wait_for_process():
+                process.wait()
+                if process.returncode != 0:
+                    logger.error(
+                        f"Task {task.task_id} failed with return code {process.returncode}"
+                    )
+                    # Update task status to failed if the process failed
+                    task.refresh_from_db()
+                    if task.status == "processing":
+                        task.status = "failed"
+                        task.error_details = {
+                            "error": f"Process failed with return code {process.returncode}"
+                        }
+                        task.save(force_update=True)
+
+            # Start the wait thread
+            wait_thread = threading.Thread(target=wait_for_process)
+            wait_thread.daemon = True
+            wait_thread.start()
 
         except Exception as e:
+            logger.error(f"Failed to start task {task.task_id}: {str(e)}")
             task.status = "failed"
             task.error_details = {"error": str(e)}
-            task.save()
-            messages.error(request, f"Failed to start task: {str(e)}")
+            task.save(force_update=True)
+            self.message_user(
+                request, f"Failed to start task: {str(e)}", level=messages.ERROR
+            )
 
     run_task.short_description = "Run selected task"
 
@@ -963,12 +1004,6 @@ class ProcessingTaskAdmin(admin.ModelAdmin):
     def cancel_tasks(self, request, queryset):
         """Cancel selected processing tasks."""
         for task in queryset.filter(status__in=["pending", "processing"]):
-            if task.status == "processing" and task.task_metadata.get("pid"):
-                try:
-                    os.kill(task.task_metadata["pid"], signal.SIGTERM)
-                except (ProcessLookupError, OSError):
-                    pass  # Process already ended
-
             task.status = "failed"
             task.error_details = {
                 "cancelled": True,
@@ -1008,57 +1043,3 @@ class ProcessingTaskAdmin(admin.ModelAdmin):
                 "opts": self.model._meta,
             },
         )
-
-    def process_task(self, task):
-        """Process a batch task in a subprocess"""
-        try:
-            # Create log directory if it doesn't exist
-            log_dir = Path(settings.BASE_DIR) / "logs" / "tasks"
-            log_dir.mkdir(parents=True, exist_ok=True)
-            log_file = log_dir / f"{task.task_id}.log"
-
-            # Start the task processor
-            cmd = [
-                sys.executable,
-                "manage.py",
-                "process_task",
-                str(task.task_id),
-                "--log-file",
-                str(log_file),
-            ]
-
-            # Run the command and capture output
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-                universal_newlines=True,
-            )
-
-            # Log output in real-time
-            while True:
-                output = process.stdout.readline()
-                if output == "" and process.poll() is not None:
-                    break
-                if output:
-                    print(f"Task {task.task_id}: {output.strip()}")
-                    sys.stdout.flush()
-
-            # Get the return code
-            return_code = process.poll()
-            if return_code != 0:
-                print(f"Task {task.task_id} failed with return code {return_code}")
-                task.status = "failed"
-                task.error_details = {
-                    "error": f"Process failed with return code {return_code}"
-                }
-                task.save()
-
-        except Exception as e:
-            print(f"Error processing task {task.task_id}: {str(e)}")
-            traceback.print_exc()
-            task.status = "failed"
-            task.error_details = {"error": str(e)}
-            task.save()

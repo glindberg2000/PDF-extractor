@@ -1186,3 +1186,108 @@ class QBExportResult:
    - Document all feature additions
    - Keep track of feature dependencies
    - Maintain clear upgrade paths 
+
+# System Architecture Patterns
+
+## Current Architecture Issues
+
+### 1. Project Structure
+The current project structure has multiple overlapping Django projects:
+```
+/test_django/
+  pdf_extractor_web/
+    settings.py (port 5433)
+    pdf_extractor_web/
+      settings.py (port 5432)
+```
+
+This creates several problems:
+- Python import path confusion
+- Settings module resolution issues
+- Database connection inconsistencies
+- Session management conflicts
+
+### 2. Database Architecture
+Current setup:
+- Multiple PostgreSQL instances (ports 5432, 5433)
+- No clear database routing
+- Inconsistent connection settings
+- Potential transaction isolation issues
+
+### 3. Task Processing Flow
+Current implementation:
+1. Admin interface creates task in database A
+2. Processing command looks for task in database B
+3. Task not found error occurs
+4. Session data corruption observed
+
+### 4. Session Management
+Issues identified:
+- Session data corruption across instances
+- Inconsistent session handling
+- Potential race conditions
+
+## Required Architecture Changes
+
+### 1. Project Structure
+Proposed structure:
+```
+/pdf_extractor_web/
+  settings/
+    base.py
+    development.py
+    test.py
+    production.py
+  apps/
+    profiles/
+    simple_classifications/
+    experimental_admin/
+  manage.py
+  wsgi.py
+```
+
+### 2. Database Architecture
+Required changes:
+- Single PostgreSQL instance
+- Clear database routing
+- Consistent connection settings
+- Proper transaction management
+
+### 3. Task Processing
+Proposed flow:
+1. Task creation in admin
+2. Task queuing in Celery
+3. Worker processing with proper isolation
+4. Status updates with transaction safety
+
+### 4. Session Management
+Required improvements:
+- Centralized session handling
+- Proper session storage
+- Transaction-safe session updates
+
+## Technical Decisions
+
+### 1. Database
+- Use PostgreSQL for all environments
+- Implement proper database routing
+- Use connection pooling
+- Enable transaction isolation
+
+### 2. Task Processing
+- Use Celery for task queue
+- Implement proper worker isolation
+- Add comprehensive logging
+- Enable task retries
+
+### 3. Session Management
+- Use database-backed sessions
+- Implement proper session cleanup
+- Add session verification
+- Enable session encryption
+
+### 4. Error Handling
+- Implement comprehensive logging
+- Add error tracking
+- Enable automatic retries
+- Provide detailed error messages 

@@ -11,7 +11,25 @@ echo "Backing up test database (Port 5433)..."
 docker exec postgres_test pg_dump -U newuser -d mydatabase > "$BACKUP_DIR/test_database.sql"
 
 echo "Backing up migrations..."
-cp -r pdf_extractor_web/profiles/migrations "$BACKUP_DIR/"
+# Create directories for both sets of migrations
+mkdir -p "$BACKUP_DIR/main_migrations"
+mkdir -p "$BACKUP_DIR/test_migrations"
+
+# Backup main instance migrations if they exist
+if [ -d "pdf_extractor_web/profiles/migrations" ]; then
+    echo "Backing up main instance migrations..."
+    cp -r pdf_extractor_web/profiles/migrations/* "$BACKUP_DIR/main_migrations/"
+else
+    echo "Warning: Main instance migrations directory not found"
+fi
+
+# Backup test instance migrations if they exist
+if [ -d "test_django/pdf_extractor_web/profiles/migrations" ]; then
+    echo "Backing up test instance migrations..."
+    cp -r test_django/pdf_extractor_web/profiles/migrations/* "$BACKUP_DIR/test_migrations/"
+else
+    echo "Warning: Test instance migrations directory not found"
+fi
 
 echo "Backing up memory bank..."
 cp -r cline_docs "$BACKUP_DIR/"
@@ -27,6 +45,9 @@ Git commit: $(git rev-parse HEAD)
 Database versions:
 - Main: $(docker exec postgres_container psql -U ${POSTGRES_USER} -d mydatabase -c "SELECT version();" | tail -n 3 | head -n 1)
 - Test: $(docker exec postgres_test psql -U newuser -d mydatabase -c "SELECT version();" | tail -n 3 | head -n 1)
+Migration status:
+- Main migrations: $(if [ -d "pdf_extractor_web/profiles/migrations" ]; then echo "Found"; else echo "Not found"; fi)
+- Test migrations: $(if [ -d "test_django/pdf_extractor_web/profiles/migrations" ]; then echo "Found"; else echo "Not found"; fi)
 EOF
 
 echo "Creating restore script..."
@@ -116,12 +137,30 @@ restore_test() {
 # Function to restore migrations
 restore_migrations() {
     echo "Restoring migrations..."
-    if [ ! -d "migrations" ]; then
-        echo "Error: migrations directory not found"
-        return 1
+    
+    # Restore main migrations if they exist
+    if [ -d "main_migrations" ]; then
+        echo "Restoring main instance migrations..."
+        if [ ! -d "../pdf_extractor_web/profiles/migrations" ]; then
+            mkdir -p "../pdf_extractor_web/profiles/migrations"
+        fi
+        cp -r main_migrations/* ../pdf_extractor_web/profiles/migrations/
+        echo "Main migrations restored!"
+    else
+        echo "Warning: Main migrations directory not found in backup"
     fi
-    cp -r migrations/* ../pdf_extractor_web/profiles/migrations/
-    echo "Migrations restored!"
+    
+    # Restore test migrations if they exist
+    if [ -d "test_migrations" ]; then
+        echo "Restoring test instance migrations..."
+        if [ ! -d "../test_django/pdf_extractor_web/profiles/migrations" ]; then
+            mkdir -p "../test_django/pdf_extractor_web/profiles/migrations"
+        fi
+        cp -r test_migrations/* ../test_django/pdf_extractor_web/profiles/migrations/
+        echo "Test migrations restored!"
+    else
+        echo "Warning: Test migrations directory not found in backup"
+    fi
 }
 
 # Function to restore memory bank

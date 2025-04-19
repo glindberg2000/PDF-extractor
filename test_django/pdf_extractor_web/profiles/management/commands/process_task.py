@@ -1,87 +1,89 @@
-import json
-import logging
-import importlib.util
 import os
 import sys
-from pathlib import Path
+import logging
+import django
+import time
 from django.core.management.base import BaseCommand
-from django.utils import timezone
 from django.conf import settings
-from profiles.models import ProcessingTask, Agent, Tool, Transaction
-from ...admin import call_agent
-import traceback
+from profiles.models import ProcessingTask, Transaction, Agent
+from profiles.admin import call_agent
+from django.db import transaction
 
-# Configure logging to output to console
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-console_handler = logging.StreamHandler(sys.stdout)
-console_handler.setFormatter(
-    logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
-)
-logger.addHandler(console_handler)
-
-
-class TaskLogger:
-    def __init__(self, log_file):
-        self.log_file = Path(log_file)
-        self.log_file.parent.mkdir(parents=True, exist_ok=True)
-        self.logger = logger
-
-    def log(self, level, message, **kwargs):
-        # Create the log entry
-        entry = {
-            "timestamp": timezone.now().isoformat(),
-            "level": level,
-            "message": message,
-            **kwargs,
-        }
-
-        # Write to file
-        with open(self.log_file, "a") as f:
-            f.write(json.dumps(entry) + "\n")
-
-        # Also log to console
-        log_method = getattr(self.logger, level.lower(), self.logger.info)
-        log_method(f"{message} {json.dumps(kwargs) if kwargs else ''}")
 
 
 class Command(BaseCommand):
-    help = "Process a batch processing task"
+    help = "Process a single task"
 
     def add_arguments(self, parser):
-        parser.add_argument("task_id", type=str, help="UUID of the task to process")
+        parser.add_argument("task_id", type=str, help="The task ID to process")
+        parser.add_argument("--log-file", type=str, help="Path to log file")
         parser.add_argument(
-            "--log-file", type=str, help="Path to the log file", required=True
+            "--max-retries",
+            type=int,
+            default=5,
+            help="Maximum number of retries to find the task",
+        )
+        parser.add_argument(
+            "--retry-delay",
+            type=float,
+            default=1.0,
+            help="Delay in seconds between retries",
         )
 
     def handle(self, *args, **options):
+        # Set the correct settings module
+        os.environ.setdefault("DJANGO_SETTINGS_MODULE", "pdf_extractor_web.settings")
+
+        # Initialize Django
+        django.setup()
+
         task_id = options["task_id"]
-        logger = TaskLogger(options["log_file"])
+        log_file = options.get("log_file")
+        max_retries = options["max_retries"]
+        retry_delay = options["retry_delay"]
+
+        # Set up logging
+        if log_file:
+            file_handler = logging.FileHandler(log_file)
+            file_handler.setFormatter(
+                logging.Formatter(
+                    "%(asctime)s [%(levelname)s] %(message)s",
+                    datefmt="%Y-%m-%d %H:%M:%S",
+                )
+            )
+            logger.addHandler(file_handler)
+
+        # Try to find the task with retries
+        task = None
+        for attempt in range(max_retries):
+            try:
+                task = ProcessingTask.objects.get(task_id=task_id)
+                logger.info(f"Found task {task_id} on attempt {attempt + 1}")
+                break
+            except ProcessingTask.DoesNotExist:
+                if attempt < max_retries - 1:
+                    logger.warning(
+                        f"Task {task_id} not found on attempt {attempt + 1}, retrying in {retry_delay} seconds..."
+                    )
+                    time.sleep(retry_delay)
+                else:
+                    logger.error(
+                        f"Task {task_id} not found after {max_retries} attempts"
+                    )
+                    raise
 
         try:
-            # Get the task
-            task = ProcessingTask.objects.get(task_id=task_id)
-            logger.log("info", f"Starting task {task_id}", task_type=task.task_type)
+            logger.info(f"STARTING TASK {task_id}")
 
             # Get the appropriate agent
             if task.task_type == "payee_lookup":
-                # First try to get the agent from task metadata
-                agent_id = task.task_metadata.get("agent_id")
-                if agent_id:
-                    agent = Agent.objects.get(id=agent_id)
-                else:
-                    # Fall back to getting the specific "Lookup Payee" agent
-                    agent = Agent.objects.get(name="Lookup Payee")
+                agent = Agent.objects.get(name="Lookup Payee")
             else:  # classification
-                agent = Agent.objects.filter(name__icontains="classify").first()
+                agent = Agent.objects.get(name="Classify Agent")
 
             if not agent:
                 raise ValueError(f"No agent found for task type {task.task_type}")
-
-            logger.log("info", f"Using agent: {agent.name}")
-            logger.log(
-                "info", "Agent tools:", tools=[t.name for t in agent.tools.all()]
-            )
 
             # Process each transaction
             total = task.transactions.count()
@@ -91,16 +93,8 @@ class Command(BaseCommand):
 
             for idx, transaction in enumerate(task.transactions.all(), 1):
                 try:
-                    logger.log(
-                        "info",
-                        f"Processing transaction {idx}/{total}",
-                        transaction_id=transaction.id,
-                        description=transaction.description,
-                    )
-
-                    # Call the agent using the exact same code path as admin.py
+                    # Call the agent
                     response = call_agent(agent.name, transaction)
-                    logger.log("info", "Got response from agent", response=response)
 
                     # Update transaction with the response
                     update_fields = {
@@ -162,22 +156,13 @@ class Command(BaseCommand):
                         **update_fields
                     )
                     success_count += 1
-                    logger.log(
-                        "info",
-                        "Transaction processed successfully",
-                        transaction_id=transaction.id,
-                        **update_fields,
-                    )
+                    logger.info(f"Processed transaction {transaction.id} successfully")
 
                 except Exception as e:
                     error_count += 1
                     error_details[str(transaction.id)] = str(e)
-                    logger.log(
-                        "error",
-                        f"Error processing transaction: {str(e)}",
-                        transaction_id=transaction.id,
-                        error=str(e),
-                        traceback=traceback.format_exc(),
+                    logger.error(
+                        f"Error processing transaction {transaction.id}: {str(e)}"
                     )
 
                 # Update task progress
@@ -185,33 +170,22 @@ class Command(BaseCommand):
                 task.error_count = error_count
                 task.error_details = error_details
                 task.save()
-                logger.log(
-                    "info",
-                    "Updated task progress",
-                    processed=idx,
-                    total=total,
-                    errors=error_count,
-                )
 
             # Update final task status
             task.status = "completed" if error_count == 0 else "failed"
             task.save()
 
-            logger.log(
-                "info",
-                "Task completed",
-                success_count=success_count,
-                error_count=error_count,
+            logger.info(
+                f"Task completed: {success_count} successful, {error_count} failed"
             )
 
+        except ProcessingTask.DoesNotExist:
+            logger.error(f"Task {task_id} not found")
+            raise
         except Exception as e:
-            logger.log(
-                "error",
-                f"Task failed: {str(e)}",
-                error=str(e),
-                traceback=traceback.format_exc(),
-            )
+            logger.error(f"Task failed: {str(e)}")
             if "task" in locals():
                 task.status = "failed"
                 task.error_details = {"error": str(e)}
                 task.save()
+            raise
