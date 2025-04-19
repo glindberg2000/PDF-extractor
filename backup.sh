@@ -4,6 +4,14 @@
 BACKUP_DIR="backups/backup_$(date +%Y%m%d_%H%M%S)"
 mkdir -p "$BACKUP_DIR"
 
+# Check for nested Django instances
+echo "Checking for nested Django instances..."
+if [ -d "test_django/pdf_extractor_web/pdf_extractor_web" ]; then
+    echo "WARNING: Found nested Django instance in test_django/pdf_extractor_web/pdf_extractor_web"
+    echo "This could cause Python path and settings confusion."
+    echo "Consider archiving or removing this directory."
+fi
+
 echo "Backing up main database (Port 5432)..."
 docker exec postgres_container pg_dump -U ${POSTGRES_USER} -d mydatabase > "$BACKUP_DIR/main_database.sql"
 
@@ -48,6 +56,8 @@ Database versions:
 Migration status:
 - Main migrations: $(if [ -d "pdf_extractor_web/profiles/migrations" ]; then echo "Found"; else echo "Not found"; fi)
 - Test migrations: $(if [ -d "test_django/pdf_extractor_web/profiles/migrations" ]; then echo "Found"; else echo "Not found"; fi)
+Nested instances:
+- Found nested instance: $(if [ -d "test_django/pdf_extractor_web/pdf_extractor_web" ]; then echo "Yes"; else echo "No"; fi)
 EOF
 
 echo "Creating restore script..."
