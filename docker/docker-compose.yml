@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      - POSTGRES_DB=ledgerflow
+      - POSTGRES_USER=ledgerflow
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-ledgerflow_dev_password}
+    ports:
+      - "5435:5432"  # Changed to 5435 to avoid conflicts
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ledgerflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  django:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    command: python manage.py runserver 0.0.0.0:8000
+    volumes:
+      - ../app:/app
+      - ../static:/static
+    ports:
+      - "9000:8000"  # Changed to 9000 to avoid conflicts
+    environment:
+      - DEBUG=1
+      - SECRET_KEY=${SECRET_KEY:-django-insecure-dev-key}
+      - DATABASE_URL=postgres://ledgerflow:${POSTGRES_PASSWORD:-ledgerflow_dev_password}@postgres:5432/ledgerflow
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data: 

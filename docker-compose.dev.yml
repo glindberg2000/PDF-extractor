@@ -1,0 +1,33 @@
+services:
+  django:
+    build:
+      context: .
+      target: dev
+    volumes:
+      - .:/app
+    ports:
+      - "9000:8000"
+    environment:
+      - DEBUG=1
+      - DATABASE_URL=postgres://ledgerflow:ledgerflow@postgres:5432/ledgerflow
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:15
+    environment:
+      - POSTGRES_DB=ledgerflow
+      - POSTGRES_USER=ledgerflow
+      - POSTGRES_PASSWORD=ledgerflow
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ledgerflow"]
+      interval: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  postgres_data: 

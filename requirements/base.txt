@@ -1,0 +1,20 @@
+# Core Django and Database
+Django>=5.0
+psycopg2-binary>=2.9.9
+django-environ>=0.11.2
+gunicorn>=21.2
+python-dotenv>=1.0
+dj-database-url>=2.1.0
+
+# API and Data Handling
+requests>=2.32.3
+openai>=1.69.0
+jsonschema>=4.21.1
+pandas>=2.2.1
+numpy>=1.26.4
+
+# Google Sheets Integration
+google-auth>=2.38.0
+google-auth-oauthlib>=1.2.1
+google-api-python-client>=2.165.0
+gspread>=6.2.0 

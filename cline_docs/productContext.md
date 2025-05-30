@@ -1,5 +1,21 @@
 # Product Context
 
+## Why this project exists
+- Extracts, parses, and classifies data from PDFs for financial and business workflows.
+
+## What problems it solves
+- Automates extraction and structuring of data from complex documents.
+- Integrates with internal chat MCP for developer and workflow automation.
+
+## How it should work
+- Users interact with the system via CLI, web, and chat interfaces.
+- Data is processed, classified, and exported to various formats and destinations.
+
+## Critical Requirements
+- **Project path must not contain spaces or parentheses.**
+  - The MCP server process launcher (used by Cursor) cannot handle spaces in the path, resulting in ENOENT errors and failed tool startup.
+  - Always clone or move the project to a directory with a simple path (e.g., `~/repos/PDF-extractor`).
+
 ## Purpose
 The PDF Extractor is a specialized tool designed to automate the extraction, processing, and classification of financial data from various bank statements (PDF, CSV) and other financial documents. It serves as a bridge between raw financial documents and structured, categorized financial data suitable for tax preparation and financial analysis. The primary goal is to produce clean, categorized data separated into relevant tax worksheets (6A, Auto, HomeOffice) and a Personal worksheet.
 

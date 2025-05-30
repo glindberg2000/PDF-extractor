@@ -23,6 +23,14 @@
 - Fixed Python path issues in manage.py and wsgi.py
 - Tasks are now processing successfully with proper database connections
 - Created new backup script with verification steps for flattened directory structure
+- **Vendor Lookup Tool**: A new Brave Search-based vendor lookup tool has been developed and moved to `tools/vendor_lookup/` as a standalone Python package. It provides business info enrichment for vendors, with rate limiting and a test suite.
+- **Old CLI Database**: The legacy CLI and related scripts use a SQLite database located at `data/db/clients.db`. This is managed by the `ClientDB` class in `dataextractai/db/client_db.py`.
+- **Repo Organization**: The repo has been cleaned up:
+  - `tools/vendor_lookup/` contains the new vendor lookup package (`brave_search.py`, `tests.py`, `README.md`, `__init__.py`).
+  - `mcp-servers/` is present but untracked (not a submodule, not committed).
+  - Old test and note files for vendor lookup have been deleted from the root and `mcp-servers/`.
+  - All new/modified files are committed except for untracked directories like `mcp-servers/`.
+- **dataextractai Updates**: New/updated files in `dataextractai/cli/`, `dataextractai/sheets/`, and `dataextractai/menu.py` are committed.
 
 ## Backup System
 1. **Backup Script Location**: `test_django/pdf_extractor_web/backup.sh`
@@ -71,6 +79,10 @@
    - Payee Lookup agent
    - Classification agent
    - Other system agents
+9. **If moving the repo, ensure `.env` and `data/db/clients.db` are preserved for local development and CLI compatibility.**
+10. **To use the vendor lookup tool, import from `tools/vendor_lookup/` in your main app or scripts.**
+11. **If you need to re-track or move `mcp-servers/`, do so carefully to avoid submodule issues.**
+12. **All documentation and usage examples for the vendor lookup tool are in `tools/vendor_lookup/README.md`.**
 
 ## Current Focus
 - Ensuring data integrity across both instances
@@ -606,3 +618,30 @@ The nested directory structure was causing:
 1. Commit the working configuration
 2. Consider adding directory structure checks to deployment scripts
 3. Update documentation to warn against recreating nested structure
+
+## What I'm Working On Now
+- Debugging why the internal chat MCP server is yellow and not available in Cursor.
+- Confirmed binary, permissions, venv, and dependencies are correct.
+- Analyzed Cursor logs and found ENOENT errors due to spaces in the project path.
+
+## Recent Changes
+- Verified MCP binary and environment setup.
+- Ran MCP manually; confirmed expected behavior outside Cursor.
+- Inspected `.cursor/mcp.json` and confirmed correct config.
+- Checked Cursor logs and identified the root cause: process launcher cannot handle spaces in the path, leading to ENOENT errors.
+
+## Next Steps
+- Move the project to a directory path with no spaces or parentheses (e.g., `~/repos/PDF-extractor`).
+- Update `.cursor/mcp.json` to reflect the new path for both `command` and `cwd`.
+- Restart Cursor and verify MCP server connectivity.
+- Document this as a critical gotcha for future devs in product/system docs.
+
+## Key Paths
+- **Vendor Lookup Tool**: `tools/vendor_lookup/`
+- **Old CLI SQLite DB**: `data/db/clients.db`
+- **Main CLI/DB logic**: `dataextractai/db/client_db.py`, `dataextractai/menu.py`
+
+## Status
+- Repo is clean, all new tools and dataextractai changes are committed.
+- Only `mcp-servers/` is untracked (by design).
+- Ready for migration or further development.

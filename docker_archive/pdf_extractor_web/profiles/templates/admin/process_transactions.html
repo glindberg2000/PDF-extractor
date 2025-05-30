@@ -1,0 +1,56 @@
+{% extends "admin/base_site.html" %}
+{% load i18n admin_urls %}
+
+{% block content %}
+<div id="content-main">
+    <form action="" method="post">
+        {% csrf_token %}
+        {% for obj in transactions %}
+        <input type="hidden" name="{{ action_checkbox_name }}" value="{{ obj.pk }}">
+        {% endfor %}
+        <input type="hidden" name="action" value="{{ action }}">
+        <div>
+            <fieldset class="module aligned">
+                <h2>{% trans "Select Agent to Process Transactions" %}</h2>
+                <div class="form-row">
+                    <label for="agent">{% trans "Agent" %}:</label>
+                    <select name="agent" id="agent" required style="width: 100%; max-width: 500px;">
+                        <option value="">{% trans "---------" %}</option>
+                        {% for agent in agents %}
+                        <option value="{{ agent.id }}">
+                            {{ agent.name }} - {{ agent.purpose|truncatechars:100 }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-row">
+                    <h3>{% trans "Selected Transactions" %} ({{ transactions.count }})</h3>
+                    <div style="max-height: 200px; overflow-y: auto; border: 1px solid #eee; padding: 10px;">
+                        <ul style="list-style-type: none; padding-left: 0;">
+                            {% for transaction in transactions|slice:":5" %}
+                            <li style="padding: 5px 0; border-bottom: 1px solid #eee;">
+                                <strong>{{ transaction.description }}</strong>
+                                <br>
+                                <small>
+                                    Amount: {{ transaction.amount }} |
+                                    Date: {{ transaction.transaction_date }}
+                                </small>
+                            </li>
+                            {% endfor %}
+                            {% if transactions.count > 5 %}
+                            <li style="padding: 5px 0; color: #666;">
+                                ... and {{ transactions.count|add:"-5" }} more transactions
+                            </li>
+                            {% endif %}
+                        </ul>
+                    </div>
+                </div>
+            </fieldset>
+            <div class="submit-row">
+                <input type="submit" value="{% trans 'Process Transactions' %}" class="default" name="_process">
+                <a href="{{ request.META.HTTP_REFERER }}" class="button cancel-link">{% trans "Cancel" %}</a>
+            </div>
+        </div>
+    </form>
+</div>
+{% endblock %}

@@ -24,6 +24,9 @@ Process financial documents, classify transactions using AI and client profiles,
 - ✅ Basic Excel export (`excel_formatter.py`) with combined data.
 - ✅ Tax category initialization in DB.
 - ✅ CLI Menu (`menu.py`) for triggering processing and export.
+- MCP binary and dependencies are correctly installed and executable.
+- MCP config is correct in `.cursor/mcp.json`.
+- Manual testing of the binary works as expected outside Cursor.
 
 ## What's Left / Needs Improvement
 - ⏳ **Payee Normalization**: Implement logic to clean payee names (remove store #, etc.) and use it in Pass 1 and matching.
@@ -249,4 +252,11 @@ Legend:
 1. Review and document current database schema
 2. Plan classification storage strategy
 3. Implement chosen storage solution
-4. Add necessary migration safety checks 
+4. Add necessary migration safety checks
+
+## Progress Status
+- Blocked: MCP server cannot start due to ENOENT error from spaces in the project path. Awaiting project move and config update.
+
+## What's Left to Build
+- Project must be moved to a path without spaces or parentheses to allow Cursor to launch the MCP process.
+- Update config and verify MCP server connectivity in Cursor. 

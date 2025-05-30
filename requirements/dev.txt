@@ -1,0 +1,6 @@
+# Development Tools
+black>=24.2.0
+flake8>=7.0.0
+mypy>=1.15.0
+pytest>=8.0.0
+django-debug-toolbar>=4.3.0 

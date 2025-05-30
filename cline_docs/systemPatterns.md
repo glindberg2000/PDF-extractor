@@ -1291,3 +1291,17 @@ Required improvements:
 - Add error tracking
 - Enable automatic retries
 - Provide detailed error messages 
+
+## Key Technical Decisions
+- Uses Python virtual environments for dependency isolation.
+- MCP server is launched via absolute path in `.cursor/mcp.json` for reliability.
+- All tool binaries and scripts must be executable and installed in the venv.
+
+## Architecture Patterns
+- Modular app structure: `app/`, `dataextractai/`, `internal_chat_mcp/`, etc.
+- MCP server integration for chat-based automation and tool orchestration.
+
+## System Limitations / Gotchas
+- **No spaces or parentheses in project path:**
+  - Cursor's MCP process launcher cannot handle spaces in the path, causing ENOENT errors and failed tool startup.
+  - Always use a simple, space-free path for the project root and venv. 

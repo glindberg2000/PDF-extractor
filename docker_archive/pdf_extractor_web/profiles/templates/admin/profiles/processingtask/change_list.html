@@ -1,0 +1,68 @@
+{% extends "admin/change_list.html" %}
+{% load i18n admin_urls static admin_list %}
+
+{% block content %}
+{{ block.super }}
+<style>
+    .progress-bar {
+        border-radius: 3px;
+        overflow: hidden;
+        background: #f0f0f0;
+        border: 1px solid #ccc;
+        height: 20px;
+        width: 200px;
+        margin-top: 5px;
+    }
+
+    .progress-bar-inner {
+        background: #79aec8;
+        height: 100%;
+        transition: width 0.3s ease;
+    }
+
+    .progress-text {
+        font-size: 12px;
+        color: #666;
+        margin-top: 2px;
+    }
+</style>
+<script>
+    // Add progress bars to status cells
+    document.addEventListener('DOMContentLoaded', function () {
+        const rows = document.querySelectorAll('tr.row1, tr.row2');
+        rows.forEach(row => {
+            const cells = row.querySelectorAll('td');
+            cells.forEach(cell => {
+                if (cell.textContent.trim() === 'processing') {
+                    // Get task details from data attributes
+                    const processed = parseInt(row.dataset.processedCount || 0);
+                    const total = parseInt(row.dataset.transactionCount || 0);
+                    const percent = total > 0 ? (processed / total * 100) : 0;
+
+                    // Add progress bar
+                    const progressBar = document.createElement('div');
+                    progressBar.className = 'progress-bar';
+                    progressBar.innerHTML = `
+                            <div class="progress-bar-inner" style="width: ${percent}%;"></div>
+                        `;
+                    cell.appendChild(progressBar);
+
+                    // Add progress text
+                    const progressText = document.createElement('div');
+                    progressText.className = 'progress-text';
+                    progressText.textContent = `${processed} / ${total}`;
+                    cell.appendChild(progressText);
+                }
+            });
+        });
+    });
+
+    // Auto-refresh if there are processing tasks
+    const hasProcessingTasks = document.querySelector('td:contains("processing")') !== null;
+    if (hasProcessingTasks) {
+        setTimeout(function () {
+            window.location.reload();
+        }, 30000);
+    }
+</script>
+{% endblock %}
