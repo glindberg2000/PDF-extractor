@@ -1,3 +1,18 @@
+"""
+Chase Checking Parser (Modular)
+
+This module provides a modular, class-based parser for Chase checking/debit PDF statements.
+Implements the BaseParser interface and is registered with the ParserRegistry for dynamic use.
+
+Usage:
+    from dataextractai.parsers.chase_checking import ChaseCheckingParser
+    parser = ChaseCheckingParser()
+    raw = parser.parse_file('path/to/file.pdf')
+    df = parser.normalize_data(raw)
+
+This parser is importable for CLI, Django, or other Python integrations.
+"""
+
 import os
 import re
 import pandas as pd
@@ -14,17 +29,26 @@ logger = get_logger("chase_checking_parser_modular")
 class ChaseCheckingParser(BaseParser):
     """
     Modular parser for Chase Checking/Debit PDF statements.
-    Implements BaseParser interface for use in CLI, Django, or other systems.
+
+    Implements the BaseParser interface for use in CLI, Django, or other systems.
+    Registered as 'chase_checking' in the ParserRegistry.
+
+    Example:
+        parser = ChaseCheckingParser()
+        raw = parser.parse_file('path/to/file.pdf')
+        df = parser.normalize_data(raw)
     """
 
     def parse_file(self, input_path: str, config=None):
         """
         Extract raw transaction data from a single PDF file.
+
         Args:
             input_path (str): Path to the PDF file.
             config (dict, optional): Config dict (may include statement_date, etc.)
+
         Returns:
-            List[Dict]: List of raw transaction dicts.
+            List[Dict]: List of raw transaction dicts, one per transaction.
         """
         if config is None:
             config = {}
@@ -54,12 +78,14 @@ class ChaseCheckingParser(BaseParser):
         def is_number(s):
             return bool(number_re.match(s.replace(",", "")))
 
+        # Extract account number from any page
         for page_num in range(len(pdf_reader.pages)):
             text = pdf_reader.pages[page_num].extract_text()
             if not account_number:
                 match = re.search(r"\b\d{12,}\b", text)
                 if match:
                     account_number = match.group(0)
+        # Extract transactions from all pages
         for page_num in range(len(pdf_reader.pages)):
             try:
                 text = pdf_reader.pages[page_num].extract_text()
@@ -121,10 +147,12 @@ class ChaseCheckingParser(BaseParser):
     def normalize_data(self, raw_data):
         """
         Normalize extracted data to a standard schema and return as DataFrame.
+
         Args:
             raw_data (List[Dict]): Raw transaction dicts.
+
         Returns:
-            pd.DataFrame: Normalized DataFrame.
+            pd.DataFrame: Normalized DataFrame with standardized columns.
         """
         df = pd.DataFrame(raw_data)
         if not df.empty:
@@ -135,5 +163,5 @@ class ChaseCheckingParser(BaseParser):
         return df
 
 
-# Register the parser
+# Register the parser for dynamic use
 ParserRegistry.register_parser("chase_checking", ChaseCheckingParser)
