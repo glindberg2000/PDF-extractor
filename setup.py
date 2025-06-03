@@ -16,6 +16,7 @@ setup(
     packages=find_packages(include=["dataextractai", "dataextractai.*"]),
     install_requires=[
         "pandas>=2.0.0",
+        "PyYAML>=6.0.0",
     ],
     author="PDF Extractor Team",
     description="Modular PDF data extraction system (parsers, registry, CLI, Django integration)",
