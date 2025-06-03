@@ -21,6 +21,7 @@ setup(
         "numpy>=1.21.0",
         "python-dateutil>=2.8.2",
         "pytz>=2020.1",
+        "PyMuPDF>=1.23.0",
     ],
     author="PDF Extractor Team",
     description="Modular PDF data extraction system (parsers, registry, CLI, Django integration)",
