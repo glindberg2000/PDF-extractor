@@ -349,4 +349,5 @@ node_modules/
 # OS specific
 # Task files
 tasks.json
-tasks/ 
+tasks/ chase_visa_full_raw.txt
+chase_visa_raw_extracted.txt
