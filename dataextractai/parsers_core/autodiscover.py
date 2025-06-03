@@ -18,6 +18,7 @@ Usage:
 import importlib
 import pkgutil
 from dataextractai.parsers_core.registry import ParserRegistry
+import sys
 
 
 def autodiscover_parsers():
@@ -31,5 +32,6 @@ def autodiscover_parsers():
     for _, modname, ispkg in pkgutil.walk_packages(
         package.__path__, package.__name__ + "."
     ):
+        print(f"[DEBUG] Importing module: {modname}", file=sys.stderr)
         importlib.import_module(modname)
     return ParserRegistry._parsers
