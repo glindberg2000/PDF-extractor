@@ -166,16 +166,20 @@ def run_all_parsers(client_name: str, config: dict) -> int:
 
         for parser_name, parser_func in PARSER_FUNCTIONS.items():
             input_dir = input_dirs[parser_name]
-
-            # Make sure the directory exists
+            print(f"[DEBUG] Checking input directory for {parser_name}: {input_dir}")
             if not os.path.exists(input_dir):
+                print(
+                    f"[DEBUG] Directory does not exist for {parser_name}: {input_dir}"
+                )
                 progress.print(f"No input directory found for {parser_name}")
                 progress.advance(task)
                 continue
-
+            files_in_dir = os.listdir(input_dir)
+            print(f"[DEBUG] Files in {input_dir}: {files_in_dir}")
             # Get PDF files directly using glob
             pdf_files = glob.glob(os.path.join(input_dir, "*.pdf"))
             if not pdf_files:
+                print(f"[DEBUG] No PDF files found in {input_dir}")
                 progress.print(f"No PDF files found in {input_dir}")
                 progress.advance(task)
                 continue
@@ -368,7 +372,7 @@ def run_all_parsers(client_name: str, config: dict) -> int:
 
                             pdf_dir = os.path.dirname(pdf_path)
                             df = chase_main(
-                                write_to_file=False,
+                                write_to_file=True,
                                 source_dir=pdf_dir,  # Pass the directory
                                 output_csv=output_paths[parser_name]["csv"],
                                 output_xlsx=output_paths[parser_name]["xlsx"],
@@ -467,6 +471,8 @@ def run_all_parsers(client_name: str, config: dict) -> int:
 
     return total_processed
 
+
+run_parsers = run_all_parsers
 
 if __name__ == "__main__":
     # When run directly, we'll ask for a client name

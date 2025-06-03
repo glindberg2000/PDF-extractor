@@ -49,7 +49,7 @@ def parse(
         paths = get_current_paths(config)
 
         # Run parsers
-        run_parsers(client_name, paths["input_dirs"], paths["output_paths"])
+        run_parsers(client_name, config)
         logger.info(f"Successfully processed PDF files for {client_name}")
 
     except Exception as e:

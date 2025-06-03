@@ -1,0 +1,51 @@
+PRD: Modular Parser System
+
+Objective
+Refactor the parser system into a modular, importable package that supports:
+- CLI execution (console/terminal)
+- Django integration (management commands, views, tasks)
+- Pip-installable usage (for other Python projects)
+- Flexible configuration (via flags, config files, or environment variables)
+
+Requirements
+1. Core Package Structure
+- All core logic lives in a package (e.g., dataextractai/parsers_core/).
+- Each parser is a class implementing a common interface (BaseParser).
+- A registry system allows dynamic parser selection by name/type.
+
+2. Entry Points
+- CLI: A script or CLI wrapper (e.g., python -m dataextractai.parsers.run_parsers or parsefile ...) that can:
+  - List available parsers
+  - Run a parser on a file or directory
+  - Accept config/flags for input/output paths, parser selection, etc.
+- Django: Adapters for:
+  - Management commands (e.g., python manage.py run_parser ...)
+  - Direct import/use in views or Celery tasks
+- Pip: The package can be installed and imported in any Python project, with a documented API.
+
+3. Configuration
+- No hardcoded paths; all I/O is configurable via CLI flags, config files, or environment variables.
+- Support for both local and cloud (S3, etc.) file sources in the future.
+
+4. Testing & Documentation
+- Unit and integration tests for both CLI and Django entrypoints.
+- Documentation for:
+  - CLI usage
+  - Django integration
+  - API usage (importing as a package)
+  - Adding new parsers
+
+5. Backward Compatibility
+- The CLI workflow should remain as simple as before for console users.
+
+Out of Scope (for this phase)
+- Full cloud storage integration (can be stubbed)
+- Advanced ML-based parsing (focus on modularity and structure first)
+
+Deliverables
+- Modular parser package (dataextractai/parsers_core/)
+- Refactored Chase checking parser as a class, registered in the system
+- CLI wrapper script
+- Django adapter/management command
+- Example config and usage docs
+- Tests for both CLI and Django 
