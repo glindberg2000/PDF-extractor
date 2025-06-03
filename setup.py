@@ -9,10 +9,11 @@ This ensures dataextractai modules are importable from Django and other projects
 
 from setuptools import setup, find_packages
 
+# Use include pattern to ensure all subpackages (like parsers) are included
 setup(
     name="dataextractai",
     version="0.1.0",
-    packages=find_packages(),
+    packages=find_packages(include=["dataextractai", "dataextractai.*"]),
     install_requires=[
         "pandas>=2.0.0",
     ],
