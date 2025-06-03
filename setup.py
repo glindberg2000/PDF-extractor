@@ -17,6 +17,10 @@ setup(
     install_requires=[
         "pandas>=2.0.0",
         "PyYAML>=6.0.0",
+        "PyPDF2>=3.0.0",
+        "numpy>=1.21.0",
+        "python-dateutil>=2.8.2",
+        "pytz>=2020.1",
     ],
     author="PDF Extractor Team",
     description="Modular PDF data extraction system (parsers, registry, CLI, Django integration)",
