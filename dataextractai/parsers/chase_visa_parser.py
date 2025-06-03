@@ -16,6 +16,7 @@ from datetime import datetime
 from ..utils.config import PARSER_INPUT_DIRS, PARSER_OUTPUT_PATHS
 from ..utils.utils import standardize_column_names, get_parent_dir_and_file
 from ..utils.logger import get_logger
+import argparse
 
 SOURCE_DIR = PARSER_INPUT_DIRS["chase_visa"]
 OUTPUT_PATH_CSV = PARSER_OUTPUT_PATHS["chase_visa"]["csv"]
@@ -126,28 +127,15 @@ def extract_chase_statements(pdf_path, statement_date):
     account_number = None
     pages_with_transactions = []
     tx_count_per_page = []
-    # Flexible date regex: MM/DD anywhere in line
     date_re = re.compile(r"(\d{2}/\d{2})")
-    # Amount regex: number with optional commas/decimals, optional dash/minus
-    amount_re = re.compile(r"[\-–—]?\s*\d{1,3}(?:,\d{3})*(?:\.\d{2})")
-    # Regex to match section marker lines (ignore case)
+    number_re = re.compile(r"^-?[\d,]+\.\d{2}$")
     section_marker_re = re.compile(
         r"\*start\*.*|\*end\*.*|CHECKING SUMMARY|TRANSACTION DETAIL|SUMMARY OF",
         re.IGNORECASE,
     )
 
-    # Fallback: plausible transaction line
-    def plausible_tx_line(line):
-        # Must have a date, at least one amount, and a non-empty description
-        if date_re.search(line) and len(amount_re.findall(line)) >= 1:
-            # Ignore lines with only keywords
-            if re.search(r"Total|Summary|Balance", line, re.IGNORECASE):
-                # Only allow if also has a date and at least one amount and a non-keyword description
-                parts = line.split()
-                if len(parts) < 4:
-                    return False
-            return True
-        return False
+    def is_number(s):
+        return bool(number_re.match(s.replace(",", "")))
 
     for page_num in range(len(pdf_reader.pages)):
         text = pdf_reader.pages[page_num].extract_text()
@@ -158,7 +146,6 @@ def extract_chase_statements(pdf_path, statement_date):
         try:
             text = pdf_reader.pages[page_num].extract_text()
             lines = text.split("\n")
-            # Remove section markers and empty lines
             clean_lines = [
                 l for l in lines if l.strip() and not section_marker_re.match(l.strip())
             ]
@@ -166,66 +153,36 @@ def extract_chase_statements(pdf_path, statement_date):
             i = 0
             while i < len(clean_lines):
                 line = clean_lines[i].strip()
-                if not line:
-                    i += 1
-                    continue
-                date_match = date_re.search(line)
-                if date_match:
-                    # Start of a new transaction
+                # Only process lines with a date
+                if date_re.search(line):
+                    # Join lines until we have at least 4 tokens (date, desc, amount, balance)
                     tx_line = line
-                    # Join lines until we find two numbers (amount, balance)
                     j = i + 1
-                    while not amount_re.search(tx_line) and j < len(clean_lines):
+                    while len(tx_line.split()) < 4 and j < len(clean_lines):
                         tx_line += " " + clean_lines[j].strip()
                         j += 1
-                    buffer.append(tx_line)
-                    i = j
-                elif amount_re.fullmatch(line) and buffer:
-                    # Attach to previous line if just numbers
-                    buffer[-1] = buffer[-1] + " " + line
-                    i += 1
-                else:
-                    i += 1
-            page_tx = []
-            for line in buffer:
-                if plausible_tx_line(line):
-                    # Extract date, description, amount, balance
-                    date_match = date_re.search(line)
-                    amounts = amount_re.findall(line)
-                    if date_match and len(amounts) >= 1:
-                        date = date_match.group(1)
-                        # Remove date and amounts from line to get description
-                        desc = line
-                        desc = desc.replace(date, "")
-                        for amt in amounts:
-                            desc = desc.replace(amt, "")
+                    tokens = tx_line.split()
+                    if (
+                        len(tokens) >= 4
+                        and is_number(tokens[-1])
+                        and is_number(tokens[-2])
+                    ):
+                        date = tokens[0]
+                        amount = tokens[-2].replace(",", "")
+                        balance = tokens[-1].replace(",", "")
+                        desc = " ".join(tokens[1:-2])
                         desc = clean_description(desc)
-                        amount = (
-                            amounts[0]
-                            .replace(" ", "")
-                            .replace("–", "-")
-                            .replace("—", "-")
-                        )
-                        balance = (
-                            amounts[1].replace(" ", "") if len(amounts) > 1 else ""
-                        )
-                        # Only add if description is not empty and amount is plausible
-                        if desc and amount:
-                            page_tx.append([date, desc, amount, balance])
-                        else:
-                            logger.warning(
-                                f"[Fallback] Skipped line (empty desc/amount): {line}"
-                            )
+                        transactions.append([date, desc, amount, balance])
                     else:
                         logger.warning(
-                            f"[Fallback] Could not extract date/amounts: {line}"
+                            f"[ColumnSplit] Skipped line (not enough tokens or invalid numbers): {tx_line}"
                         )
+                    i = j
                 else:
-                    logger.debug(f"[Fallback] Ignored non-transaction line: {line}")
-            if page_tx:
-                transactions.extend(page_tx)
+                    i += 1
+            if transactions:
                 pages_with_transactions.append(page_num + 1)
-                tx_count_per_page.append(len(page_tx))
+                tx_count_per_page.append(len(transactions))
             else:
                 dump_path = f"logs/chase_tx_block_dump-{os.path.basename(pdf_path)}-page{page_num+1}.txt"
                 with open(dump_path, "w", encoding="utf-8") as f:
@@ -317,8 +274,8 @@ def main(write_to_file=True, source_dir=None, output_csv=None, output_xlsx=None)
 
     # Standardize the Column Names
     df = standardize_column_names(all_data)
-    df["file_path"] = df["file_path"].apply(get_parent_dir_and_file)
-
+    if not df.empty and "file_path" in df.columns:
+        df["file_path"] = df["file_path"].apply(get_parent_dir_and_file)
     # Save to CSV and Excel
     if write_to_file:
         output_csv_path = output_csv if output_csv is not None else OUTPUT_PATH_CSV
@@ -375,5 +332,34 @@ def run(write_to_file=True, input_dir=None, output_paths=None):
 
 
 if __name__ == "__main__":
-    # When running as a script, write to file by default
-    run()
+    parser = argparse.ArgumentParser(description="Chase VISA PDF Statement Parser")
+    parser.add_argument(
+        "--source_dir",
+        type=str,
+        default=None,
+        help="Directory containing PDF files to process",
+    )
+    parser.add_argument(
+        "--output_csv", type=str, default=None, help="Path to output CSV file"
+    )
+    parser.add_argument(
+        "--output_xlsx", type=str, default=None, help="Path to output XLSX file"
+    )
+    parser.add_argument(
+        "--no_write", action="store_true", help="If set, do not write output files"
+    )
+    args = parser.parse_args()
+
+    output_paths = None
+    if args.output_csv or args.output_xlsx:
+        output_paths = {}
+        if args.output_csv:
+            output_paths["csv"] = args.output_csv
+        if args.output_xlsx:
+            output_paths["xlsx"] = args.output_xlsx
+
+    run(
+        write_to_file=not args.no_write,
+        input_dir=args.source_dir,
+        output_paths=output_paths,
+    )
