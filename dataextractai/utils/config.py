@@ -379,6 +379,15 @@ TRANSFORMATION_MAPS = {
         "account_number": lambda x: x["account_number"],
         "file_path": lambda x: x["file_path"],
     },
+    "chase_checking": {
+        "transaction_date": "Date of Transaction",
+        "description": "Merchant Name or Transaction Description",
+        "amount": "Amount",
+        "file_path": "File Path",
+        "source": lambda x: "chase_checking",
+        "transaction_type": lambda x: "Debit/Check",
+        "account_number": "Account Number",
+    },
 }
 
 # AI Assistant Configurations
