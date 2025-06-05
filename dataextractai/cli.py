@@ -1,8 +1,11 @@
 """Command-line interface for the PDF extractor."""
 
+import logging
 import click
 import os
-import logging
+import glob
+import pandas as pd
+from io import StringIO
 from typing import Optional
 from .parsers.run_parsers import run_parsers
 from .utils.transaction_normalizer import TransactionNormalizer
@@ -11,9 +14,8 @@ from .agents.transaction_classifier import TransactionClassifier
 import json
 from datetime import datetime
 from .utils.config import get_client_config, get_current_paths
-import pandas as pd
 
-# Configure logging
+# Configure logging before any other imports
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -31,10 +33,18 @@ def cli():
 @click.argument("client_name")
 @click.option("--input-dir", "-i", help="Input directory for PDF files")
 @click.option("--output-dir", "-o", help="Output directory for processed files")
+@click.option(
+    "--per-statement-raw/--no-per-statement-raw",
+    default=False,
+    help="Dump raw extracted data for each statement file (default: False)",
+)
 def parse(
-    client_name: str, input_dir: Optional[str] = None, output_dir: Optional[str] = None
+    client_name: str,
+    input_dir: Optional[str] = None,
+    output_dir: Optional[str] = None,
+    per_statement_raw: bool = False,
 ):
-    """Run parsers on PDF files."""
+    """Run parsers on PDF files. Optionally dump per-statement raw extracted data for debugging."""
     try:
         # Get client configuration
         config = get_client_config(client_name)
@@ -44,12 +54,15 @@ def parse(
             config["input_dir"] = input_dir
         if output_dir:
             config["output_dir"] = output_dir
+        # Ensure output_dir is always set
+        if "output_dir" not in config or not config["output_dir"]:
+            config["output_dir"] = "data/clients"
 
         # Get current paths
         paths = get_current_paths(config)
 
         # Run parsers
-        run_parsers(client_name, config)
+        run_parsers(client_name, config, dump_per_statement_raw=per_statement_raw)
         logger.info(f"Successfully processed PDF files for {client_name}")
 
     except Exception as e:
@@ -61,10 +74,24 @@ def parse(
 @click.argument("client_name")
 @click.option("--input-dir", "-i", help="Input directory for CSV files")
 @click.option("--output-dir", "-o", help="Output directory for normalized files")
+@click.option(
+    "--per-statement/--no-per-statement",
+    default=True,
+    help="Dump individual normalized CSVs for each statement file (default: True)",
+)
+@click.option(
+    "--diagnostics/--no-diagnostics",
+    default=False,
+    help="Print diagnostics after normalization: row counts, sample rows, and warnings if Django is using raw data. Also writes to diagnostics_summary.txt in the output directory.",
+)
 def normalize(
-    client_name: str, input_dir: Optional[str] = None, output_dir: Optional[str] = None
+    client_name: str,
+    input_dir: Optional[str] = None,
+    output_dir: Optional[str] = None,
+    per_statement: bool = True,
+    diagnostics: bool = False,
 ):
-    """Normalize and consolidate transaction data."""
+    """Normalize and consolidate transaction data. Optionally dump per-statement normalized files. Use --diagnostics to print row counts, sample rows, and warnings. Also writes diagnostics to diagnostics_summary.txt."""
     try:
         # Get client configuration
         config = get_client_config(client_name)
@@ -74,24 +101,80 @@ def normalize(
             config["input_dir"] = input_dir
         if output_dir:
             config["output_dir"] = output_dir
-
-        # Get current paths
-        paths = get_current_paths(config)
-
-        # Initialize normalizer
-        normalizer = TransactionNormalizer(client_name)
+        if "output_dir" not in config:
+            config["output_dir"] = os.path.join(
+                "data", "clients", client_name, "output"
+            )
 
         # Normalize transactions
-        transactions_df = normalizer.normalize_transactions(paths["output_paths"])
+        normalizer = TransactionNormalizer(
+            client_name, dump_per_statement=per_statement
+        )
+        transactions_df = normalizer.normalize_transactions()
 
-        # Save normalized transactions
-        output_file = os.path.join(paths["output_paths"]["consolidated_core"]["csv"])
-        transactions_df.to_csv(output_file, index=False)
-        logger.info(f"Successfully normalized transactions for {client_name}")
+        if diagnostics:
+            output_dir = config["output_dir"]
+            summary = StringIO()
 
+            def _print(*args, **kwargs):
+                print(*args, **kwargs)
+                print(*args, **kwargs, file=summary)
+
+            _print("\n=== Diagnostics ===")
+            # 1. Per-statement raw files
+            raw_dir = os.path.join(output_dir, "raw_per_statement")
+            raw_files = glob.glob(os.path.join(raw_dir, "*.raw.csv"))
+            total_raw_rows = 0
+            _print(f"Per-statement raw files in {raw_dir}:")
+            for f in raw_files:
+                df = pd.read_csv(f)
+                _print(f"  {os.path.basename(f)}: {len(df)} rows")
+                total_raw_rows += len(df)
+                _print(df.head(2).to_string(index=False))
+            _print(f"Total rows in all raw_per_statement files: {total_raw_rows}")
+            # 2. Aggregate raw output
+            agg_raw_path = os.path.join(output_dir, f"{client_name}_output.csv")
+            if os.path.exists(agg_raw_path):
+                df_agg = pd.read_csv(agg_raw_path)
+                _print(f"Aggregate raw output: {agg_raw_path}: {len(df_agg)} rows")
+                _print(df_agg.head(2).to_string(index=False))
+            else:
+                _print(f"Aggregate raw output not found: {agg_raw_path}")
+            # 3. Normalized output
+            norm_path = os.path.join(
+                output_dir, f"{client_name}_normalized_transactions.csv"
+            )
+            if os.path.exists(norm_path):
+                df_norm = pd.read_csv(norm_path)
+                _print(f"Normalized output: {norm_path}: {len(df_norm)} rows")
+                _print(df_norm.head(2).to_string(index=False))
+            else:
+                _print(f"Normalized output not found: {norm_path}")
+            # 4. Problem rows
+            problem_rows = normalizer.get_problem_rows()
+            _print(f"Problem rows: {len(problem_rows)}")
+            if not problem_rows.empty:
+                _print(problem_rows.head(2).to_string(index=False))
+            # 5. Warnings
+            if not os.path.exists(norm_path) or (
+                os.path.exists(agg_raw_path)
+                and os.path.getsize(norm_path) < os.path.getsize(agg_raw_path)
+            ):
+                _print(
+                    "[WARNING] Django may be ingesting raw data or missing normalized data!"
+                )
+            _print("=== End Diagnostics ===\n")
+
+            # Write diagnostics to file
+            diag_path = os.path.join(output_dir, "diagnostics_summary.txt")
+            with open(diag_path, "w") as f:
+                f.write(summary.getvalue())
+            print(f"Diagnostics summary written to {diag_path}")
+
+        click.echo("Normalization complete.")
     except Exception as e:
-        logger.error(f"Error normalizing transactions: {str(e)}")
-        raise click.Abort()
+        click.echo(f"Error normalizing transactions: {e}")
+        click.echo("Aborted!")
 
 
 @cli.command()

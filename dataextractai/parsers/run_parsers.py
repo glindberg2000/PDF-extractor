@@ -136,12 +136,15 @@ def has_files_to_parse(directory):
     return True
 
 
-def run_all_parsers(client_name: str, config: dict) -> int:
+def run_all_parsers(
+    client_name: str, config: dict, dump_per_statement_raw=False
+) -> int:
     """Run all parsers for a client.
 
     Args:
         client_name: Name of the client
         config: Client configuration dictionary
+        dump_per_statement_raw: Flag to dump raw extracted data for each statement file
 
     Returns:
         int: Total number of transactions processed
@@ -154,6 +157,12 @@ def run_all_parsers(client_name: str, config: dict) -> int:
     # Create output directory if it doesn't exist
     output_dir = os.path.dirname(output_paths["amazon"]["csv"])
     os.makedirs(output_dir, exist_ok=True)
+
+    if dump_per_statement_raw:
+        # Always create raw_per_statement inside the client/output dir
+        raw_dir = os.path.join(output_dir, "raw_per_statement")
+        os.makedirs(raw_dir, exist_ok=True)
+        print(f"[DEBUG] Per-statement raw output directory: {raw_dir}")
 
     # Print input directories for debug
     print(f"Client: {client_name}")
@@ -176,20 +185,20 @@ def run_all_parsers(client_name: str, config: dict) -> int:
                 continue
             files_in_dir = os.listdir(input_dir)
             print(f"[DEBUG] Files in {input_dir}: {files_in_dir}")
-            # Get PDF files directly using glob
+            # Get PDF and CSV files
             pdf_files = glob.glob(os.path.join(input_dir, "*.pdf"))
-            if not pdf_files:
-                print(f"[DEBUG] No PDF files found in {input_dir}")
-                progress.print(f"No PDF files found in {input_dir}")
+            csv_files = glob.glob(os.path.join(input_dir, "*.csv"))
+            if not pdf_files and not csv_files:
+                print(f"[DEBUG] No PDF or CSV files found in {input_dir}")
+                progress.print(f"No PDF or CSV files found in {input_dir}")
                 progress.advance(task)
                 continue
 
             progress.print(
-                f"Found {len(pdf_files)} PDF files in {parser_name} directory"
+                f"Found {len(pdf_files)} PDF and {len(csv_files)} CSV files in {parser_name} directory"
             )
 
-            # These parsers process all files in a directory at once
-            # rather than individual files
+            # Directory-based parsers
             directory_based_parsers = [
                 "wellsfargo_visa",
                 "wellsfargo_bank",
@@ -197,8 +206,8 @@ def run_all_parsers(client_name: str, config: dict) -> int:
                 "wellsfargo_bank_csv",
             ]
 
-            # Process directory-based parsers all at once
-            if parser_name in directory_based_parsers and pdf_files:
+            # If parser is directory-based, process as before
+            if parser_name in directory_based_parsers:
                 try:
                     progress.print(
                         f"Processing all files in {parser_name} directory..."
@@ -295,6 +304,12 @@ def run_all_parsers(client_name: str, config: dict) -> int:
                             f"No data extracted from {parser_name} directory"
                         )
 
+                    if dump_per_statement_raw:
+                        # After processing, if dump_per_statement_raw, dump the full DataFrame
+                        out_path = os.path.join(raw_dir, f"{parser_name}_all.raw.csv")
+                        df.to_csv(out_path, index=False)
+                        print(f"[DEBUG] Saved directory-based raw data to {out_path}")
+
                 except Exception as e:
                     progress.print(
                         f"Error processing {parser_name} directory: {str(e)}"
@@ -348,6 +363,12 @@ def run_all_parsers(client_name: str, config: dict) -> int:
                             f"No data extracted from {parser_name} directory"
                         )
 
+                    if dump_per_statement_raw:
+                        # After processing, if dump_per_statement_raw, dump the full DataFrame
+                        out_path = os.path.join(raw_dir, f"{parser_name}_all.raw.csv")
+                        df.to_csv(out_path, index=False)
+                        print(f"[DEBUG] Saved directory-based raw data to {out_path}")
+
                 except Exception as e:
                     progress.print(
                         f"Error processing {parser_name} directory: {str(e)}"
@@ -356,117 +377,44 @@ def run_all_parsers(client_name: str, config: dict) -> int:
                 progress.advance(task)
                 continue
 
-            # Process each PDF file individually for file-based parsers
-            for pdf_path in pdf_files:
+            # For file-based parsers, process each file individually
+            for file_path in pdf_files + csv_files:
                 try:
-                    pdf_filename = os.path.basename(pdf_path)
-                    progress.print(f"Processing {pdf_filename}...")
-
-                    # Custom handling for different parser types
-                    if parser_name == "chase_visa":
-                        # Chase Visa parser expects a directory, not a file
-                        try:
-                            from dataextractai.parsers.chase_visa_parser import (
-                                main as chase_main,
-                            )
-
-                            pdf_dir = os.path.dirname(pdf_path)
-                            df = chase_main(
-                                write_to_file=True,
-                                source_dir=pdf_dir,  # Pass the directory
-                                output_csv=output_paths[parser_name]["csv"],
-                                output_xlsx=output_paths[parser_name]["xlsx"],
-                            )
-                        except Exception as e:
-                            progress.print(f"Error with chase_visa parser: {str(e)}")
-                            continue
-
-                    elif parser_name == "amazon":
-                        # Amazon parser has its own way of accessing files
-                        try:
-                            # Import without running
-                            import dataextractai.parsers.amazon_parser as amazon_parser
-
-                            # Save original value
-                            original_source_dir = amazon_parser.SOURCE_DIR
-                            # Set to our directory
-                            amazon_parser.SOURCE_DIR = os.path.dirname(pdf_path)
-
-                            # Run parser function
-                            df = parser_func(write_to_file=False)
-
-                            # Restore original
-                            amazon_parser.SOURCE_DIR = original_source_dir
-
-                        except Exception as e:
-                            progress.print(f"Error with amazon parser: {str(e)}")
-                            continue
-
-                    elif parser_name == "wellsfargo_bank_csv":
-                        # This parser accepts file paths directly
-                        df = parser_func(
-                            input_dir=pdf_path, output_paths=output_paths[parser_name]
+                    file_ext = os.path.splitext(file_path)[1].lower()
+                    file_dir = os.path.dirname(file_path)
+                    file_base = os.path.splitext(os.path.basename(file_path))[0]
+                    # Import the parser's main function dynamically
+                    parser_module = __import__(
+                        f"dataextractai.parsers.{parser_name}_parser", fromlist=["main"]
+                    )
+                    main_func = getattr(parser_module, "main", None)
+                    if main_func is None:
+                        print(
+                            f"[DEBUG] No main() in {parser_name}_parser, skipping raw dump for {file_path}"
                         )
-
-                    elif parser_name in ["bofa_bank", "bofa_visa"]:
-                        # BofA parsers
-                        try:
-                            # Import the right module
-                            if parser_name == "bofa_bank":
-                                import dataextractai.parsers.bofa_bank_parser as bofa_parser
-                            else:
-                                import dataextractai.parsers.bofa_visa_parser as bofa_parser
-
-                            # Save original
-                            original_source_dir = bofa_parser.SOURCE_DIR
-                            # Set to our directory with this specific file
-                            bofa_parser.SOURCE_DIR = os.path.dirname(pdf_path)
-                            # We also need to keep track of just the filename
-                            bofa_parser.CURRENT_FILE = os.path.basename(pdf_path)
-
-                            # Run parser
-                            df = parser_func(write_to_file=False)
-
-                            # Restore original
-                            bofa_parser.SOURCE_DIR = original_source_dir
-                            if hasattr(bofa_parser, "CURRENT_FILE"):
-                                del bofa_parser.CURRENT_FILE
-
-                        except Exception as e:
-                            progress.print(f"Error with {parser_name} parser: {str(e)}")
-                            continue
-
+                        continue
+                    # Call main for this file only
+                    if file_ext == ".pdf":
+                        df_raw = main_func(write_to_file=False, source_dir=file_dir)
+                    elif file_ext == ".csv":
+                        df_raw = main_func(write_to_file=False, source_dir=file_dir)
                     else:
-                        # Generic approach for other parsers
-                        try:
-                            # Process all files in the directory
-                            df = parser_func(write_to_file=False)
-                        except Exception as e:
-                            progress.print(f"Directory processing failed: {str(e)}")
-                            continue
-
-                    if df is not None and not df.empty:
-                        # Save to CSV
-                        csv_path = output_paths[parser_name]["csv"]
-                        df.to_csv(csv_path, index=False)
-                        progress.print(f"Saved CSV output to {csv_path}")
-
-                        # Save to Excel if xlsx path exists
-                        if "xlsx" in output_paths[parser_name]:
-                            xlsx_path = output_paths[parser_name]["xlsx"]
-                            df.to_excel(xlsx_path, index=False)
-                            progress.print(f"Saved Excel output to {xlsx_path}")
-
-                        total_processed += len(df)
-                        progress.print(
-                            f"Successfully processed {pdf_filename} with {len(df)} transactions"
+                        print(
+                            f"[DEBUG] Unsupported file type for raw dump: {file_path}"
                         )
-                    else:
-                        progress.print(f"No data extracted from {pdf_filename}")
-
+                        continue
+                    # Filter to just this file if possible
+                    if df_raw is not None and not df_raw.empty:
+                        # Try to filter by file_path or similar column
+                        if "file_path" in df_raw.columns:
+                            df_raw = df_raw[
+                                df_raw["file_path"].str.contains(file_base, na=False)
+                            ]
+                        out_path = os.path.join(raw_dir, f"{file_base}.raw.csv")
+                        df_raw.to_csv(out_path, index=False)
+                        print(f"[DEBUG] Saved raw data to {out_path}")
                 except Exception as e:
-                    progress.print(f"Error processing {pdf_path}: {str(e)}")
-
+                    print(f"[DEBUG] Error dumping raw data for {file_path}: {e}")
             progress.advance(task)
 
     return total_processed

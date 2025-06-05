@@ -1,8 +1,13 @@
 import hashlib
+import logging
 from dataextractai.parsers_core.registry import ParserRegistry
 from dataextractai.utils.config import TRANSFORMATION_MAPS
 import pandas as pd
 import os
+
+logger = logging.getLogger(__name__)
+
+REQUIRED_FIELDS = ["transaction_date", "description", "amount"]
 
 
 def compute_transaction_id(row):
@@ -20,10 +25,34 @@ def compute_transaction_id(row):
     return hashlib.sha256(key_str.encode("utf-8")).hexdigest()
 
 
+def is_valid_transaction(tx):
+    """
+    Check if a transaction dict has all required fields as valid strings (not None/NaN/empty).
+    """
+    for field in REQUIRED_FIELDS:
+        value = tx.get(field, None)
+        if (
+            value is None
+            or (isinstance(value, float) and pd.isna(value))
+            or str(value).strip() == ""
+        ):
+            return False, f"Missing or invalid field: {field}"
+        if field == "transaction_date":
+            # Must be a string in YYYY-MM-DD or similar format
+            if not isinstance(value, str):
+                return False, f"transaction_date is not a string: {value}"
+            try:
+                pd.to_datetime(value)
+            except Exception:
+                return False, f"transaction_date not parseable: {value}"
+    return True, None
+
+
 def normalize_parsed_data(file_path, parser_name, client_name=None, config=None):
     """
     Run the selected parser on a file and normalize the output to canonical transaction dicts.
     Adds a robust, deterministic transaction_id to each dict (SHA256 of date, amount, description, account).
+    Skips and logs any transactions with missing/invalid required fields (transaction_date, description, amount).
 
     Args:
         file_path (str): Path to the statement file (PDF, CSV, etc.)
@@ -64,5 +93,13 @@ def normalize_parsed_data(file_path, parser_name, client_name=None, config=None)
     # 3. Add deterministic transaction_id
     df["transaction_id"] = df.apply(compute_transaction_id, axis=1)
 
-    # 4. Convert DataFrame to list of dicts
-    return df.to_dict(orient="records")
+    # 4. Validate and filter transactions
+    valid_transactions = []
+    for tx in df.to_dict(orient="records"):
+        is_valid, reason = is_valid_transaction(tx)
+        if is_valid:
+            valid_transactions.append(tx)
+        else:
+            logger.warning(f"Skipping transaction: {reason} | Data: {tx}")
+
+    return valid_transactions

@@ -13,11 +13,56 @@ logger = logging.getLogger(__name__)
 
 
 class TransactionNormalizer:
-    """Normalizes and aggregates transactions from different bank outputs."""
+    """Normalizes and aggregates transactions from different bank outputs.
 
-    def __init__(self, client_name: str):
+    If dump_per_statement is True, writes a normalized CSV for each input statement file
+    (containing only valid rows) to output/normalized_per_statement/.
+    """
+
+    def __init__(self, client_name: str, dump_per_statement: bool = False):
         self.client_name = client_name
         self.output_dir = os.path.join("data", "clients", client_name, "output")
+        self.problem_rows = []  # Store tuples of (row_dict, reason)
+        self.dump_per_statement = dump_per_statement
+        if self.dump_per_statement:
+            self.per_statement_dir = os.path.join(
+                self.output_dir, "normalized_per_statement"
+            )
+            os.makedirs(self.per_statement_dir, exist_ok=True)
+
+    def get_problem_rows(self):
+        """Return a DataFrame of problem rows with reasons."""
+        if not self.problem_rows:
+            return pd.DataFrame()
+        return pd.DataFrame(
+            [{**row, "problem_reason": reason} for row, reason in self.problem_rows]
+        )
+
+    def _is_valid_row(self, row):
+        # Check required fields are present and valid
+        required = ["transaction_date", "description", "amount"]
+        for field in required:
+            value = row.get(field, None)
+            if (
+                value is None
+                or (isinstance(value, float) and pd.isna(value))
+                or str(value).strip() == ""
+            ):
+                return False, f"Missing or invalid field: {field}"
+            if field == "transaction_date":
+                # Must be a string in YYYY-MM-DD or similar format
+                if not isinstance(value, str):
+                    return False, f"transaction_date is not a string: {value}"
+                try:
+                    pd.to_datetime(value)
+                except Exception:
+                    return False, f"transaction_date not parseable: {value}"
+            if field == "amount":
+                try:
+                    float(value)
+                except Exception:
+                    return False, f"amount not parseable: {value}"
+        return True, None
 
     def normalize_date(self, date_str, row=None):
         """Normalize a date string to a pandas datetime object."""
@@ -68,8 +113,12 @@ class TransactionNormalizer:
         return pd.NaT
 
     def normalize_transactions(self) -> pd.DataFrame:
-        """Aggregate and normalize all transaction files into a single DataFrame."""
+        """Aggregate and normalize all transaction files into a single DataFrame. Only valid rows are included in the output. Problem rows are stored for review.
+        If dump_per_statement is True, also writes a normalized CSV for each input statement file (valid rows only).
+        Interest credit date logic is only applied if 'statement_end_date' exists.
+        """
         all_transactions = []
+        self.problem_rows = []  # Reset for each run
 
         # Find all CSV files in the output directory
         for file in os.listdir(self.output_dir):
@@ -205,10 +254,27 @@ class TransactionNormalizer:
                     else:
                         logger.warning(f"Warning: 'amount' column not found in {file}")
 
-                    all_transactions.append(df)
-                    logger.info(
-                        f"Successfully processed {len(df)} transactions from {file}"
-                    )
+                    # After transformation, strict validation for this file
+                    valid_rows = []
+                    for row in df.to_dict(orient="records"):
+                        is_valid, reason = self._is_valid_row(row)
+                        if is_valid:
+                            valid_rows.append(row)
+                        else:
+                            self.problem_rows.append((row, f"{file}: {reason}"))
+                            logger.warning(
+                                f"Dropping invalid row from {file}: {reason} | Data: {row}"
+                            )
+                    valid_df = pd.DataFrame(valid_rows)
+                    all_transactions.append(valid_df)
+
+                    # Dump per-statement file if enabled
+                    if self.dump_per_statement:
+                        out_name = os.path.splitext(file)[0] + "_normalized.csv"
+                        out_path = os.path.join(self.per_statement_dir, out_name)
+                        valid_df.to_csv(out_path, index=False)
+                        logger.info(f"Wrote per-statement normalized file: {out_path}")
+
                 except Exception as e:
                     logger.error(f"Error loading {file}: {e}")
 
@@ -216,7 +282,7 @@ class TransactionNormalizer:
             logger.warning("No transaction files found to normalize")
             return pd.DataFrame()
 
-        # Combine all transactions
+        # Combine all valid transactions
         combined_df = pd.concat(all_transactions, ignore_index=True)
 
         # Add a unique transaction ID
@@ -231,206 +297,60 @@ class TransactionNormalizer:
 
         # Use normalized_date as transaction_date if available
         if "normalized_date" in combined_df.columns:
-            # For interest credits, use statement end date
-            interest_credits = combined_df["description"].str.contains(
-                "INTEREST CREDIT", na=False
-            )
-            combined_df.loc[interest_credits, "transaction_date"] = combined_df.loc[
-                interest_credits, "statement_end_date"
-            ]
-
+            # Only apply interest credit logic if 'statement_end_date' exists
+            if "statement_end_date" in combined_df.columns:
+                interest_credits = combined_df["description"].str.contains(
+                    "INTEREST CREDIT", na=False
+                )
+                combined_df.loc[interest_credits, "transaction_date"] = combined_df.loc[
+                    interest_credits, "statement_end_date"
+                ]
+            else:
+                logger.warning(
+                    "'statement_end_date' column not found; skipping interest credit date logic."
+                )
             # For other transactions, use normalized date
-            other_transactions = ~interest_credits
-            combined_df.loc[other_transactions, "transaction_date"] = combined_df.loc[
-                other_transactions, "normalized_date"
-            ].apply(lambda x: x.strftime("%Y-%m-%d") if pd.notnull(x) else None)
-
+            if "normalized_date" in combined_df.columns:
+                other_transactions = ~combined_df["description"].str.contains(
+                    "INTEREST CREDIT", na=False
+                )
+                combined_df.loc[other_transactions, "transaction_date"] = (
+                    combined_df.loc[other_transactions, "normalized_date"].apply(
+                        lambda x: x.strftime("%Y-%m-%d") if pd.notnull(x) else None
+                    )
+                )
             # Ensure all dates are in YYYY-MM-DD format
             combined_df["transaction_date"] = pd.to_datetime(
                 combined_df["transaction_date"], format="%Y-%m-%d", errors="coerce"
             ).apply(lambda x: x.strftime("%Y-%m-%d") if pd.notnull(x) else None)
-
-            # Double-check interest credits and set their dates to statement end date
-            interest_credits = combined_df["description"].str.contains(
-                "INTEREST CREDIT", na=False
-            )
-            combined_df.loc[interest_credits, "transaction_date"] = combined_df.loc[
-                interest_credits, "statement_end_date"
-            ].apply(
-                lambda x: (
-                    pd.to_datetime(x, format="%Y-%m-%d", errors="coerce").strftime(
-                        "%Y-%m-%d"
-                    )
-                    if pd.notnull(x)
-                    else None
-                )
-            )
-
-            # Log any rows with missing transaction dates
-            missing_dates = combined_df["transaction_date"].isna().sum()
-            if missing_dates > 0:
-                logger.warning(f"Found {missing_dates} rows with missing dates")
-                # Log the problematic rows
-                problematic_rows = combined_df[combined_df["transaction_date"].isna()]
-                for _, row in problematic_rows.iterrows():
-                    logger.warning(f"Row with missing date: {row.to_dict()}")
-                    # For interest credits with missing dates, use the statement end date
-                    if (
-                        "description" in row
-                        and "INTEREST CREDIT" in str(row["description"])
-                        and "statement_end_date" in row
-                        and not pd.isna(row["statement_end_date"])
-                    ):
-                        combined_df.loc[row.name, "transaction_date"] = pd.to_datetime(
-                            row["statement_end_date"],
-                            format="%Y-%m-%d",
-                            errors="coerce",
-                        ).strftime("%Y-%m-%d")
-
-            # Final check for interest credits
-            interest_credits = combined_df["description"].str.contains(
-                "INTEREST CREDIT", na=False
-            )
-            for idx in combined_df[interest_credits].index:
-                if pd.isna(combined_df.loc[idx, "transaction_date"]):
-                    combined_df.loc[idx, "transaction_date"] = combined_df.loc[
-                        idx, "statement_end_date"
-                    ]
-
-            # Final check for any remaining missing dates
-            missing_dates = combined_df["transaction_date"].isna().sum()
-            if missing_dates > 0:
-                logger.warning(
-                    f"Found {missing_dates} rows with missing dates after all checks"
-                )
-                # Log the problematic rows
-                problematic_rows = combined_df[combined_df["transaction_date"].isna()]
-                for _, row in problematic_rows.iterrows():
-                    logger.warning(f"Row with missing date: {row.to_dict()}")
-                    # For interest credits with missing dates, use the statement end date
-                    if (
-                        "description" in row
-                        and "INTEREST CREDIT" in str(row["description"])
-                        and "statement_end_date" in row
-                        and not pd.isna(row["statement_end_date"])
-                    ):
-                        combined_df.loc[row.name, "transaction_date"] = row[
-                            "statement_end_date"
-                        ]
-                        # Double-check that the date was set
-                        if pd.isna(combined_df.loc[row.name, "transaction_date"]):
-                            logger.warning(
-                                f"Failed to set date for row: {row.to_dict()}"
-                            )
-                            logger.warning(
-                                f"Statement end date: {row['statement_end_date']}"
-                            )
-                            logger.warning(
-                                f"Current transaction date: {combined_df.loc[row.name, 'transaction_date']}"
-                            )
-
-            # Final check for any remaining missing dates
-            missing_dates = combined_df["transaction_date"].isna().sum()
-            if missing_dates > 0:
-                logger.warning(
-                    f"Found {missing_dates} rows with missing dates after all checks"
-                )
-                # Log the problematic rows
-                problematic_rows = combined_df[combined_df["transaction_date"].isna()]
-                for _, row in problematic_rows.iterrows():
-                    logger.warning(f"Row with missing date: {row.to_dict()}")
-                    # For interest credits with missing dates, use the statement end date
-                    if (
-                        "description" in row
-                        and "INTEREST CREDIT" in str(row["description"])
-                        and "statement_end_date" in row
-                        and not pd.isna(row["statement_end_date"])
-                    ):
-                        # Try one last time to set the date
-                        try:
-                            date_str = row["statement_end_date"]
-                            if pd.notnull(date_str):
-                                combined_df.loc[row.name, "transaction_date"] = date_str
-                                logger.warning(
-                                    f"Successfully set date to {date_str} for row: {row.to_dict()}"
-                                )
-                        except Exception as e:
-                            logger.error(f"Error setting date: {e}")
-                            logger.error(f"Row: {row.to_dict()}")
-
-            # Final check for any remaining missing dates
-            missing_dates = combined_df["transaction_date"].isna().sum()
-            if missing_dates > 0:
-                logger.warning(
-                    f"Found {missing_dates} rows with missing dates after all checks"
-                )
-                # Log the problematic rows
-                problematic_rows = combined_df[combined_df["transaction_date"].isna()]
-                for _, row in problematic_rows.iterrows():
-                    logger.warning(f"Row with missing date: {row.to_dict()}")
-                    # For interest credits with missing dates, use the statement end date
-                    if (
-                        "description" in row
-                        and "INTEREST CREDIT" in str(row["description"])
-                        and "statement_end_date" in row
-                        and not pd.isna(row["statement_end_date"])
-                    ):
-                        # Try one last time to set the date
-                        try:
-                            date_str = row["statement_end_date"]
-                            if pd.notnull(date_str):
-                                combined_df.loc[row.name, "transaction_date"] = date_str
-                                logger.warning(
-                                    f"Successfully set date to {date_str} for row: {row.to_dict()}"
-                                )
-                        except Exception as e:
-                            logger.error(f"Error setting date: {e}")
-                            logger.error(f"Row: {row.to_dict()}")
-
-            # Final check for any remaining missing dates
-            missing_dates = combined_df["transaction_date"].isna().sum()
-            if missing_dates > 0:
-                logger.warning(
-                    f"Found {missing_dates} rows with missing dates after all checks"
-                )
-                # Log the problematic rows
-                problematic_rows = combined_df[combined_df["transaction_date"].isna()]
-                for _, row in problematic_rows.iterrows():
-                    logger.warning(f"Row with missing date: {row.to_dict()}")
-                    # For interest credits with missing dates, use the statement end date
-                    if (
-                        "description" in row
-                        and "INTEREST CREDIT" in str(row["description"])
-                        and "statement_end_date" in row
-                        and not pd.isna(row["statement_end_date"])
-                    ):
-                        # Try one last time to set the date
-                        try:
-                            date_str = row["statement_end_date"]
-                            if pd.notnull(date_str):
-                                combined_df.loc[row.name, "transaction_date"] = date_str
-                                logger.warning(
-                                    f"Successfully set date to {date_str} for row: {row.to_dict()}"
-                                )
-                        except Exception as e:
-                            logger.error(f"Error setting date: {e}")
-                            logger.error(f"Row: {row.to_dict()}")
-
-            combined_df = combined_df.drop("normalized_date", axis=1)
 
         # Log the final DataFrame shape and source counts
         logger.info(f"Final DataFrame shape: {combined_df.shape}")
         source_counts = combined_df["source"].value_counts()
         logger.info(f"Transactions per source:\n{source_counts}")
 
-        # Save normalized transactions
+        # Final strict validation: filter out invalid/problem rows
+        valid_rows = []
+        for row in combined_df.to_dict(orient="records"):
+            is_valid, reason = self._is_valid_row(row)
+            if is_valid:
+                valid_rows.append(row)
+            else:
+                self.problem_rows.append((row, reason))
+                logger.warning(f"Dropping invalid row: {reason} | Data: {row}")
+        valid_df = pd.DataFrame(valid_rows)
+        logger.info(
+            f"Valid rows: {len(valid_df)} | Problem rows: {len(self.problem_rows)}"
+        )
+
+        # Save valid transactions
         output_file = os.path.join(
             self.output_dir, f"{self.client_name}_normalized_transactions.csv"
         )
-        combined_df.to_csv(output_file, index=False)
+        valid_df.to_csv(output_file, index=False)
         logger.info(f"Saved normalized transactions to {output_file}")
 
-        return combined_df
+        return valid_df
 
     def _normalize_description(self, description: str) -> str:
         """Normalize transaction description by removing common patterns and standardizing format."""
