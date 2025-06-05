@@ -95,7 +95,7 @@ def normalize_parsed_data(file_path, parser_name, client_name=None, config=None)
         df = transformed_df
 
     # 3. Add deterministic transaction_id
-    df["transaction_id"] = df.apply(compute_transaction_id, axis=1)
+    df["transaction_hash"] = df.apply(compute_transaction_id, axis=1)
 
     # 4. Validate and filter transactions
     valid_transactions = []
@@ -203,7 +203,9 @@ def normalize_parsed_data_df(file_path, parser_name, client_name=None, config=No
         )
         print("[DEBUG] After date normalization:", df.head(), df.columns, df.shape)
 
-    df["transaction_id"] = df.apply(compute_transaction_id, axis=1)
+    # Compute and add transaction_hash (SHA256) for deduplication
+    df["transaction_hash"] = df.apply(compute_transaction_id, axis=1)
+    # Do NOT overwrite or create 'transaction_id' unless present in the data
 
     # Validate and filter transactions
     valid_mask = df.apply(lambda row: is_valid_transaction(row)[0], axis=1)
