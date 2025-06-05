@@ -380,13 +380,13 @@ TRANSFORMATION_MAPS = {
         "file_path": lambda x: x["file_path"],
     },
     "chase_checking": {
-        "transaction_date": "Date of Transaction",
-        "description": "Merchant Name or Transaction Description",
-        "amount": "Amount",
-        "file_path": "File Path",
+        "transaction_date": "date_of_transaction",
+        "description": "merchant_name_or_transaction_description",
+        "amount": "amount",
+        "file_path": "file_path",
         "source": lambda x: "chase_checking",
         "transaction_type": lambda x: "Debit/Check",
-        "account_number": "Account Number",
+        "account_number": "account_number",
     },
 }
 
