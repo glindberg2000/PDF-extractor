@@ -4,6 +4,7 @@ from dataextractai.parsers_core.registry import ParserRegistry
 from dataextractai.utils.config import TRANSFORMATION_MAPS
 import pandas as pd
 import os
+from dataextractai.utils.utils import standardize_column_names
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +72,9 @@ def normalize_parsed_data(file_path, parser_name, client_name=None, config=None)
     raw_data = parser.parse_file(file_path, config=config)
     df = parser.normalize_data(raw_data)
 
+    # Always standardize column names before transformation
+    df = standardize_column_names(df)
+
     # 2. Apply transformation map if available
     source = parser_name
     if client_name:
@@ -103,3 +107,109 @@ def normalize_parsed_data(file_path, parser_name, client_name=None, config=None)
             logger.warning(f"Skipping transaction: {reason} | Data: {tx}")
 
     return valid_transactions
+
+
+def normalize_parsed_data_df(file_path, parser_name, client_name=None, config=None):
+    """
+    Parse and normalize a single statement file in one step, returning a pandas DataFrame of valid, standardized transactions.
+
+    This is the recommended function for downstream use (Django, data science, etc.).
+    It preserves all original and mapped columns, including statement_year/month for robust date normalization.
+
+    Args:
+        file_path (str): Path to the statement file (PDF, CSV, etc.)
+        parser_name (str): Name of the parser to use (must be registered, e.g. 'chase_checking')
+        client_name (str, optional): Client name for context (used for transformation map selection, e.g. 'chase_test')
+        config (dict, optional): Additional config for the parser (rarely needed; statement_date is inferred from filename)
+
+    Returns:
+        pd.DataFrame: DataFrame of valid, canonical transaction rows (with all context columns preserved)
+
+    Example:
+        import dataextractai.parsers.chase_checking_parser  # Ensure parser is registered
+        from dataextractai.utils.normalize_api import normalize_parsed_data_df
+        df = normalize_parsed_data_df(
+            "data/clients/chase_test/input/chase_visa/20240612-statements-7429-.pdf",
+            "chase_checking",
+            "chase_test"
+        )
+        print(df.head())
+        print(df.columns)
+        print(f"Rows: {len(df)}")
+    """
+    parser_cls = ParserRegistry.get_parser(parser_name)
+    if parser_cls is None:
+        raise ValueError(f"Parser '{parser_name}' not found in registry.")
+    parser = parser_cls()
+    raw_data = parser.parse_file(file_path, config=config)
+    print("[DEBUG] Raw data:", raw_data)
+    df = parser.normalize_data(raw_data)
+    print("[DEBUG] After normalize_data:", df.head(), df.columns, df.shape)
+    df = standardize_column_names(df)
+    print("[DEBUG] After standardize_column_names:", df.head(), df.columns, df.shape)
+
+    source = client_name if client_name else parser_name
+    transform_map = TRANSFORMATION_MAPS.get(
+        source, TRANSFORMATION_MAPS.get(parser_name)
+    )
+    if transform_map:
+        # Start with a copy of all columns, then overwrite/add mapped columns
+        transformed_df = df.copy()
+        for target_col, source_col in transform_map.items():
+            if callable(source_col):
+                transformed_df[target_col] = df.apply(source_col, axis=1)
+            elif source_col in df.columns:
+                transformed_df[target_col] = df[source_col]
+            else:
+                transformed_df[target_col] = None
+        df = transformed_df
+        print("[DEBUG] After transformation map:", df.head(), df.columns, df.shape)
+
+    # --- PATCH: Normalize transaction_date to YYYY-MM-DD (match CLI) ---
+    def normalize_date(row):
+        date_str = row.get("transaction_date", None)
+        if pd.isna(date_str) or not date_str:
+            return pd.NaT
+        # Try to parse as YYYY-MM-DD first
+        try:
+            date = pd.to_datetime(date_str, format="%Y-%m-%d", errors="coerce")
+            if not pd.isna(date):
+                return date
+        except Exception:
+            pass
+        # Try MM/DD with statement_year if available
+        try:
+            if "statement_year" in row and row["statement_year"]:
+                year = int(row["statement_year"])
+                # Accept MM/DD or M/D
+                m, d = [int(x) for x in str(date_str).split("/")]
+                return pd.Timestamp(year=year, month=m, day=d)
+        except Exception:
+            pass
+        # Try generic parsing
+        try:
+            date = pd.to_datetime(date_str, errors="coerce")
+            if not pd.isna(date):
+                return date
+        except Exception:
+            pass
+        return pd.NaT
+
+    if "transaction_date" in df.columns:
+        df["normalized_date"] = df.apply(normalize_date, axis=1)
+        # Overwrite transaction_date with normalized value (YYYY-MM-DD)
+        df["transaction_date"] = df["normalized_date"].apply(
+            lambda x: x.strftime("%Y-%m-%d") if pd.notnull(x) else None
+        )
+        print("[DEBUG] After date normalization:", df.head(), df.columns, df.shape)
+
+    df["transaction_id"] = df.apply(compute_transaction_id, axis=1)
+
+    # Validate and filter transactions
+    valid_mask = df.apply(lambda row: is_valid_transaction(row)[0], axis=1)
+    print("[DEBUG] Validation mask:", valid_mask.value_counts())
+    valid_df = df[valid_mask].reset_index(drop=True)
+    print(
+        "[DEBUG] After validation:", valid_df.head(), valid_df.columns, valid_df.shape
+    )
+    return valid_df
