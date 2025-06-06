@@ -110,6 +110,18 @@ def normalize_parsed_data(file_path, parser_name, client_name=None, config=None)
         else:
             logger.warning(f"Skipping transaction: {reason} | Data: {tx}")
 
+    # After all other normalization steps, ensure required fields are present
+    if "source" not in df.columns:
+        df["source"] = parser_name
+    else:
+        df["source"] = parser_name  # Overwrite to ensure consistency
+    if "file_path" not in df.columns:
+        df["file_path"] = file_path
+    else:
+        df["file_path"] = df["file_path"].fillna(file_path)
+    base_file_name = os.path.basename(file_path)
+    df["file_name"] = base_file_name
+
     return valid_transactions
 
 
@@ -218,4 +230,17 @@ def normalize_parsed_data_df(file_path, parser_name, client_name=None, config=No
     print(
         "[DEBUG] After validation:", valid_df.head(), valid_df.columns, valid_df.shape
     )
+
+    # After all other normalization steps, ensure required fields are present
+    if "source" not in df.columns:
+        df["source"] = parser_name
+    else:
+        df["source"] = parser_name  # Overwrite to ensure consistency
+    if "file_path" not in df.columns:
+        df["file_path"] = file_path
+    else:
+        df["file_path"] = df["file_path"].fillna(file_path)
+    base_file_name = os.path.basename(file_path)
+    df["file_name"] = base_file_name
+
     return valid_df
