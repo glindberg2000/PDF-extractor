@@ -231,7 +231,7 @@ def normalize_parsed_data_df(file_path, parser_name, client_name=None, config=No
         "[DEBUG] After validation:", valid_df.head(), valid_df.columns, valid_df.shape
     )
 
-    # After all other normalization steps, ensure required fields are present
+    # After all other normalization steps, ensure required fields are present (forcibly, for robustness)
     if "source" not in df.columns:
         df["source"] = parser_name
     else:
@@ -242,5 +242,5 @@ def normalize_parsed_data_df(file_path, parser_name, client_name=None, config=No
         df["file_path"] = df["file_path"].fillna(file_path)
     base_file_name = os.path.basename(file_path)
     df["file_name"] = base_file_name
-
-    return valid_df
+    print(f"[DEBUG] Final DataFrame columns: {df.columns.tolist()}")
+    return df
