@@ -5,6 +5,10 @@ from dataextractai.utils.config import TRANSFORMATION_MAPS
 import pandas as pd
 import os
 from dataextractai.utils.utils import standardize_column_names
+from dataextractai.parsers_core.autodiscover import autodiscover_parsers
+
+# Register all available parsers at import time
+autodiscover_parsers()
 
 logger = logging.getLogger(__name__)
 

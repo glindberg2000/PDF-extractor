@@ -29,6 +29,8 @@ import logging
 import json
 from ..utils.config import PARSER_INPUT_DIRS, PARSER_OUTPUT_PATHS
 from ..utils.utils import standardize_column_names, get_parent_dir_and_file
+from dataextractai.parsers_core.base import BaseParser
+from dataextractai.parsers_core.registry import ParserRegistry
 
 # Set up logging
 logging.basicConfig(
@@ -780,6 +782,66 @@ def run(
         logger.warning("No transactions found!")
         return pd.DataFrame()
 
+
+class FirstRepublicBankParser(BaseParser):
+    """
+    Modular parser for First Republic Bank PDF statements.
+    Implements BaseParser for use in modular/AI pipeline.
+    """
+
+    name = "first_republic_bank"
+    description = (
+        "Parser for First Republic Bank PDF statements. Extracts all transaction types."
+    )
+
+    def parse_file(self, input_path: str, config=None):
+        """
+        Extract raw transaction data from a single PDF file.
+        Args:
+            input_path (str): Path to the PDF file.
+            config (dict, optional): Config dict (may include statement_date, etc.)
+        Returns:
+            List[Dict]: List of raw transaction dicts, one per transaction.
+        """
+        # Read the PDF and extract text
+        with pdfplumber.open(input_path) as pdf:
+            text = "\n".join(page.extract_text() or "" for page in pdf.pages)
+        # Extract statement period and account number
+        statement_start_date, statement_end_date = extract_statement_date(text)
+        account_number = extract_account_number(text)
+        # Extract all transactions (deposits, withdrawals, checks, etc.)
+        transactions = extract_all_transactions(
+            text, statement_start_date, statement_end_date, account_number, input_path
+        )
+        # Patch in statement dates and account number for all rows
+        for tx in transactions:
+            tx["statement_start_date"] = statement_start_date
+            tx["statement_end_date"] = statement_end_date
+            tx["account_number"] = account_number
+            tx["file_path"] = input_path
+        return transactions
+
+    def normalize_data(self, raw_data):
+        """
+        Normalize extracted data to a standard schema and return as DataFrame.
+        Args:
+            raw_data (List[Dict]): Raw transaction dicts.
+        Returns:
+            pd.DataFrame: Normalized DataFrame with standardized columns.
+        """
+        df = pd.DataFrame(raw_data)
+        if not df.empty:
+            # Standardize column names and types
+            df = standardize_column_names(df)
+            if "amount" in df.columns:
+                df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
+            if "file_path" in df.columns:
+                df["file_path"] = df["file_path"].apply(get_parent_dir_and_file)
+        return df
+
+
+# Register the parser for dynamic use
+ParserRegistry.register_parser("first_republic_bank", FirstRepublicBankParser)
 
 if __name__ == "__main__":
     # When running as a script, write to file by default

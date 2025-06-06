@@ -1,0 +1,388 @@
+# Task ID: 10
+# Title: Implement Integration Tests
+# Status: pending
+# Dependencies: 6, 7, 8, 9
+# Priority: medium
+# Description: Create integration tests that verify the entire system works together, including CLI, Django integration, and package usage.
+# Details:
+Create integration tests in the `tests/integration` directory:
+
+```
+tests/integration/
+  __init__.py
+  test_cli_workflow.py
+  test_django_integration.py
+  test_package_usage.py
+```
+
+Implement `test_cli_workflow.py`:
+
+```python
+import pytest
+import subprocess
+import os
+import tempfile
+from pathlib import Path
+
+# Create a test file
+@pytest.fixture
+def test_file():
+    with tempfile.NamedTemporaryFile(suffix=".txt", delete=False) as f:
+        f.write(b"Test content for parser")
+    try:
+        yield f.name
+    finally:
+        os.unlink(f.name)
+
+# Create a mock parser for testing
+@pytest.fixture
+def setup_mock_parser():
+    # Create a temporary module with a mock parser
+    module_dir = tempfile.mkdtemp()
+    module_path = Path(module_dir) / "mock_parser.py"
+    
+    with open(module_path, "w") as f:
+        f.write("""
+ from dataextractai.parsers_core import BaseParser, ParserRegistry
+
+@ParserRegistry.register
+class MockParser(BaseParser):
+    @property
+    def name(self) -> str:
+        return "mock_parser"
+        
+    @property
+    def description(self) -> str:
+        return "Mock parser for testing"
+    
+    @classmethod
+    def get_supported_file_types(cls) -> list[str]:
+        return ["txt"]
+    
+    def parse(self, input_source, output_destination=None, **kwargs):
+        with open(input_source, 'r') as f:
+            content = f.read()
+        
+        result = {"content": content, "length": len(content)}
+        
+        if output_destination:
+            with open(output_destination, 'w') as f:
+                f.write(f"Parsed content: {content}\nLength: {len(content)}")
+        
+        return result
+        """)
+    
+    # Add the directory to Python path
+    import sys
+    sys.path.insert(0, module_dir)
+    
+    # Import the module to register the parser
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("mock_parser", module_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    
+    try:
+        yield
+    finally:
+        # Clean up
+        sys.path.remove(module_dir)
+        import shutil
+        shutil.rmtree(module_dir)
+
+def test_cli_list_parsers(setup_mock_parser):
+    """Test the CLI command to list parsers."""
+    result = subprocess.run(
+        ["python", "-m", "dataextractai.cli.commands", "--list"],
+        capture_output=True,
+        text=True
+    )
+    
+    assert result.returncode == 0
+    assert "mock_parser" in result.stdout
+    assert "Mock parser for testing" in result.stdout
+
+def test_cli_run_parser(setup_mock_parser, test_file):
+    """Test running a parser through the CLI."""
+    output_file = tempfile.NamedTemporaryFile(suffix=".txt", delete=False).name
+    
+    try:
+        result = subprocess.run(
+            [
+                "python", "-m", "dataextractai.cli.commands",
+                test_file,
+                "-p", "mock_parser",
+                "-o", output_file
+            ],
+            capture_output=True,
+            text=True
+        )
+        
+        assert result.returncode == 0
+        assert "Successfully parsed" in result.stdout
+        
+        # Check output file was created
+        assert os.path.exists(output_file)
+        with open(output_file, 'r') as f:
+            content = f.read()
+            assert "Parsed content:" in content
+            assert "Test content for parser" in content
+    finally:
+        if os.path.exists(output_file):
+            os.unlink(output_file)
+
+def test_cli_auto_detect_parser(setup_mock_parser, test_file):
+    """Test auto-detecting parser based on file extension."""
+    result = subprocess.run(
+        [
+            "python", "-m", "dataextractai.cli.commands",
+            test_file
+        ],
+        capture_output=True,
+        text=True
+    )
+    
+    assert result.returncode == 0
+    assert "Successfully parsed" in result.stdout
+```
+
+Implement `test_django_integration.py`:
+
+```python
+import pytest
+import os
+import tempfile
+from unittest import mock
+
+# Skip if Django is not installed
+pytestmark = pytest.importorskip("django")
+
+# Create a test file
+@pytest.fixture
+def test_file():
+    with tempfile.NamedTemporaryFile(suffix=".txt", delete=False) as f:
+        f.write(b"Test content for Django parser")
+    try:
+        yield f.name
+    finally:
+        os.unlink(f.name)
+
+# Mock Django settings
+@pytest.fixture
+def django_settings():
+    with mock.patch("django.conf.settings") as mock_settings:
+        mock_settings.DATAEXTRACTAI_CONFIG = {
+            "parser_options": {"option1": "value1"}
+        }
+        yield mock_settings
+
+# Mock BaseCommand for testing management command
+class MockBaseCommand:
+    def __init__(self):
+        self.stdout = mock.MagicMock()
+        self.style = mock.MagicMock()
+        self.style.SUCCESS = lambda x: x
+
+@pytest.fixture
+def setup_mock_parser():
+    # Create a mock parser
+    with mock.patch("dataextractai.parsers_core.ParserRegistry") as mock_registry:
+        mock_parser_class = mock.MagicMock()
+        mock_parser = mock.MagicMock()
+        mock_parser.parse.return_value = {"result": "test_data"}
+        mock_parser_class.return_value = mock_parser
+        
+        # Setup registry methods
+        mock_registry.get_parser_class.return_value = mock_parser_class
+        mock_registry.get_parser_for_file.return_value = mock_parser_class
+        
+        yield mock_parser
+
+def test_django_adapter(setup_mock_parser, test_file):
+    """Test the Django adapter function."""
+    from dataextractai.django.adapters import run_parser
+    
+    result = run_parser(
+        input_path=test_file,
+        parser_name="mock_parser",
+        output_path="output.txt",
+        option1="value1"
+    )
+    
+    # Verify parser was called with correct arguments
+    setup_mock_parser.parse.assert_called_once()
+    args, kwargs = setup_mock_parser.parse.call_args
+    assert kwargs["input_source"] == test_file
+    assert kwargs["output_destination"] == "output.txt"
+    assert kwargs["option1"] == "value1"
+    
+    # Verify result
+    assert result == {"result": "test_data"}
+
+def test_django_management_command(setup_mock_parser, test_file, django_settings):
+    """Test the Django management command."""
+    from dataextractai.django.management.commands.run_parser import Command
+    
+    # Create command instance
+    command = Command()
+    command.__class__.__bases__ = (MockBaseCommand,)
+    command.__class__.__mro__ = (command.__class__, MockBaseCommand, object)
+    command.stdout = mock.MagicMock()
+    command.style = mock.MagicMock()
+    command.style.SUCCESS.return_value = "SUCCESS"
+    
+    # Run command
+    result = command.handle(
+        input=test_file,
+        output="output.txt",
+        parser="mock_parser",
+        config=None
+    )
+    
+    # Verify parser was called with correct arguments
+    setup_mock_parser.parse.assert_called_once()
+    args, kwargs = setup_mock_parser.parse.call_args
+    assert kwargs["input_source"] == test_file
+    assert kwargs["output_destination"] == "output.txt"
+    assert "option1" in kwargs
+    
+    # Verify result
+    assert result == {"result": "test_data"}
+    command.stdout.write.assert_called()
+```
+
+Implement `test_package_usage.py`:
+
+```python
+import pytest
+import os
+import tempfile
+from pathlib import Path
+
+# Create a test file
+@pytest.fixture
+def test_file():
+    with tempfile.NamedTemporaryFile(suffix=".txt", delete=False) as f:
+        f.write(b"Test content for package usage")
+    try:
+        yield f.name
+    finally:
+        os.unlink(f.name)
+
+# Create a mock parser for testing
+@pytest.fixture
+def setup_mock_parser():
+    # Create a temporary module with a mock parser
+    module_dir = tempfile.mkdtemp()
+    module_path = Path(module_dir) / "package_test_parser.py"
+    
+    with open(module_path, "w") as f:
+        f.write("""
+ from dataextractai.parsers_core import BaseParser, ParserRegistry
+
+@ParserRegistry.register
+class PackageTestParser(BaseParser):
+    @property
+    def name(self) -> str:
+        return "package_test_parser"
+        
+    @property
+    def description(self) -> str:
+        return "Package test parser"
+    
+    @classmethod
+    def get_supported_file_types(cls) -> list[str]:
+        return ["txt"]
+    
+    def parse(self, input_source, output_destination=None, **kwargs):
+        with open(input_source, 'r') as f:
+            content = f.read()
+        
+        result = {"content": content, "length": len(content)}
+        
+        if output_destination:
+            with open(output_destination, 'w') as f:
+                f.write(f"Parsed content: {content}\nLength: {len(content)}")
+        
+        return result
+        """)
+    
+    # Add the directory to Python path
+    import sys
+    sys.path.insert(0, module_dir)
+    
+    # Import the module to register the parser
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("package_test_parser", module_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    
+    try:
+        yield
+    finally:
+        # Clean up
+        sys.path.remove(module_dir)
+        import shutil
+        shutil.rmtree(module_dir)
+
+def test_direct_parser_usage(setup_mock_parser, test_file):
+    """Test using a parser directly by importing it."""
+    from dataextractai.parsers_core import ParserRegistry
+    
+    # Get parser class
+    parser_class = ParserRegistry.get_parser_class("package_test_parser")
+    assert parser_class is not None
+    
+    # Create parser instance
+    parser = parser_class()
+    assert parser.name == "package_test_parser"
+    
+    # Parse file
+    output_file = tempfile.NamedTemporaryFile(suffix=".txt", delete=False).name
+    try:
+        result = parser.parse(
+            input_source=test_file,
+            output_destination=output_file
+        )
+        
+        # Check result
+        assert "content" in result
+        assert "length" in result
+        assert "Test content for package usage" in result["content"]
+        
+        # Check output file
+        assert os.path.exists(output_file)
+        with open(output_file, 'r') as f:
+            content = f.read()
+            assert "Parsed content:" in content
+            assert "Test content for package usage" in content
+    finally:
+        if os.path.exists(output_file):
+            os.unlink(output_file)
+
+def test_registry_lookup(setup_mock_parser):
+    """Test registry lookup functionality."""
+    from dataextractai.parsers_core import ParserRegistry
+    
+    # List parsers
+    parsers = ParserRegistry.list_parsers()
+    parser_names = [p["name"] for p in parsers]
+    assert "package_test_parser" in parser_names
+    
+    # Get parser by name
+    parser_class = ParserRegistry.get_parser_class("package_test_parser")
+    assert parser_class is not None
+    
+    # Get parser by file type
+    parser_class = ParserRegistry.get_parser_for_file("test.txt")
+    assert parser_class is not None
+    assert parser_class().name == "package_test_parser"
+```
+
+# Test Strategy:
+Run the integration tests:
+1. Verify the CLI workflow works end-to-end
+2. Test Django integration with mock Django components
+3. Verify the package can be used directly in Python code
+4. Test with actual file I/O to ensure the system works with real files
+5. Verify error handling and edge cases in an integrated context

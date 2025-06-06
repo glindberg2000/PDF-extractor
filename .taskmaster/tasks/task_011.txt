@@ -1,0 +1,238 @@
+# Task ID: 11
+# Title: Create Documentation
+# Status: pending
+# Dependencies: 6, 7, 8
+# Priority: medium
+# Description: Create comprehensive documentation for the parser system, including usage guides, API reference, and examples.
+# Details:
+Create documentation files in a `docs` directory:
+
+```
+docs/
+  index.md
+  installation.md
+  cli_usage.md
+  django_integration.md
+  api_reference.md
+  creating_parsers.md
+  examples/
+    basic_usage.md
+    custom_parser.md
+    django_example.md
+```
+
+Implement `index.md`:
+
+```markdown
+# DataExtractAI Parser System
+
+A modular system for parsing various document formats with support for CLI, Django integration, and use as a Python package.
+
+## Features
+
+- **Modular Design**: Each parser is a class implementing a common interface
+- **Multiple Entry Points**: Use as CLI tool, Django integration, or direct Python import
+- **Flexible Configuration**: Configure via CLI flags, config files, or environment variables
+- **Extensible**: Easily add new parsers by implementing the BaseParser interface
+
+## Documentation
+
+- [Installation](installation.md)
+- [CLI Usage](cli_usage.md)
+- [Django Integration](django_integration.md)
+- [API Reference](api_reference.md)
+- [Creating Parsers](creating_parsers.md)
+
+## Examples
+
+- [Basic Usage](examples/basic_usage.md)
+- [Creating a Custom Parser](examples/custom_parser.md)
+- [Django Integration Example](examples/django_example.md)
+```
+
+Implement `cli_usage.md`:
+
+```markdown
+# CLI Usage
+
+The parser system can be used directly from the command line after installation.
+
+## Basic Commands
+
+### List Available Parsers
+
+```bash
+parsefile --list
+```
+
+This will display all registered parsers with their descriptions and supported file types.
+
+### Parse a File
+
+```bash
+parsefile input.pdf -o output.csv
+```
+
+This will automatically detect the appropriate parser based on the file extension and parse the file.
+
+### Specify Parser
+
+```bash
+parsefile input.pdf -p chase_checking -o output.csv
+```
+
+This will use the specified parser (in this case, `chase_checking`) to parse the file.
+
+## Configuration
+
+### Using Config Files
+
+You can specify a configuration file:
+
+```bash
+parsefile input.pdf -c config.yaml
+```
+
+Example YAML configuration:
+
+```yaml
+input_path: input.pdf
+output_path: output.csv
+parser_name: chase_checking
+parser_options:
+  extract_images: true
+  page_range: [1, 5]
+```
+
+### Environment Variables
+
+You can also configure the parser using environment variables:
+
+```bash
+export DATAEXTRACTAI_INPUT_PATH=input.pdf
+export DATAEXTRACTAI_PARSER_NAME=chase_checking
+parsefile
+```
+
+## Advanced Usage
+
+### Parser-Specific Options
+
+Each parser may accept additional options. These can be specified in config files or as environment variables.
+
+### Processing Multiple Files
+
+To process multiple files, you can specify a directory as input:
+
+```bash
+parsefile input_directory/ -o output_directory/
+```
+
+This will process all files in the input directory using appropriate parsers based on file extensions.
+```
+
+Implement `creating_parsers.md`:
+
+```markdown
+# Creating Custom Parsers
+
+You can extend the parser system by creating your own parsers. Each parser must implement the `BaseParser` interface.
+
+## Basic Structure
+
+Here's a template for creating a new parser:
+
+```python
+from dataextractai.parsers_core import BaseParser, ParserRegistry
+
+@ParserRegistry.register
+class MyCustomParser(BaseParser):
+    @property
+    def name(self) -> str:
+        return "my_custom_parser"
+        
+    @property
+    def description(self) -> str:
+        return "Parser for my custom format"
+    
+    @classmethod
+    def get_supported_file_types(cls) -> list[str]:
+        return ["custom", "cst"]
+    
+    def parse(self, input_source, output_destination=None, **kwargs):
+        # Implementation...
+        
+        # Read input
+        with open(input_source, 'r') as f:
+            content = f.read()
+        
+        # Process content
+        processed_data = self._process_content(content)
+        
+        # Write output if destination provided
+        if output_destination:
+            self._write_output(processed_data, output_destination)
+        
+        return processed_data
+    
+    def _process_content(self, content):
+        # Custom processing logic
+        return {"processed": content}
+    
+    def _write_output(self, data, destination):
+        # Custom output writing logic
+        with open(destination, 'w') as f:
+            f.write(str(data))
+```
+
+## Registration
+
+Parsers must be registered with the `ParserRegistry` to be discoverable. The easiest way is to use the `@ParserRegistry.register` decorator as shown above.
+
+Alternatively, you can register manually:
+
+```python
+ParserRegistry.register(MyCustomParser)
+```
+
+## Making Your Parser Available
+
+To make your parser available to the system:
+
+1. Place your parser module in a location that's importable
+2. Make sure it's imported when your package is loaded
+
+For example, you could add it to the `parsers` directory and import it in `__init__.py`:
+
+```python
+# In dataextractai/parsers_core/parsers/__init__.py
+from .my_custom_parser import MyCustomParser
+
+__all__ = ['MyCustomParser']
+```
+
+## Testing Your Parser
+
+Create unit tests for your parser to ensure it works correctly:
+
+```python
+def test_my_custom_parser():
+    parser = MyCustomParser()
+    result = parser.parse("test_file.custom")
+    assert "processed" in result
+```
+
+You can also test it from the command line:
+
+```bash
+parsefile test_file.custom -p my_custom_parser
+```
+```
+
+# Test Strategy:
+Verify the documentation is complete and accurate:
+1. Check that all required sections are included
+2. Verify code examples are correct and runnable
+3. Ensure the documentation covers all key features
+4. Check for clarity and completeness of explanations
+5. Verify links between documentation pages work correctly

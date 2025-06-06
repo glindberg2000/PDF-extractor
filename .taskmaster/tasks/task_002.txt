@@ -1,0 +1,93 @@
+# Task ID: 2
+# Title: Implement BaseParser Interface
+# Status: in-progress
+# Dependencies: 1
+# Priority: high
+# Description: Create the base parser interface that all parser implementations will inherit from, defining the common contract for all parsers.
+# Details:
+Create `base.py` with the following:
+
+```python
+from abc import ABC, abstractmethod
+from typing import Dict, Any, Optional, Union, IO
+from pathlib import Path
+
+class BaseParser(ABC):
+    """Base interface for all parsers in the system."""
+    
+    @property
+    @abstractmethod
+    def name(self) -> str:
+        """Return the unique name of this parser."""
+        pass
+        
+    @property
+    @abstractmethod
+    def description(self) -> str:
+        """Return a human-readable description of this parser."""
+        pass
+    
+    @abstractmethod
+    def parse(self, 
+              input_source: Union[str, Path, IO], 
+              output_destination: Optional[Union[str, Path, IO]] = None,
+              **kwargs) -> Dict[str, Any]:
+        """Parse the input source and return structured data.
+        
+        Args:
+            input_source: File path, URL, or file-like object to parse
+            output_destination: Optional path or file-like object to write results
+            **kwargs: Additional parser-specific configuration options
+            
+        Returns:
+            Parsed data as a dictionary
+        """
+        pass
+    
+    @classmethod
+    def get_supported_file_types(cls) -> list[str]:
+        """Return list of supported file extensions or MIME types."""
+        return []
+        
+    def validate_input(self, input_source: Union[str, Path, IO]) -> bool:
+        """Validate if the input can be processed by this parser."""
+        # Default implementation checks file extension
+        if isinstance(input_source, (str, Path)):
+            path = Path(input_source)
+            return path.suffix.lower()[1:] in self.get_supported_file_types()
+        return True  # For file-like objects, assume valid by default
+```
+
+# Test Strategy:
+Write unit tests to verify that:
+1. BaseParser cannot be instantiated directly (as it's abstract)
+2. The abstract methods are properly defined
+3. The default validate_input method works correctly with different input types
+
+# Subtasks:
+## 1. Verify upgraded parser produces correct extracted output [pending]
+### Dependencies: None
+### Description: After refactoring each parser to use the BaseParser interface and registry, test the parser to ensure it works with the single-step wrapper and produces the correct, validated output DataFrame for representative input files.
+### Details:
+<info added on 2025-06-06T01:10:43.220Z>
+For every parser refactor, ensure the following steps are completed:
+
+1. Test the parser with real input files using the new single-step wrapper
+2. Verify the output DataFrame is:
+   - Correctly structured
+   - Properly validated
+   - Matching or improving upon the legacy CLI/standalone output
+
+3. Document any discrepancies or improvements found during testing, including:
+   - Data quality differences
+   - Performance changes
+   - Error handling improvements
+
+4. If the legacy CLI parser has issues or limitations:
+   - Perform a full review of its functionality
+   - Implement necessary improvements
+   - Document the enhancements made
+
+This validation process ensures each parser upgrade is functionally verified, not just structurally refactored.
+</info added on 2025-06-06T01:10:43.220Z>
+

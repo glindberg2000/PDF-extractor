@@ -201,4 +201,67 @@ python -m dataextractai.cli.main categories generate <client_name>
 - Transaction normalization
 - Client profile management
 - CLI and menu interfaces
-- AI classifier system (in progress) 
+- AI classifier system (in progress)
+
+## Current Problem
+
+- **Issue:** The normalized DataFrame for Chase Checking statements is empty (all rows dropped) because the transformation map expects case-sensitive column names, but the parser outputs standardized (lowercase, underscore) column names.
+- **Test Script:** A test script was created to reproduce the issue locally using the `normalize_parsed_data` function with the `chase_checking` parser and the provided file path.
+- **Conversation with Ledgerflow:** Ledgerflow confirmed the parser name (`chase_checking`) and the input file path (`../clients/testfiles/20240612-statements-7429-.pdf`).
+
+## Test Script
+
+```python
+import pandas as pd
+from dataextractai.utils.normalize_api import normalize_parsed_data
+
+# Test parameters
+file_path = "../clients/testfiles/20240612-statements-7429-.pdf"
+parser_name = "chase_checking"
+client_name = "sample2"
+
+# Run the normalizer
+transactions = normalize_parsed_data(
+    file_path=file_path,
+    parser_name=parser_name,
+    client_name=client_name,
+    config=None,
+)
+
+# Print the normalized DataFrame
+print(transactions)
+```
+
+## Relevant Code Examples
+
+### Transformation Map for `chase_checking`
+
+```python
+"chase_checking": {
+    "transaction_date": "Date of Transaction",
+    "description": "Merchant Name or Transaction Description",
+    "amount": "Amount",
+    "file_path": "File Path",
+    "source": lambda x: "chase_checking",
+    "transaction_type": lambda x: "Debit/Check",
+    "account_number": "Account Number",
+},
+```
+
+### Parser Output Columns
+
+The `ChaseCheckingParser` outputs columns like:
+- `"Date of Transaction"`
+- `"Merchant Name or Transaction Description"`
+- `"Amount"`
+- `"Balance"`
+- `"Statement Date"`
+- `"Statement Year"`
+- `"Statement Month"`
+- `"Account Number"`
+- `"File Path"`
+
+## Next Steps
+
+- Patch the transformation map to use standardized column names (lowercase, underscores) to match the parser's output.
+- Ensure the parser does not standardize column names before the transformation map is applied. 

@@ -1,0 +1,78 @@
+# Task ID: 3
+# Title: Implement Parser Registry System
+# Status: pending
+# Dependencies: 2
+# Priority: high
+# Description: Create a registry system that allows parsers to be dynamically registered and retrieved by name or file type.
+# Details:
+Create `registry.py` with the following implementation:
+
+```python
+from typing import Dict, Type, List, Optional
+from .base import BaseParser
+
+class ParserRegistry:
+    """Registry for parser classes that allows lookup by name or file type."""
+    
+    _parsers: Dict[str, Type[BaseParser]] = {}
+    
+    @classmethod
+    def register(cls, parser_class: Type[BaseParser]) -> Type[BaseParser]:
+        """Register a parser class in the registry.
+        
+        Can be used as a decorator:
+        @ParserRegistry.register
+        class MyParser(BaseParser):
+            ...
+        """
+        # Create an instance to get the name
+        parser_instance = parser_class()
+        cls._parsers[parser_instance.name] = parser_class
+        return parser_class
+    
+    @classmethod
+    def get_parser_class(cls, name: str) -> Optional[Type[BaseParser]]:
+        """Get a parser class by its name."""
+        return cls._parsers.get(name)
+    
+    @classmethod
+    def get_parser_for_file(cls, filename: str) -> Optional[Type[BaseParser]]:
+        """Find an appropriate parser for the given filename based on extension."""
+        import os
+        ext = os.path.splitext(filename)[1].lower()[1:]  # Get extension without dot
+        
+        for parser_class in cls._parsers.values():
+            parser = parser_class()
+            if ext in parser.get_supported_file_types():
+                return parser_class
+        return None
+    
+    @classmethod
+    def list_parsers(cls) -> List[Dict[str, str]]:
+        """Return a list of all registered parsers with their details."""
+        result = []
+        for name, parser_class in cls._parsers.items():
+            parser = parser_class()
+            result.append({
+                'name': name,
+                'description': parser.description,
+                'supported_types': parser.get_supported_file_types()
+            })
+        return result
+```
+
+Also update the `__init__.py` in the parsers_core package to expose the registry:
+
+```python
+from .base import BaseParser
+from .registry import ParserRegistry
+
+__all__ = ['BaseParser', 'ParserRegistry']
+```
+
+# Test Strategy:
+Write unit tests to verify:
+1. Parsers can be registered both directly and as decorators
+2. Parsers can be retrieved by name
+3. Appropriate parsers can be found for different file types
+4. The list_parsers method returns correct information

@@ -1,0 +1,149 @@
+# Task ID: 8
+# Title: Create Package Installation Setup
+# Status: pending
+# Dependencies: 1
+# Priority: medium
+# Description: Set up the package for pip installation, including setup.py and package metadata.
+# Details:
+Create `setup.py` in the project root with the following implementation:
+
+```python
+from setuptools import setup, find_packages
+
+with open("README.md", "r", encoding="utf-8") as fh:
+    long_description = fh.read()
+
+setup(
+    name="dataextractai",
+    version="0.1.0",
+    author="Your Organization",
+    author_email="info@example.com",
+    description="A modular system for parsing various document formats",
+    long_description=long_description,
+    long_description_content_type="text/markdown",
+    url="https://github.com/yourusername/dataextractai",
+    packages=find_packages(),
+    classifiers=[
+        "Programming Language :: Python :: 3",
+        "License :: OSI Approved :: MIT License",
+        "Operating System :: OS Independent",
+    ],
+    python_requires=">=3.7",
+    install_requires=[
+        "pyyaml>=5.1",
+        # Add other dependencies as needed
+    ],
+    extras_require={
+        "django": ["django>=2.2"],
+        "dev": ["pytest", "pytest-cov", "black", "isort"],
+    },
+    entry_points={
+        'console_scripts': [
+            'parsefile=dataextractai.cli.commands:main',
+        ],
+    },
+)
+```
+
+Create a basic README.md file:
+
+```markdown
+# DataExtractAI Parser System
+
+A modular system for parsing various document formats with support for CLI, Django integration, and use as a Python package.
+
+## Installation
+
+```bash
+# Basic installation
+pip install dataextractai
+
+# With Django support
+pip install dataextractai[django]
+
+# For development
+pip install dataextractai[dev]
+```
+
+## Usage
+
+### Command Line
+
+```bash
+# List available parsers
+parsefile --list
+
+# Parse a file (auto-detect parser)
+parsefile input.pdf -o output.csv
+
+# Specify parser
+parsefile input.pdf -p chase_checking -o output.csv
+```
+
+### As a Python Package
+
+```python
+from dataextractai.parsers_core import ParserRegistry
+
+# Get a parser by name
+parser_class = ParserRegistry.get_parser_class("chase_checking")
+parser = parser_class()
+
+# Parse a file
+result = parser.parse("input.pdf", "output.csv")
+```
+
+### Django Integration
+
+```python
+# In a view or task
+from dataextractai.django.adapters import run_parser
+
+def process_document(request):
+    result = run_parser(
+        input_path="path/to/document.pdf",
+        parser_name="chase_checking",
+        output_path="path/to/output.csv"
+    )
+    # Process result...
+```
+
+## Adding New Parsers
+
+Create a new parser by subclassing BaseParser and registering it:
+
+```python
+from dataextractai.parsers_core import BaseParser, ParserRegistry
+
+@ParserRegistry.register
+class MyCustomParser(BaseParser):
+    @property
+    def name(self) -> str:
+        return "my_custom_parser"
+        
+    @property
+    def description(self) -> str:
+        return "Parser for my custom format"
+    
+    def parse(self, input_source, output_destination=None, **kwargs):
+        # Implementation...
+        return parsed_data
+```
+```
+
+Create a `MANIFEST.in` file to include non-Python files:
+
+```
+include README.md
+include LICENSE
+recursive-include dataextractai/templates *
+recursive-include dataextractai/static *
+```
+
+# Test Strategy:
+Verify the package can be installed with pip:
+1. Test installation in a virtual environment
+2. Verify the CLI command is available after installation
+3. Test importing the package in a Python script
+4. Test the Django integration in a Django project
+5. Verify all dependencies are correctly specified

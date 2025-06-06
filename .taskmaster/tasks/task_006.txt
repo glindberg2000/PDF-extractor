@@ -1,0 +1,130 @@
+# Task ID: 6
+# Title: Implement CLI Entry Point
+# Status: pending
+# Dependencies: 3, 4, 5
+# Priority: high
+# Description: Create a command-line interface for running parsers directly from the terminal.
+# Details:
+Create `cli/commands.py` with the following implementation:
+
+```python
+import argparse
+import sys
+from pathlib import Path
+from typing import List, Optional
+
+from ..parsers_core import ParserRegistry
+from ..parsers_core.utils.config import ConfigLoader
+
+def list_parsers_command():
+    """List all available parsers."""
+    parsers = ParserRegistry.list_parsers()
+    
+    print("Available parsers:")
+    for parser in parsers:
+        print(f"  {parser['name']} - {parser['description']}")
+        if parser['supported_types']:
+            print(f"    Supported file types: {', '.join(parser['supported_types'])}")
+    
+    return 0
+
+def run_parser_command(args: Optional[List[str]] = None):
+    """Run a parser on input file(s)."""
+    parser = argparse.ArgumentParser(description="Run a data parser on input files")
+    
+    parser.add_argument('input', help='Input file or directory to parse')
+    parser.add_argument('-o', '--output', help='Output file or directory')
+    parser.add_argument('-p', '--parser', help='Specific parser to use (will auto-detect if not specified)')
+    parser.add_argument('-c', '--config', help='Path to config file')
+    parser.add_argument('-l', '--list', action='store_true', help='List available parsers and exit')
+    
+    # Parse arguments
+    parsed_args = parser.parse_args(args)
+    
+    # Handle list command
+    if parsed_args.list:
+        return list_parsers_command()
+    
+    # Load configuration
+    config = ConfigLoader.load_config(
+        cli_args={
+            'input_path': parsed_args.input,
+            'output_path': parsed_args.output,
+            'parser_name': parsed_args.parser,
+        },
+        config_path=parsed_args.config
+    )
+    
+    # Determine which parser to use
+    parser_class = None
+    if config.parser_name:
+        parser_class = ParserRegistry.get_parser_class(config.parser_name)
+        if not parser_class:
+            print(f"Error: Parser '{config.parser_name}' not found")
+            return 1
+    else:
+        # Auto-detect parser based on file extension
+        parser_class = ParserRegistry.get_parser_for_file(config.input_path)
+        if not parser_class:
+            print(f"Error: Could not determine parser for '{config.input_path}'")
+            print("Specify a parser with --parser or use --list to see available parsers")
+            return 1
+    
+    # Create parser instance and run
+    parser_instance = parser_class()
+    try:
+        result = parser_instance.parse(
+            input_source=config.input_path,
+            output_destination=config.output_path,
+            **(config.parser_options or {})
+        )
+        print(f"Successfully parsed {config.input_path}")
+        if config.output_path:
+            print(f"Results written to {config.output_path}")
+        return 0
+    except Exception as e:
+        print(f"Error parsing {config.input_path}: {str(e)}")
+        return 1
+
+def main():
+    """Main entry point for the CLI."""
+    return run_parser_command()
+
+if __name__ == "__main__":
+    sys.exit(main())
+```
+
+Create a `__main__.py` file in the root package to allow running as a module:
+
+```python
+from .cli.commands import main
+
+if __name__ == "__main__":
+    main()
+```
+
+Update `setup.py` to include the CLI entry point:
+
+```python
+from setuptools import setup, find_packages
+
+setup(
+    name="dataextractai",
+    version="0.1.0",
+    packages=find_packages(),
+    entry_points={
+        'console_scripts': [
+            'parsefile=dataextractai.cli.commands:main',
+        ],
+    },
+    # Other setup parameters...
+)
+```
+
+# Test Strategy:
+Write unit tests to verify:
+1. The CLI correctly lists available parsers
+2. The CLI can auto-detect the appropriate parser for a file
+3. The CLI correctly passes configuration to the parser
+4. The CLI handles errors gracefully
+5. Test with mock parsers to ensure the full workflow functions correctly
