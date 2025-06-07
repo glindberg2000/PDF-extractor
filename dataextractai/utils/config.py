@@ -388,6 +388,15 @@ TRANSFORMATION_MAPS = {
         "transaction_type": lambda x: "Debit/Check",
         "account_number": "account_number",
     },
+    "capitalone_csv": {
+        "transaction_date": "transaction_date",
+        "description": "description",
+        "amount": "amount",
+        "file_path": "source_file",
+        "source": lambda x: "capitalone_csv",
+        "transaction_type": "transaction_type",
+        "account_number": "card_no",
+    },
 }
 
 # AI Assistant Configurations
