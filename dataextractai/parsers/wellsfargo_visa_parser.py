@@ -23,6 +23,8 @@ import logging
 import json
 from ..utils.config import PARSER_INPUT_DIRS, PARSER_OUTPUT_PATHS
 from ..utils.utils import standardize_column_names, get_parent_dir_and_file
+from dataextractai.parsers_core.base import BaseParser
+from dataextractai.parsers_core.registry import ParserRegistry
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
@@ -272,6 +274,54 @@ def run(write_to_file=True):
     """Run the parser."""
     return main(write_to_file=write_to_file)
 
+
+class WellsFargoVisaParser(BaseParser):
+    """
+    Modular parser for Wells Fargo Visa PDF statements.
+    Implements BaseParser for use in modular/AI pipeline.
+    """
+
+    name = "wellsfargo_visa"
+    description = "Parser for Wells Fargo Visa PDF statements. Extracts and normalizes transactions."
+
+    def parse_file(self, input_path, config=None):
+        # Use the existing extract_transactions logic
+        transactions = extract_transactions(input_path)
+        transactions = update_transaction_years(transactions)
+        return transactions
+
+    def normalize_data(self, raw_data):
+        # Use the existing DataFrame normalization logic
+        df = pd.DataFrame(raw_data)
+        if df.empty:
+            return df
+        df = standardize_column_names(df)
+        if "file_path" in df.columns:
+            df["file_path"] = df["file_path"].apply(get_parent_dir_and_file)
+        return df
+
+    def can_parse(self, input_path):
+        """
+        Return True if the PDF appears to be a Wells Fargo Visa statement.
+        Checks for key phrases on the first page.
+        """
+        try:
+            with pdfplumber.open(input_path) as pdf:
+                first_page_text = pdf.pages[0].extract_text() or ""
+                # Look for key phrases
+                if (
+                    "Wells Fargo" in first_page_text
+                    and "Visa" in first_page_text
+                    and "Statement Period" in first_page_text
+                ):
+                    return True
+        except Exception:
+            pass
+        return False
+
+
+# Register the parser
+ParserRegistry.register_parser(WellsFargoVisaParser.name, WellsFargoVisaParser)
 
 if __name__ == "__main__":
     run()
