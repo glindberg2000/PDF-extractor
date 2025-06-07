@@ -72,7 +72,11 @@ class WellsFargoCheckingCSVParser(BaseParser):
                     "description": row["description"],
                     "amount": row["amount"],
                     "source_file": os.path.basename(input_path),
+                    "file_path": input_path,
+                    "file_name": os.path.basename(input_path),
+                    "source": self.name,
                     "transaction_type": "Unknown",
+                    "account_number": None,
                 }
             )
         return records
@@ -87,8 +91,11 @@ class WellsFargoCheckingCSVParser(BaseParser):
                 "description": row.get("description"),
                 "amount": row.get("amount"),
                 "source_file": row.get("source_file", ""),
-                "source": tf_map["source"](row),
+                "file_path": row.get("file_path", ""),
+                "file_name": row.get("file_name", ""),
+                "source": row.get("source", self.name),
                 "transaction_type": row.get("transaction_type", "Unknown"),
+                "account_number": row.get("account_number", None),
             }
             normalized.append(norm)
         return pd.DataFrame(normalized)
