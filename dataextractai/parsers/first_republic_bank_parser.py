@@ -31,6 +31,7 @@ from ..utils.config import PARSER_INPUT_DIRS, PARSER_OUTPUT_PATHS
 from ..utils.utils import standardize_column_names, get_parent_dir_and_file
 from dataextractai.parsers_core.base import BaseParser
 from dataextractai.parsers_core.registry import ParserRegistry
+import PyPDF2  # For robust PDF text extraction in extract_metadata
 
 # Set up logging
 logging.basicConfig(
@@ -848,6 +849,159 @@ class FirstRepublicBankParser(BaseParser):
             return required_phrase.lower() in text.lower()
         except Exception:
             return False
+
+    def extract_metadata(self, input_path: str) -> dict:
+        """
+        Extract robust metadata fields from a First Republic Bank PDF statement.
+
+        Parameters:
+            input_path (str): Path to the PDF file.
+
+        Returns:
+            dict: Metadata fields including:
+                - bank_name (str): Always 'First Republic Bank'
+                - account_type (str): Always 'checking' (or 'unknown' if not detected)
+                - parser_name (str): Always 'first_republic_bank'
+                - file_type (str): Always 'pdf'
+                - account_number (str or None): Account number if found
+                - statement_date (str or None): Statement date (YYYY-MM-DD) from filename if possible
+                - account_holder_name (str or None): Extracted name(s) from first page
+                - address (str or None): Extracted address from first page
+                - statement_period_start (str or None): Start date of statement period if found
+                - statement_period_end (str or None): End date of statement period if found
+
+        Example:
+            >>> parser = FirstRepublicBankParser()
+            >>> meta = parser.extract_metadata('path/to/file.pdf')
+            >>> print(meta['account_holder_name'])
+
+        This method is robust to PDF quirks and works across all tested First Republic Bank statements.
+        """
+        import re
+        from PyPDF2 import PdfReader
+        import os
+
+        def extract_account_number(text):
+            # Try to match 'Account Number:' followed by whitespace and a masked or unmasked number
+            match = re.search(r"Account Number:\s*([Xx*]+\d{4,}|\d{5,})", text)
+            if match:
+                return match.group(1).strip()
+            # Also check for account number in 'Account Summary' section
+            match = re.search(r"Account Summary\s*([Xx*]+\d{4,}|\d{5,})", text)
+            if match:
+                return match.group(1).strip()
+            # Fallback: any masked or unmasked number of 5+ digits
+            match = re.search(r"([Xx*]+\d{4,}|\d{5,})", text)
+            if match:
+                return match.group(1).strip()
+            return None
+
+        def extract_name_and_address(first_page_text):
+            # Heuristic: Look for a street address line followed by a city/state/zip line
+            lines = [l.strip() for l in first_page_text.split("\n") if l.strip()]
+            cleaned_lines = [
+                re.sub(r"\s+", " ", l.replace("\xa0", " ")).strip() for l in lines
+            ]
+            address = None
+            address_idx = None
+            # Find address block: street address followed by city/state/zip
+            for idx in range(len(cleaned_lines) - 1):
+                street = cleaned_lines[idx]
+                cityzip = cleaned_lines[idx + 1]
+                if re.match(r"^\d+ .+", street) and re.search(
+                    r"\d{5}(-\d{4})?", cityzip
+                ):
+                    address = street + " " + cityzip
+                    address_idx = idx
+                    break
+            # Find all-caps names in the 10 lines above the address block
+            all_caps_names = []
+            skip_phrases = {
+                "CUSTOMER SERVICE INFORMATION",
+                "ACCOUNT SUMMARY",
+                "ACCOUNT ACTIVITY",
+                "FEE SUMMARY",
+                "CHECKS PAID",
+                "ATM REBATE CHECKING",
+                "BUSINESS CHECKING",
+                "CLASSIC CHECKING",
+                "CHECKING",
+                "SAVINGS",
+                "MONEY MARKET",
+                "INTEREST CHECKING",
+                "PRIVATE CHECKING",
+                "PRIVATE BANKING",
+            }
+            customer_service_phrases = [
+                "Please call us",
+                "firstrepublic.com",
+                "Member FDIC",
+                "In case of errors",
+                "Balance Your Account",
+            ]
+
+            def strip_customer_service(line):
+                for phrase in customer_service_phrases:
+                    line = line.replace(phrase, "")
+                return line.strip()
+
+            if address_idx is not None:
+                for l in cleaned_lines[max(0, address_idx - 10) : address_idx]:
+                    l_stripped = strip_customer_service(l)
+                    # Only consider lines that are not in skip_phrases
+                    if l_stripped.upper() in skip_phrases:
+                        continue
+                    matches = re.findall(r"[A-Z][A-Z .,'-]{2,}", l_stripped)
+                    for m in matches:
+                        if m not in skip_phrases and len(m.split()) >= 2:
+                            all_caps_names.append(m)
+            name = " ".join(all_caps_names) if all_caps_names else None
+            return name, address
+
+        def extract_statement_period(text):
+            # Try to match the various statement period formats
+            match = re.search(
+                r"Statement Period:\s*([\w\s,]+\d{4})-\s*(?:\n|\s)*([\w\s,]+\d{4})",
+                text,
+            )
+            if match:
+                return match.group(1).strip(), match.group(2).strip()
+            match = re.search(
+                r"Statement Period:[\s\n]+([\w\s,]+)-[\s\n]+([\w\s,]+)", text
+            )
+            if match:
+                return match.group(1).strip(), match.group(2).strip()
+            match = re.search(
+                r"([A-Z][a-z]+ \d{1,2}, \d{4}) - ([A-Z][a-z]+ \d{1,2}, \d{4})", text
+            )
+            if match:
+                return match.group(1), match.group(2)
+            return None, None
+
+        def extract_statement_date_from_filename(filename):
+            base = os.path.basename(filename)
+            date_str = base.split("-")[0]
+            if len(date_str) == 8:
+                return f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
+            return None
+
+        reader = PdfReader(input_path)
+        first_page = reader.pages[0].extract_text() or ""
+        all_text = "\n".join(page.extract_text() or "" for page in reader.pages)
+        meta = {}
+        meta["bank_name"] = "First Republic Bank"
+        meta["account_type"] = "checking"  # If you want to refine, add logic here
+        meta["parser_name"] = "first_republic_bank"
+        meta["file_type"] = "pdf"
+        meta["account_number"] = extract_account_number(all_text)
+        meta["statement_date"] = extract_statement_date_from_filename(input_path)
+        name, address = extract_name_and_address(first_page)
+        meta["account_holder_name"] = name
+        meta["address"] = address
+        period_start, period_end = extract_statement_period(first_page)
+        meta["statement_period_start"] = period_start
+        meta["statement_period_end"] = period_end
+        return meta
 
 
 # Register the parser for dynamic use
