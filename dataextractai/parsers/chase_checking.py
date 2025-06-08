@@ -164,18 +164,20 @@ class ChaseCheckingParser(BaseParser):
 
     @classmethod
     def can_parse(cls, file_path: str, **kwargs) -> bool:
-        required_phrases = [
-            "Chase Total Checking",
-            "JPMorgan Chase Bank, N.A.",
-            "Chase.com",
-            "1-800-935-9935",
-            "checking",  # Must include 'checking' somewhere
-        ]
+        # Require both 'Chase.com' (or 'chase.com') and 'Chase Sapphire Checking' on first or second page
         try:
             reader = PdfReader(file_path)
-            text = reader.pages[0].extract_text() or ""
-            text_lower = text.lower()
-            return all(phrase.lower() in text_lower for phrase in required_phrases)
+            max_pages = min(2, len(reader.pages))
+            found_chase_com = False
+            found_sapphire = False
+            for i in range(max_pages):
+                text = reader.pages[i].extract_text() or ""
+                text_lower = text.lower()
+                if "chase.com" in text_lower:
+                    found_chase_com = True
+                if "chase sapphire checking" in text_lower:
+                    found_sapphire = True
+            return found_chase_com and found_sapphire
         except Exception:
             return False
 
