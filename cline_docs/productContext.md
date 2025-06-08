@@ -72,4 +72,10 @@ The PDF Extractor is a specialized tool designed to automate the extraction and 
 2. Correct categorization of expenses
 3. Efficient batch processing
 4. Reliable Google Sheets integration
-5. Support for multiple clients 
+5. Support for multiple clients
+
+## Recent Enhancements (NEW)
+- Universal file-to-parser detection function: All modularized parsers are auto-registered and available for strict, robust detection.
+- Detection utility is available both as a CLI and as a function for module users.
+- Strict detection logic ensures no guessing or misclassification, improving reliability and extensibility.
+- **NEW:** Modular parsers (starting with ChaseCheckingParser) now expose a robust `extract_metadata` method, enabling reliable, on-demand metadata extraction for downstream consumers (e.g., LedgerDev, CLI, Django, etc.). 

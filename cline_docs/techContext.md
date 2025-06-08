@@ -402,4 +402,12 @@ pytest tests/parsers/test_wellsfargo.py
    - Efficient CSV writing
    - Database indexing
    - File organization
-   - Cleanup procedures 
+   - Cleanup procedures
+
+## Parser Registration and Detection (NEW)
+- All modularized parsers (CSV and PDF) inherit from BaseParser and implement a strict can_parse method.
+- autodiscover_parsers() recursively imports all parser modules, ensuring every parser is registered in the ParserRegistry.
+- The detection utility uses the registry to select the correct parser for any file, or returns None if no match is found.
+- Detection logic is strict: CSV parsers require exact header and column order matches; PDF parsers use robust, account-type-specific phrase detection.
+- The detection function is available both as a CLI and as a callable for module users.
+- **NEW:** Modular parsers (starting with ChaseCheckingParser) now expose an `extract_metadata(input_path)` method, providing robust, on-demand metadata extraction for any statement file. This is callable by downstream consumers and tested across all available files. 

@@ -6,12 +6,15 @@
 - Error handling and progress tracking
 - CapitalOne Visa print-to-PDF parser is in progress but cannot extract the amount field due to PDF encoding issues. Both PyPDF2 and pdfplumber fail to extract numeric values for the amount column. OCR or alternative formats may be required.
 - New focus: Implementing a robust CapitalOne CSV transaction parser to bypass PDF extraction issues.
+- **NEW:** Universal parser detection function is now available. All modularized parsers (CSV and PDF) are auto-registered and available for strict, robust detection. The detection utility is available both as a CLI and as a function for module users.
+- **NEW:** ChaseCheckingParser now exposes a robust `extract_metadata` method, callable on demand, returning all key metadata fields (bank_name, account_type, parser_name, file_type, account_number, statement_date, account_holder_name, address, statement_period_start, statement_period_end) for any Chase Checking PDF. This is tested and ready for LedgerDev and other consumers.
 
 ## Current State
 - Successfully implemented multi-client parser system
 - Fixed client name handling with spaces
 - Standardized directory structure for clients
 - Implemented basic client configuration system
+- **NEW:** Detection logic is strict and robust—no guessing or partial matches. Only modularized and registered parsers are used for detection. This ensures reliability and extensibility as new parsers are added.
 
 ## Recent Changes
 1. Implemented comprehensive caching system:
@@ -35,6 +38,14 @@
 
 4. Marked the PDF parser task as in-progress with critical unresolved issues (amount extraction not possible with current tools).
 5. Created a new task in Task Master to implement a CapitalOne CSV parser, with detailed subtasks for scaffolding, parsing, detection, testing, documentation, and validation.
+
+6. Modular parser system is fully operational and production-ready.
+7. All parsers (e.g., First Republic, Wells Fargo Visa) are class-based, registry-driven, and tested with real data.
+8. Universal file-to-parser detection function is implemented. All modularized parsers are auto-registered and available for strict, robust detection.
+9. Robust normalization: Every output DataFrame now forcibly includes `source` (parser canonical name), `file_path` (relative input path), and `file_name` (base file name) for every row.
+10. Debug prints confirm these fields are present in all code paths, including Django and downstream imports.
+11. Team notified and confirmed the fix works in their environment.
+12. Testing has confirmed detection and normalization for all migrated parsers.
 
 ## CapitalOne CSV Parser Deep Dive
 - **Sample CSV columns:** Transaction Date, Posted Date, Card No., Description, Category, Debit, Credit

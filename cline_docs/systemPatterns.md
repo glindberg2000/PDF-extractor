@@ -362,3 +362,16 @@ ASSISTANTS_CONFIG = {
    - Skip cached transactions
    - Maintain consistency
    - Clear progress logging 
+
+## Parser Registration and Detection (NEW)
+- All modularized parsers (CSV and PDF) must inherit from BaseParser and implement a strict can_parse method.
+- The autodiscover_parsers() utility recursively imports all parser modules, ensuring every parser is registered in the ParserRegistry.
+- The detection utility uses the registry to select the correct parser for any file, or returns None if no match is found.
+- Detection logic is strict: CSV parsers require exact header and column order matches; PDF parsers use robust, account-type-specific phrase detection.
+- This system is robust, extensible, and eliminates manual import/registration errors.
+
+## Metadata Extraction Pattern (NEW)
+- Modular parsers can expose an `extract_metadata(input_path)` method to return all key metadata fields for a statement file.
+- Example: `ChaseCheckingParser.extract_metadata(path)` returns a dict with bank_name, account_type, parser_name, file_type, account_number, statement_date, account_holder_name, address, statement_period_start, statement_period_end.
+- This method is robust to PDF quirks, works across all tested files, and is callable on demand by downstream consumers (e.g., LedgerDev, CLI, Django, etc.).
+- Pattern: Keep all extraction logic self-contained and robust to formatting variations. Test across all available statement files before release. 

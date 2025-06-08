@@ -3,16 +3,19 @@
 ## What Works
 - Modular parser system is fully operational and production-ready.
 - All parsers (e.g., First Republic, Wells Fargo Visa) are class-based, registry-driven, and tested with real data.
+- **NEW:** Universal file-to-parser detection function is implemented. All modularized parsers are auto-registered and available for strict, robust detection.
 - Robust normalization: Every output DataFrame now forcibly includes `source` (parser canonical name), `file_path` (relative input path), and `file_name` (base file name) for every row.
 - Debug prints confirm these fields are present in all code paths, including Django and downstream imports.
 - Team notified and confirmed the fix works in their environment.
-- Testing harness (`test_modular_parser.py`) allows single-file, single-step verification for any parser.
+- Testing has confirmed detection and normalization for all migrated parsers.
+- **NEW:** ChaseCheckingParser now exposes a robust `extract_metadata` method, callable on demand, returning all key metadata fields for any Chase Checking PDF. This is tested across all statement files and ready for downstream consumers like LedgerDev.
 
 ## What's Left to Build
 - Integrate additional bank/credit card parsers into the modular system, following the same class-based and registry-driven approach.
 - Refactor and add support for CSV-based statement formats into the same modular/normalization pipeline.
 - Expand automated and regression tests to cover all supported formats and edge cases.
 - Continue to standardize output schema and metadata fields as new requirements emerge.
+- **NEW:** Continue to modularize and register any remaining undetected parsers. Refine detection logic as new statement formats are encountered.
 
 ## Progress Status
 - All critical blockers for 3rd-party/production use are resolved.
