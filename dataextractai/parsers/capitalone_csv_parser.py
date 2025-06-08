@@ -41,15 +41,19 @@ class CapitalOneCSVParser(BaseParser):
 
     @classmethod
     def can_parse(cls, file_path: str, sample_rows: list[str] = None, **kwargs) -> bool:
-        """
-        Detects if the file is a CapitalOne CSV by checking for required headers.
-        """
+        required_headers = [
+            "Transaction Date",
+            "Posted Date",
+            "Card No.",
+            "Description",
+            "Category",
+            "Debit",
+            "Credit",
+        ]
         try:
-            df = pd.read_csv(file_path, nrows=1)
-            headers = set(df.columns.str.strip())
-            return (
-                len(cls.REQUIRED_HEADERS.intersection(headers)) >= 5
-            )  # Allow for minor header variations
+            df = pd.read_csv(file_path, nrows=0)
+            headers = [str(h).strip() for h in df.columns]
+            return headers == required_headers
         except Exception:
             return False
 

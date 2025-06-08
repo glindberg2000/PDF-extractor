@@ -19,6 +19,7 @@ from datetime import datetime
 from dataextractai.parsers_core.base import BaseParser
 from dataextractai.parsers_core.registry import ParserRegistry
 from dataextractai.utils.config import TRANSFORMATION_MAPS
+import re
 
 
 class WellsFargoCheckingCSVParser(BaseParser):
@@ -26,18 +27,36 @@ class WellsFargoCheckingCSVParser(BaseParser):
     description = "Parser for Wells Fargo checking account CSV exports."
     file_types = [".csv"]
 
+    @staticmethod
+    def _match_csv_headers(file_path, required_headers, min_matches=2):
+        try:
+            df = pd.read_csv(file_path, nrows=1)
+            headers = set([str(h).strip().lower() for h in df.columns])
+            required = set([h.lower() for h in required_headers])
+            return len(headers & required) >= min_matches
+        except Exception:
+            return False
+
     @classmethod
     def can_parse(cls, file_path: str, sample_rows: list[str] = None, **kwargs) -> bool:
         try:
             df = pd.read_csv(file_path, nrows=1, header=None)
-            expected = ["Date", "Amount", "*", "Check Number", "Description"]
-            # Accept if first 2-3 columns match (Check Number is optional)
-            actual = [str(c).strip() for c in df.iloc[0].tolist()]
-            if actual[:2] == ["Date", "Amount"] and "Description" in actual:
-                return True
+            row = df.iloc[0].tolist()
+            if len(row) != 5:
+                return False
+            if str(row[2]).strip() != "*":
+                return False
+            date_re = re.compile(r"\d{1,2}/\d{1,2}/\d{4}")
+            if not date_re.fullmatch(str(row[0]).strip()):
+                return False
+            try:
+                float(row[1])
+            except Exception:
+                return False
+            # 4th column can be blank or a number, 5th is string (no strict check needed)
+            return True
         except Exception:
-            pass
-        return False
+            return False
 
     @staticmethod
     def parse_amount(amount_str):
