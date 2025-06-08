@@ -1,0 +1,40 @@
+# Task ID: 13
+# Title: Create Basic Parser Module Structure
+# Status: done
+# Dependencies: None
+# Priority: high
+# Description: Create the initial structure for the CapitalOne Visa print statement parser module with necessary imports and class definitions.
+# Details:
+Create a new file `capitalone_visa_print_parser.py` in the `dataextractai/parsers/` directory. Define a class `CapitalOneVisaPrintParser` that inherits from the base parser class. Include necessary imports for PDF text extraction libraries (PyPDF2 or pdfplumber), pandas, and other utilities. Set up the basic structure with methods for initialization, PDF reading, and CSV output. Implement the constructor to accept input and output paths.
+
+```python
+# dataextractai/parsers/capitalone_visa_print_parser.py
+import os
+import pandas as pd
+import pdfplumber  # or PyPDF2
+from dataextractai.parsers.base_parser import BaseParser
+from dataextractai.utils.column_standardizer import standardize_column_names
+
+class CapitalOneVisaPrintParser(BaseParser):
+    def __init__(self, input_path=None, output_path=None):
+        super().__init__(input_path, output_path)
+        self.source_type = 'capitalone_visa_print'
+    
+    def parse_file(self, file_path):
+        """Parse a single CapitalOne Visa PDF statement"""
+        # Implementation will be added in subsequent tasks
+        pass
+        
+    def extract_transactions(self, text_content):
+        """Extract transaction data from the PDF text content"""
+        # Implementation will be added in subsequent tasks
+        pass
+        
+    def normalize_and_save(self, transactions, output_file):
+        """Normalize and save transactions to CSV"""
+        # Implementation will be added in subsequent tasks
+        pass
+```
+
+# Test Strategy:
+Verify that the module can be imported without errors. Check that the class inherits correctly from the base parser. Ensure all required methods are defined with the correct signatures.

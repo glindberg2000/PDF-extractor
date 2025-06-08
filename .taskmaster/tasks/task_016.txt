@@ -1,0 +1,75 @@
+# Task ID: 16
+# Title: Parse Transaction Rows
+# Status: pending
+# Dependencies: 15
+# Priority: high
+# Description: Implement logic to parse individual transaction rows from the identified transaction table.
+# Details:
+Enhance the `extract_transactions` method to parse individual transaction rows from the identified transaction table. Extract date, description, and amount for each transaction. Handle multi-line descriptions. Skip non-transaction rows like headers, summaries, or totals.
+
+```python
+def extract_transactions(self, text_content, file_path):
+    """Extract transaction data from the PDF text content"""
+    # Identify the transaction table
+    table_text, header_pattern = self.identify_transaction_table(text_content)
+    
+    # Split into lines
+    lines = table_text.split('\n')
+    
+    # Skip the header line
+    lines = [line for line in lines if line.strip() and not re.match(header_pattern, line, re.IGNORECASE)]
+    
+    transactions = []
+    current_transaction = None
+    
+    # Date pattern (MM/DD or MM/DD/YYYY)
+    date_pattern = r'^\s*(\d{1,2}/\d{1,2}(?:/\d{2,4})?)\s+'
+    
+    for line in lines:
+        # Check if this line starts a new transaction (has a date)
+        if re.match(date_pattern, line):
+            # Save the previous transaction if exists
+            if current_transaction:
+                transactions.append(current_transaction)
+            
+            # Parse the new transaction line
+            # This regex captures date, description, and amount
+            match = re.match(r'\s*(\d{1,2}/\d{1,2}(?:/\d{2,4})?)\s+(.+?)\s+([\-\$\d,.]+)\s*$', line)
+            
+            if match:
+                date_str, description, amount_str = match.groups()
+                
+                # Clean and parse the amount
+                amount_str = amount_str.replace('$', '').replace(',', '')
+                try:
+                    amount = float(amount_str)
+                except ValueError:
+                    # Log warning and skip this transaction
+                    print(f"Warning: Could not parse amount '{amount_str}' in line: {line}")
+                    current_transaction = None
+                    continue
+                
+                current_transaction = {
+                    'transaction_date': date_str,
+                    'description': description.strip(),
+                    'amount': amount,
+                    'source': self.source_type,
+                    'file_path': file_path
+                }
+            else:
+                # If line has a date but doesn't match the expected format
+                print(f"Warning: Could not parse transaction line: {line}")
+                current_transaction = None
+        elif current_transaction:
+            # This is a continuation of the previous transaction description
+            current_transaction['description'] += ' ' + line.strip()
+    
+    # Add the last transaction if exists
+    if current_transaction:
+        transactions.append(current_transaction)
+    
+    return transactions
+```
+
+# Test Strategy:
+Test with sample statements containing various transaction types. Verify that dates, descriptions, and amounts are correctly parsed. Check handling of multi-line descriptions. Ensure non-transaction rows are skipped. Validate that the correct number of transactions is extracted.

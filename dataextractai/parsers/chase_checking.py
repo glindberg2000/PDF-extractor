@@ -162,6 +162,23 @@ class ChaseCheckingParser(BaseParser):
                 df["file_path"] = df["file_path"].apply(get_parent_dir_and_file)
         return df
 
+    @classmethod
+    def can_parse(cls, file_path: str, **kwargs) -> bool:
+        required_phrases = [
+            "Chase Total Checking",
+            "JPMorgan Chase Bank, N.A.",
+            "Chase.com",
+            "1-800-935-9935",
+            "checking",  # Must include 'checking' somewhere
+        ]
+        try:
+            reader = PdfReader(file_path)
+            text = reader.pages[0].extract_text() or ""
+            text_lower = text.lower()
+            return all(phrase.lower() in text_lower for phrase in required_phrases)
+        except Exception:
+            return False
+
 
 # Register the parser for dynamic use
 ParserRegistry.register_parser("chase_checking", ChaseCheckingParser)

@@ -65,7 +65,7 @@ Write unit tests to verify that:
 3. The default validate_input method works correctly with different input types
 
 # Subtasks:
-## 1. Verify upgraded parser produces correct extracted output [pending]
+## 1. Verify upgraded parser produces correct extracted output [done]
 ### Dependencies: None
 ### Description: After refactoring each parser to use the BaseParser interface and registry, test the parser to ensure it works with the single-step wrapper and produces the correct, validated output DataFrame for representative input files.
 ### Details:

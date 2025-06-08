@@ -1,0 +1,82 @@
+# Task ID: 18
+# Title: Normalize Transaction Dates
+# Status: done
+# Dependencies: 16
+# Priority: high
+# Description: Implement date normalization to convert transaction dates to the required YYYY-MM-DD format.
+# Details:
+Create a method to normalize transaction dates to the required YYYY-MM-DD format. Handle different date formats (MM/DD, MM/DD/YY, MM/DD/YYYY). Use the statement end date to infer the year if not present in the transaction date.
+
+```python
+def normalize_date(self, date_str, statement_end_date=None):
+    """Normalize date to YYYY-MM-DD format"""
+    import datetime
+    
+    # Clean the date string
+    date_str = date_str.strip()
+    
+    # Parse the statement end date if provided
+    end_date = None
+    if statement_end_date:
+        try:
+            if '/' in statement_end_date:
+                parts = statement_end_date.split('/')
+                if len(parts) == 3:
+                    month, day, year = parts
+                    if len(year) == 2:
+                        year = '20' + year  # Assume 20xx for 2-digit years
+                    end_date = datetime.datetime(int(year), int(month), int(day))
+        except (ValueError, IndexError):
+            pass
+    
+    # Parse the transaction date
+    try:
+        if '/' in date_str:
+            parts = date_str.split('/')
+            if len(parts) == 2:  # MM/DD format
+                month, day = parts
+                # If we have the statement end date, use its year
+                if end_date:
+                    year = end_date.year
+                    # If the transaction month is after the statement month, it's likely from the previous year
+                    if int(month) > end_date.month:
+                        year -= 1
+                else:
+                    # Default to current year if no statement end date
+                    year = datetime.datetime.now().year
+                date_obj = datetime.datetime(year, int(month), int(day))
+            elif len(parts) == 3:  # MM/DD/YY or MM/DD/YYYY format
+                month, day, year = parts
+                if len(year) == 2:
+                    year = '20' + year  # Assume 20xx for 2-digit years
+                date_obj = datetime.datetime(int(year), int(month), int(day))
+            else:
+                raise ValueError(f"Unexpected date format: {date_str}")
+        else:
+            raise ValueError(f"Unexpected date format: {date_str}")
+        
+        # Format as YYYY-MM-DD
+        return date_obj.strftime('%Y-%m-%d')
+    except (ValueError, IndexError) as e:
+        raise ValueError(f"Could not parse date '{date_str}': {str(e)}")
+
+# Update extract_transactions to use normalized dates
+def extract_transactions(self, text_content, file_path):
+    # Get existing code from Task 16 and 17
+    # ...
+    
+    # Normalize dates for all transactions
+    statement_end_date = metadata.get('statement_end_date')
+    for transaction in transactions:
+        try:
+            transaction['transaction_date'] = self.normalize_date(
+                transaction['transaction_date'], statement_end_date)
+        except ValueError as e:
+            print(f"Warning: {str(e)}")
+            # Keep the original date if normalization fails
+    
+    return transactions
+```
+
+# Test Strategy:
+Test with various date formats (MM/DD, MM/DD/YY, MM/DD/YYYY). Verify that dates are correctly normalized to YYYY-MM-DD format. Check that the year is correctly inferred when missing. Test edge cases like dates spanning year boundaries.

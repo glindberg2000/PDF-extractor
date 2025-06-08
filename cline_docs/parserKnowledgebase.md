@@ -3,6 +3,27 @@
 ## Purpose
 This file documents the detailed logic, normalization flows, and edge-case handling for all statement parsers in the system. It is the persistent reference for how each parser works, especially regarding date and year inference, normalization, and known gotchas.
 
+# Modular Parser Migration Status
+
+## Registered in Modular ParserRegistry
+- chase_checking
+- capitalone_csv
+- capitalone_visa_print
+- first_republic_bank
+- wellsfargo_checking_csv
+- wellsfargo_visa
+
+## Remaining Legacy Parsers (Not Yet Modular)
+- bofa_visa
+- bofa_bank
+- chase_visa
+- wellsfargo_bank
+- wellsfargo_mastercard
+- wellsfargo_bank_csv (legacy version; modular CSV exists)
+- amazon
+
+> Update this section as each parser is migrated. This is the persistent source of truth for parser migration progress.
+
 ---
 
 ## Date & Year Inference: Summary Table

@@ -1,6 +1,6 @@
 # Task ID: 5
 # Title: Refactor Chase Checking Parser
-# Status: pending
+# Status: done
 # Dependencies: 2, 3
 # Priority: medium
 # Description: Refactor the existing Chase checking parser into a class that implements the BaseParser interface.

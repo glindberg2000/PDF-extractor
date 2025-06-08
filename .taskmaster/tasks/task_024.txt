@@ -1,0 +1,85 @@
+# Task ID: 24
+# Title: Write Unit Tests
+# Status: done
+# Dependencies: 13, 14, 15, 16, 17, 18, 19, 20, 21
+# Priority: medium
+# Description: Create comprehensive unit tests for the CapitalOne Visa print statement parser.
+# Details:
+Create comprehensive unit tests for the parser using pytest or the existing testing framework. Test each component of the parser separately. Create mock PDF data for testing. Test various edge cases and error conditions.
+
+```python
+# tests/test_capitalone_visa_print_parser.py
+import os
+import pytest
+import pandas as pd
+from unittest.mock import patch, MagicMock
+
+from dataextractai.parsers.capitalone_visa_print_parser import CapitalOneVisaPrintParser
+
+# Sample test data
+SAMPLE_TEXT = """Statement Date: 05/15/2024
+Account Number: XXXX-XXXX-XXXX-1234
+
+Date        Description                 Amount
+05/01       AMAZON MARKETPLACE          $25.99
+05/02       STARBUCKS                   $4.50
+05/03       PAYMENT RECEIVED            -$100.00
+"""
+
+class TestCapitalOneVisaPrintParser:
+    def setup_method(self):
+        self.parser = CapitalOneVisaPrintParser()
+    
+    def test_extract_statement_metadata(self):
+        metadata = self.parser.extract_statement_metadata(SAMPLE_TEXT)
+        assert metadata['account_number'] == 'XXXX-XXXX-XXXX-1234'
+        assert metadata['statement_end_date'] == '05/15/2024'
+    
+    def test_identify_transaction_table(self):
+        table_text, header = self.parser.identify_transaction_table(SAMPLE_TEXT)
+        assert 'Date        Description                 Amount' in table_text
+        assert 'AMAZON MARKETPLACE' in table_text
+    
+    def test_normalize_date(self):
+        # Test with MM/DD format and statement date
+        assert self.parser.normalize_date('05/01', '05/15/2024') == '2024-05-01'
+        # Test with MM/DD/YYYY format
+        assert self.parser.normalize_date('05/01/2024') == '2024-05-01'
+    
+    def test_parse_amount(self):
+        # Test debit (positive amount in statement = negative in our system)
+        assert self.parser.parse_amount('$25.99') == -25.99
+        # Test credit (negative amount in statement = positive in our system)
+        assert self.parser.parse_amount('-$100.00') == 100.0
+    
+    @patch('pdfplumber.open')
+    def test_parse_file(self, mock_pdf_open):
+        # Mock the PDF reading
+        mock_pdf = MagicMock()
+        mock_page = MagicMock()
+        mock_page.extract_text.return_value = SAMPLE_TEXT
+        mock_pdf.pages = [mock_page]
+        mock_pdf_open.return_value.__enter__.return_value = mock_pdf
+        
+        # Test parsing
+        transactions = self.parser.parse_file('dummy.pdf')
+        assert len(transactions) == 3
+        assert transactions[0]['description'] == 'AMAZON MARKETPLACE'
+        assert transactions[0]['amount'] == -25.99
+        assert transactions[0]['transaction_date'] == '2024-05-01'
+    
+    def test_normalize_and_save(self):
+        transactions = [
+            {'transaction_date': '2024-05-01', 'description': 'AMAZON', 'amount': -25.99, 'source': 'capitalone_visa_print', 'file_path': 'test.pdf'},
+            {'transaction_date': '2024-05-02', 'description': 'STARBUCKS', 'amount': -4.50, 'source': 'capitalone_visa_print', 'file_path': 'test.pdf'},
+        ]
+        
+        with patch('pandas.DataFrame.to_csv') as mock_to_csv:
+            df = self.parser.normalize_and_save(transactions, 'output.csv')
+            assert len(df) == 2
+            assert list(df.columns) == ['transaction_date', 'description', 'amount', 'source', 'file_path']
+            mock_to_csv.assert_called_once()
+```
+
+# Test Strategy:
+Run the unit tests with pytest. Verify that all tests pass. Check code coverage to ensure all critical paths are tested. Test with both mock data and, if available, representative sample PDFs.

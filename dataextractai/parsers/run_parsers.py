@@ -41,6 +41,7 @@ from datetime import datetime  # Import the datetime class from the datetime mod
 from rich.progress import Progress
 from rich.console import Console
 import glob
+from dataextractai.parsers_core.registry import ParserRegistry
 
 # Configure logging to reduce PDFMiner debug output
 from dataextractai.utils.logging_config import configure_logging
@@ -422,24 +423,35 @@ def run_all_parsers(
 
 run_parsers = run_all_parsers
 
+
+def detect_parsers_in_folder(folder_path):
+    """
+    Detects the parser type for each file in the folder using batch_detect_parsers.
+    Prints a DataFrame with file paths and detected parser types.
+    """
+    files = [
+        os.path.join(folder_path, f)
+        for f in os.listdir(folder_path)
+        if f.lower().endswith(".pdf") or f.lower().endswith(".csv")
+    ]
+    results = ParserRegistry.batch_detect_parsers(files)
+    df = pd.DataFrame(list(results.items()), columns=["file_path", "detected_parser"])
+    print(df)
+    return df
+
+
 if __name__ == "__main__":
-    # When run directly, we'll ask for a client name
-    import sys
+    import argparse
 
-    if len(sys.argv) > 1:
-        client_name = sys.argv[1]
-        # Get client config
-        from dataextractai.utils.config import get_client_config
+    parser = argparse.ArgumentParser(
+        description="Run all parsers or detect parser types in a folder."
+    )
+    parser.add_argument(
+        "--detect-folder", type=str, help="Folder path to batch detect parser types."
+    )
+    # ... existing CLI args ...
+    args = parser.parse_args()
 
-        config = get_client_config(client_name)
-
-        # Ensure client_name is in the config
-        config["client_name"] = client_name
-
-        # Run the parsers
-        total_processed = run_all_parsers(client_name, config)
-        print(f"Total transactions processed: {total_processed}")
-    else:
-        print("Error: Please provide a client name")
-        print("Usage: python -m dataextractai.parsers.run_parsers <client_name>")
-        sys.exit(1)
+    if args.detect_folder:
+        detect_parsers_in_folder(args.detect_folder)
+    # ... existing CLI logic ...

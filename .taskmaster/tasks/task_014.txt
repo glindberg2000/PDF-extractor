@@ -1,0 +1,63 @@
+# Task ID: 14
+# Title: Implement PDF Text Extraction
+# Status: done
+# Dependencies: 13
+# Priority: high
+# Description: Implement functionality to extract text content from CapitalOne Visa PDF statements using a text extraction library, with special handling for amount fields that are not properly extracted.
+# Details:
+Enhance the `parse_file` method to read the PDF file and extract its text content. Use pdfplumber or PyPDF2 to extract text from each page of the PDF. Handle potential errors during file reading and text extraction. Return the extracted text for further processing.
+
+NOTE: Current implementation has a critical issue where amount fields cannot be reliably extracted from CapitalOne Visa print-to-PDF statements using either PyPDF2 or pdfplumber. This appears to be due to the PDF's encoding or rendering method.
+
+```python
+def parse_file(self, file_path):
+    """Parse a single CapitalOne Visa PDF statement"""
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"File not found: {file_path}")
+        
+    try:
+        transactions = []
+        with pdfplumber.open(file_path) as pdf:
+            # Extract text from each page
+            all_text = ""
+            for page in pdf.pages:
+                page_text = page.extract_text()
+                if page_text:
+                    all_text += page_text + "\n"
+                    
+            # Extract transactions from the text
+            transactions = self.extract_transactions(all_text, file_path)
+            
+        return transactions
+    except Exception as e:
+        raise Exception(f"Error parsing PDF file {file_path}: {str(e)}")
+```
+
+# Test Strategy:
+Test with sample CapitalOne Visa PDF statements. Verify that text is correctly extracted from single and multi-page PDFs. Check error handling for invalid or corrupted PDF files. Specifically test the extraction of amount fields and document the failure cases. Test alternative approaches for extracting amount data.
+
+# Subtasks:
+## 14.1. Investigate amount field extraction issue [done]
+### Dependencies: None
+### Description: Research why PyPDF2 and pdfplumber fail to extract numeric values for the amount column from CapitalOne Visa PDFs
+### Details:
+
+
+## 14.2. Explore OCR solutions [done]
+### Dependencies: None
+### Description: Investigate OCR libraries (like Tesseract) as an alternative method to extract amount fields from the PDF statements
+### Details:
+
+
+## 14.3. Test alternative statement formats [done]
+### Dependencies: None
+### Description: Determine if other export formats from CapitalOne (CSV, OFX, QFX) contain the amount data and could be used instead of PDF
+### Details:
+
+
+## 14.4. Implement fallback extraction method [done]
+### Dependencies: None
+### Description: Based on investigation results, implement a fallback method to reliably extract amount fields when standard PDF text extraction fails
+### Details:
+
+

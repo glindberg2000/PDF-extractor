@@ -4,6 +4,8 @@
 - Transaction processing system with three-pass approach
 - Implementation of caching system for transaction analysis
 - Error handling and progress tracking
+- CapitalOne Visa print-to-PDF parser is in progress but cannot extract the amount field due to PDF encoding issues. Both PyPDF2 and pdfplumber fail to extract numeric values for the amount column. OCR or alternative formats may be required.
+- New focus: Implementing a robust CapitalOne CSV transaction parser to bypass PDF extraction issues.
 
 ## Current State
 - Successfully implemented multi-client parser system
@@ -31,18 +33,35 @@
    - Consistent output file organization
    - Better error isolation
 
-## Current CLI Structure
-1. Legacy System (scripts/grok.py):
-   - Two-pass AI classification approach
-   - Uses OpenAI assistants (AmeliaAI, DaveAI)
-   - Batch processing with review workflow
-   - Google Sheets integration
+4. Marked the PDF parser task as in-progress with critical unresolved issues (amount extraction not possible with current tools).
+5. Created a new task in Task Master to implement a CapitalOne CSV parser, with detailed subtasks for scaffolding, parsing, detection, testing, documentation, and validation.
 
-2. New Multi-Client System (dataextractai/cli/main.py):
-   - Client management
-   - Document processing
-   - Basic categorization
-   - Google Sheets setup/upload
+## CapitalOne CSV Parser Deep Dive
+- **Sample CSV columns:** Transaction Date, Posted Date, Card No., Description, Category, Debit, Credit
+- **Key requirements:**
+  - Combine Debit and Credit columns into a single 'amount' column (debits positive, credits negative)
+  - Normalize date fields to standard format (YYYY-MM-DD)
+  - Map Description, Category, Card No. to normalized fields
+  - Output must match the standardized schema used by other parsers (transaction_date, description, amount, source_file, source, transaction_type, etc.)
+  - Parser must be robust to minor header variations and missing/malformed data
+- **Integration:**
+  - Place parser in dataextractai/parsers/capitalone_csv_parser.py
+  - Inherit from BaseParser, register in parser registry
+  - Implement can_parse to detect CapitalOne CSVs by header
+  - Ensure compatibility with both modular and CLI workflows
+- **Testing:**
+  - Unit tests for normal and edge cases (missing columns, malformed rows)
+  - Integration tests for CLI/standalone use
+  - Manual validation with provided sample and real data
+
+## Task Master Subtasks for CSV Parser
+1. Scaffold parser module and register it
+2. Implement parse_file logic for column mapping and normalization
+3. Implement can_parse logic for CapitalOne CSV detection
+4. Write unit tests for parser
+5. Write integration tests for CLI/standalone use
+6. Document parser usage and edge cases
+7. Validate output with provided sample and real data
 
 ## Next Steps
 1. Test the caching system with real transaction data
@@ -50,6 +69,13 @@
 3. Consider adding cache statistics reporting
 4. Evaluate performance improvements from caching
 5. Consider adding cache cleanup/management features
+
+6. Begin with scaffolding the parser and registering it
+7. Implement core parsing and normalization logic
+8. Add robust detection for CapitalOne CSVs
+9. Write and run tests
+10. Document usage and edge cases
+11. Validate with sample and real data
 
 ### 1. Port Legacy Features
 1. AI Processing:
@@ -98,6 +124,19 @@
 1. Add more comprehensive error handling in parsers
 2. Improve logging for better debugging
 3. Add unit tests for date parsing edge cases
+
+## Current CLI Structure
+1. Legacy System (scripts/grok.py):
+   - Two-pass AI classification approach
+   - Uses OpenAI assistants (AmeliaAI, DaveAI)
+   - Batch processing with review workflow
+   - Google Sheets integration
+
+2. New Multi-Client System (dataextractai/cli/main.py):
+   - Client management
+   - Document processing
+   - Basic categorization
+   - Google Sheets setup/upload
 
 ## Current CLI Commands
 ```bash
@@ -261,7 +300,11 @@ The `ChaseCheckingParser` outputs columns like:
 - `"Account Number"`
 - `"File Path"`
 
-## Next Steps
+## Launch Checklist for CSV Parser Development
+- All context, mapping, and requirements are documented here
+- Task Master is up to date with detailed tasks and subtasks
+- Sample CSV is available in data/clients/chase_test/input/capitalone_csv/2024_Capital_one_transaction_download.csv
+- Ready to begin development of the CapitalOne CSV parser
 
-- Patch the transformation map to use standardized column names (lowercase, underscores) to match the parser's output.
-- Ensure the parser does not standardize column names before the transformation map is applied. 
+## Known Issues
+- PDF parser for CapitalOne Visa print statements cannot extract amounts; CSV parser is the recommended path forward 
