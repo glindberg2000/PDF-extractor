@@ -1,5 +1,8 @@
 import os
+from dataextractai.parsers_core.autodiscover import autodiscover_parsers
 from dataextractai.parsers_core.registry import ParserRegistry
+
+autodiscover_parsers()
 
 
 def detect_parser_for_file(file_path):
@@ -7,22 +10,14 @@ def detect_parser_for_file(file_path):
     Given a file path, return the name of the first parser whose can_parse returns True.
     Returns None if no parser matches.
     """
-    for parser_name, parser_cls in ParserRegistry.get_all_parsers().items():
-        can_parse = getattr(parser_cls, "can_parse", None)
-        if callable(can_parse):
-            try:
-                if can_parse(file_path):
-                    return parser_name
-            except Exception:
-                continue
-    return None
+    return ParserRegistry.detect_parser_for_file(file_path)
 
 
 def batch_detect_parsers(file_paths):
     """
     Given a list of file paths, return a dict mapping each file to the detected parser name (or None).
     """
-    return {fp: detect_parser_for_file(fp) for fp in file_paths}
+    return ParserRegistry.batch_detect_parsers(file_paths)
 
 
 def _find_files_in_dir(directory, exts=(".pdf", ".csv")):
@@ -35,7 +30,6 @@ def _find_files_in_dir(directory, exts=(".pdf", ".csv")):
 
 
 if __name__ == "__main__":
-    import sys
     import argparse
 
     parser = argparse.ArgumentParser(description="Detect the correct parser for files.")
