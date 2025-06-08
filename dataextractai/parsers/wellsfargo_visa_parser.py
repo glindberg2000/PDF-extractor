@@ -284,10 +284,28 @@ class WellsFargoVisaParser(BaseParser):
     name = "wellsfargo_visa"
     description = "Parser for Wells Fargo Visa PDF statements. Extracts and normalizes transactions."
 
+    @staticmethod
+    def extract_account_number_from_first_page(pdf_path):
+        import re
+
+        try:
+            with pdfplumber.open(pdf_path) as pdf:
+                text = pdf.pages[0].extract_text() or ""
+                match = re.search(r"Account ending in (\d{4})", text)
+                if match:
+                    return match.group(1)
+        except Exception:
+            pass
+        return None
+
     def parse_file(self, input_path, config=None):
         # Use the existing extract_transactions logic
         transactions = extract_transactions(input_path)
         transactions = update_transaction_years(transactions)
+        # Extract account number from first page
+        account_number = self.extract_account_number_from_first_page(input_path)
+        for tx in transactions:
+            tx["account_number"] = account_number
         return transactions
 
     def normalize_data(self, raw_data):
