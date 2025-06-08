@@ -300,24 +300,25 @@ class WellsFargoVisaParser(BaseParser):
             df["file_path"] = df["file_path"].apply(get_parent_dir_and_file)
         return df
 
-    def can_parse(self, input_path):
-        """
-        Return True if the PDF appears to be a Wells Fargo Visa statement.
-        Checks for key phrases on the first page.
-        """
+    @classmethod
+    def can_parse(cls, input_path):
+        required_phrases = ["wellsfargo.com", "Account ending in", "Statement Period"]
+        credit_card_markers = ["Minimum Payment", "Late Payment Warning", "SIGNATURE"]
         try:
             with pdfplumber.open(input_path) as pdf:
                 first_page_text = pdf.pages[0].extract_text() or ""
-                # Look for key phrases
-                if (
-                    "Wells Fargo" in first_page_text
-                    and "Visa" in first_page_text
-                    and "Statement Period" in first_page_text
+                text_lower = first_page_text.lower()
+                # All required phrases must be present
+                if not all(phrase.lower() in text_lower for phrase in required_phrases):
+                    return False
+                # At least one credit card marker must be present
+                if not any(
+                    marker.lower() in text_lower for marker in credit_card_markers
                 ):
-                    return True
+                    return False
+                return True
         except Exception:
-            pass
-        return False
+            return False
 
 
 # Register the parser

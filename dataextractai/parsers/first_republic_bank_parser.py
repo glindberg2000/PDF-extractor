@@ -839,6 +839,16 @@ class FirstRepublicBankParser(BaseParser):
                 df["file_path"] = df["file_path"].apply(get_parent_dir_and_file)
         return df
 
+    @classmethod
+    def can_parse(cls, file_path: str, **kwargs) -> bool:
+        required_phrase = "firstrepublic.com"
+        try:
+            with pdfplumber.open(file_path) as pdf:
+                text = pdf.pages[0].extract_text() or ""
+            return required_phrase.lower() in text.lower()
+        except Exception:
+            return False
+
 
 # Register the parser for dynamic use
 ParserRegistry.register_parser("first_republic_bank", FirstRepublicBankParser)
