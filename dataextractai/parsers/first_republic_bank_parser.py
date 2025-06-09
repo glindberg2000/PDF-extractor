@@ -28,7 +28,11 @@ import os
 import logging
 import json
 from ..utils.config import PARSER_INPUT_DIRS, PARSER_OUTPUT_PATHS
-from ..utils.utils import standardize_column_names, get_parent_dir_and_file
+from ..utils.utils import (
+    standardize_column_names,
+    get_parent_dir_and_file,
+    extract_date_from_filename,
+)
 from dataextractai.parsers_core.base import BaseParser
 from dataextractai.parsers_core.registry import ParserRegistry
 import PyPDF2  # For robust PDF text extraction in extract_metadata

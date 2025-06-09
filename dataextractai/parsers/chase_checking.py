@@ -27,7 +27,11 @@ from datetime import datetime
 from dataextractai.parsers_core.base import BaseParser
 from dataextractai.parsers_core.registry import ParserRegistry
 from dataextractai.utils.logger import get_logger
-from dataextractai.utils.utils import standardize_column_names, get_parent_dir_and_file
+from dataextractai.utils.utils import (
+    standardize_column_names,
+    get_parent_dir_and_file,
+    extract_date_from_filename,
+)
 import json
 from dataextractai.parsers.chase_checking_parser import (
     extract_statement_date_from_content,
@@ -370,7 +374,7 @@ class ChaseCheckingParser(BaseParser):
         # Fallback: try filename (original_filename if provided)
         if not statement_date:
             fname = original_filename if original_filename else input_path
-            statement_date = extract_statement_date_from_filename(fname)
+            statement_date = extract_date_from_filename(fname)
             if statement_date:
                 print(
                     f"[DEBUG] Fallback to filename for statement_date: {statement_date} (from: {fname})"
