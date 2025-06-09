@@ -19,19 +19,38 @@ import importlib
 import pkgutil
 from dataextractai.parsers_core.registry import ParserRegistry
 import sys
+import os
+import pathlib
 
 
 def autodiscover_parsers():
     """
-    Recursively import all modules in dataextractai.parsers to trigger parser registration.
+    Recursively import all parser modules in dataextractai.parsers, handling both *_parser.py and *.py files (except __init__.py).
+    Ensures all register_parser calls are executed and the parser registry is fully populated with canonical names.
     Returns the parser registry dict for inspection.
     """
     import dataextractai.parsers
 
     package = dataextractai.parsers
-    for _, modname, ispkg in pkgutil.walk_packages(
-        package.__path__, package.__name__ + "."
-    ):
-        print(f"[DEBUG] Importing module: {modname}", file=sys.stderr)
+    package_dir = pathlib.Path(package.__path__[0])
+    imported = set()
+    for pyfile in package_dir.glob("*.py"):
+        if pyfile.name == "__init__.py":
+            continue
+        modname = f"{package.__name__}.{pyfile.stem}"
+        print(f"[DEBUG] Importing parser module: {modname}", file=sys.stderr)
         importlib.import_module(modname)
+        imported.add(pyfile.stem)
+    for pyfile in package_dir.glob("*_parser.py"):
+        if pyfile.name == "__init__.py":
+            continue
+        modname = f"{package.__name__}.{pyfile.stem}"
+        if pyfile.stem in imported:
+            continue  # Already imported
+        print(f"[DEBUG] Importing parser module: {modname}", file=sys.stderr)
+        importlib.import_module(modname)
+        imported.add(pyfile.stem)
+    print(
+        f"[DEBUG] Registered parsers: {ParserRegistry.list_parsers()}", file=sys.stderr
+    )
     return ParserRegistry._parsers
