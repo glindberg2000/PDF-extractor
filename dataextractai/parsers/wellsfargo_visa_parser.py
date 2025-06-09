@@ -338,6 +338,88 @@ class WellsFargoVisaParser(BaseParser):
         except Exception:
             return False
 
+    def extract_metadata(self, input_path: str) -> dict:
+        """
+        Extract robust metadata fields from a Wells Fargo Visa PDF statement.
+
+        Parameters:
+            input_path (str): Path to the PDF file.
+
+        Returns:
+            dict: Extracted metadata fields.
+        """
+        import re
+        from PyPDF2 import PdfReader
+        import os
+
+        def extract_statement_period(first_page_text):
+            match = re.search(
+                r"Statement Period\s+(\d{2}/\d{2}/\d{4})\s+to\s+(\d{2}/\d{2}/\d{4})",
+                first_page_text,
+            )
+            if match:
+                return match.group(1), match.group(2)
+            return None, None
+
+        def extract_coupon_block(first_page_text):
+            # Use the last 40 lines of the first page to find the payment coupon
+            lines = [l.strip() for l in first_page_text.split("\n") if l.strip()]
+            coupon_lines = lines[-40:]
+            # Search for street address pattern
+            addr_idx = None
+            for i, l in enumerate(coupon_lines):
+                if re.match(r"\d+ [A-Z0-9 ]+", l):
+                    addr_idx = i
+                    break
+            name = None
+            address = None
+            if (
+                addr_idx is not None
+                and addr_idx > 0
+                and addr_idx + 1 < len(coupon_lines)
+            ):
+                name = coupon_lines[addr_idx - 1]
+                address = coupon_lines[addr_idx] + ", " + coupon_lines[addr_idx + 1]
+            # Account number: e.g. 'Account Number 4147 1812 9235 9928'
+            acct_num = None
+            for l in coupon_lines:
+                m = re.search(r"Account Number\s*([\d ]{8,})", l)
+                if m:
+                    acct_num = m.group(1).replace(" ", "")
+                    break
+            return name, address, acct_num
+
+        # Read PDF
+        reader = PdfReader(input_path)
+        first_page_text = reader.pages[0].extract_text() if reader.pages else ""
+
+        # Statement period
+        period_start, period_end = extract_statement_period(first_page_text)
+
+        # Statement date: try filename, else use period_end
+        fname = os.path.basename(input_path)
+        m = re.search(r"(\d{8})", fname)
+        if m:
+            statement_date = m.group(1)
+        else:
+            statement_date = period_end.replace("/", "-") if period_end else None
+
+        # Coupon block (name, address, account number) from first page
+        name, address, acct_num = extract_coupon_block(first_page_text)
+
+        return {
+            "bank_name": "Wells Fargo",
+            "account_type": "credit_card",
+            "parser_name": "wellsfargo_visa",
+            "file_type": "pdf",
+            "account_number": acct_num,
+            "statement_date": statement_date,
+            "account_holder_name": name,
+            "address": address,
+            "statement_period_start": period_start,
+            "statement_period_end": period_end,
+        }
+
 
 # Register the parser
 ParserRegistry.register_parser(WellsFargoVisaParser.name, WellsFargoVisaParser)
