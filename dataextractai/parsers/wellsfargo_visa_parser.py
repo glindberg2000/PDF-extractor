@@ -25,6 +25,7 @@ from ..utils.config import PARSER_INPUT_DIRS, PARSER_OUTPUT_PATHS
 from ..utils.utils import standardize_column_names, get_parent_dir_and_file
 from dataextractai.parsers_core.base import BaseParser
 from dataextractai.parsers_core.registry import ParserRegistry
+from dateutil import parser as dateutil_parser
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
@@ -338,11 +339,10 @@ class WellsFargoVisaParser(BaseParser):
         except Exception:
             return False
 
-    def extract_metadata(self, input_path: str) -> dict:
+    def extract_metadata(self, input_path: str, original_filename: str = None) -> dict:
         """
         Extract robust metadata fields from a Wells Fargo Visa PDF statement.
-
-        Statement date extraction prioritizes PDF content (statement period or explicit date fields). Only falls back to filename if content-based extraction fails. If both fail, logs a warning and sets statement_date to None.
+        Statement date extraction prioritizes PDF content (statement period or explicit date fields). Only falls back to original_filename, then input_path filename, if content-based extraction fails. If all fail, logs a warning and sets statement_date to None.
         """
         import re
         from PyPDF2 import PdfReader
@@ -390,15 +390,21 @@ class WellsFargoVisaParser(BaseParser):
         period_start, period_end = extract_statement_period(first_page_text)
         # Robust statement date extraction
         statement_date = None
+        date_source = "content"
         if period_end:
             try:
                 statement_date = datetime.strptime(period_end, "%m/%d/%Y").strftime(
                     "%Y-%m-%d"
                 )
             except Exception:
-                pass
+                statement_date = None
         if not statement_date:
-            fname = os.path.basename(input_path)
+            if original_filename:
+                fname = original_filename
+                date_source = "original_filename"
+            else:
+                fname = os.path.basename(input_path)
+                date_source = "input_path"
             m = re.search(r"(\d{8})", fname)
             if m:
                 try:
@@ -409,9 +415,21 @@ class WellsFargoVisaParser(BaseParser):
                     statement_date = None
             if not statement_date:
                 logger.warning(
-                    "Could not extract statement date from content or filename. Setting to None."
+                    f"Could not extract statement date from content or {date_source} filename. Setting to None."
                 )
+        # Validate date
+        try:
+            if statement_date:
+                _ = dateutil_parser.parse(statement_date)
+            else:
+                statement_date = None
+        except Exception:
+            logger.warning(
+                f"Extracted statement_date is not a valid date: {statement_date}. Setting to None."
+            )
+            statement_date = None
         name, address, acct_num = extract_coupon_block(first_page_text)
+        logger.info(f"Statement date source: {date_source}, value: {statement_date}")
         return {
             "bank_name": "Wells Fargo",
             "account_type": "credit_card",
