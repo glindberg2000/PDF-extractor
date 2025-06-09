@@ -32,6 +32,7 @@ from ..utils.utils import standardize_column_names, get_parent_dir_and_file
 from dataextractai.parsers_core.base import BaseParser
 from dataextractai.parsers_core.registry import ParserRegistry
 import PyPDF2  # For robust PDF text extraction in extract_metadata
+from dateutil import parser as dateutil_parser
 
 # Set up logging
 logging.basicConfig(
@@ -901,11 +902,10 @@ class FirstRepublicBankParser(BaseParser):
         except Exception:
             return False
 
-    def extract_metadata(self, input_path: str) -> dict:
+    def extract_metadata(self, input_path: str, original_filename: str = None) -> dict:
         """
         Extract robust metadata fields from a First Republic Bank PDF statement.
-
-        Statement date extraction prioritizes PDF content (statement period or explicit date fields). Only falls back to filename if content-based extraction fails. If both fail, logs a warning and sets statement_date to None.
+        Statement date extraction prioritizes PDF content (statement period or explicit date fields). Only falls back to original_filename, then input_path filename, if content-based extraction fails. If all fail, logs a warning and sets statement_date to None.
         """
         import re
         from PyPDF2 import PdfReader
@@ -1007,13 +1007,11 @@ class FirstRepublicBankParser(BaseParser):
             # Try to extract end date from statement period
             period_start, period_end = extract_statement_period(text)
             if period_end:
-                try:
-                    return str(datetime.strptime(period_end, "%B %d, %Y").date())
-                except Exception:
+                for fmt in ("%B %d, %Y", "%b %d, %Y"):
                     try:
-                        return str(datetime.strptime(period_end, "%b %d, %Y").date())
+                        return str(datetime.strptime(period_end, fmt).date())
                     except Exception:
-                        pass
+                        continue
             # Try to find explicit date field
             match = re.search(r"Date:\s+(\d{4}-\d{2}-\d{2})", text)
             if match:
@@ -1024,7 +1022,11 @@ class FirstRepublicBankParser(BaseParser):
             base = os.path.basename(filename)
             date_str = base.split("-")[0]
             if len(date_str) == 8:
-                return f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
+                try:
+                    dt = dateutil_parser.parse(date_str, fuzzy=True)
+                    return dt.strftime("%Y-%m-%d")
+                except Exception:
+                    return None
             return None
 
         reader = PdfReader(input_path)
@@ -1044,17 +1046,36 @@ class FirstRepublicBankParser(BaseParser):
         meta["statement_period_end"] = period_end
         # Robust statement date extraction
         statement_date = extract_statement_date_from_content(all_text)
+        date_source = "content"
         if not statement_date:
-            statement_date = extract_statement_date_from_filename(input_path)
+            if original_filename:
+                statement_date = extract_statement_date_from_filename(original_filename)
+                date_source = "original_filename"
+                if statement_date:
+                    logger.warning(
+                        f"Statement date not found in content, using original_filename: {statement_date}"
+                    )
+            if not statement_date:
+                statement_date = extract_statement_date_from_filename(input_path)
+                date_source = "input_path"
+                if statement_date:
+                    logger.warning(
+                        f"Statement date not found in content or original_filename, using input_path filename: {statement_date}"
+                    )
+        # Validate date
+        try:
             if statement_date:
-                logger.warning(
-                    f"Statement date not found in content, using filename: {statement_date}"
-                )
+                # Will raise if not valid
+                _ = dateutil_parser.parse(statement_date)
             else:
-                logger.warning(
-                    "Could not extract statement date from content or filename. Setting to None."
-                )
+                statement_date = None
+        except Exception:
+            logger.warning(
+                f"Extracted statement_date is not a valid date: {statement_date}. Setting to None."
+            )
+            statement_date = None
         meta["statement_date"] = statement_date
+        logger.info(f"Statement date source: {date_source}, value: {statement_date}")
         return meta
 
 
