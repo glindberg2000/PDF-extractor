@@ -60,26 +60,18 @@ class ChaseCheckingParser(BaseParser):
 
         Args:
             input_path (str): Path to the PDF file.
-            config (dict, optional): Config dict (may include statement_date, etc.)
+            config (dict, optional): Config dict (may include original_filename, etc.)
 
         Returns:
             List[Dict]: List of raw transaction dicts, one per transaction.
         """
         if config is None:
             config = {}
-        statement_date = config.get("statement_date")
-        if not statement_date:
-            # Try to infer from filename: YYYYMMDD-...
-            basename = os.path.basename(input_path)
-            try:
-                date_str = basename.split("-")[0]
-                statement_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
-            except Exception:
-                logger.warning(
-                    f"Could not infer statement_date from filename: {basename}"
-                )
-                statement_date = "1970-01-01"
-        statement_year, statement_month, _ = map(int, statement_date.split("-"))
+        original_filename = config.get("original_filename")
+        # Use robust extract_metadata to get statement_date and other metadata
+        meta = self.extract_metadata(input_path, original_filename=original_filename)
+        statement_date = meta.get("statement_date")
+        print(f"[DEBUG] Using statement_date for all rows: {statement_date}")
         pdf_reader = PdfReader(input_path)
         transactions = []
         account_number = None
@@ -142,8 +134,16 @@ class ChaseCheckingParser(BaseParser):
                                     "Amount": amount,
                                     "Balance": balance,
                                     "Statement Date": statement_date,
-                                    "Statement Year": statement_year,
-                                    "Statement Month": statement_month,
+                                    "Statement Year": (
+                                        int(statement_date[:4])
+                                        if statement_date
+                                        else None
+                                    ),
+                                    "Statement Month": (
+                                        int(statement_date[5:7])
+                                        if statement_date
+                                        else None
+                                    ),
                                     "Account Number": account_number,
                                     "File Path": input_path,
                                 }
