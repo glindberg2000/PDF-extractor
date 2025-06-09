@@ -300,13 +300,20 @@ class WellsFargoVisaParser(BaseParser):
         return None
 
     def parse_file(self, input_path, config=None):
-        # Use the existing extract_transactions logic
+        if config is None:
+            config = {}
+        original_filename = config.get("original_filename")
+        # Use robust extract_metadata to get statement_date and other metadata
+        meta = self.extract_metadata(input_path, original_filename=original_filename)
+        statement_date = meta.get("statement_date")
+        print(f"[DEBUG] Using statement_date for all rows: {statement_date}")
         transactions = extract_transactions(input_path)
         transactions = update_transaction_years(transactions)
         # Extract account number from first page
         account_number = self.extract_account_number_from_first_page(input_path)
         for tx in transactions:
             tx["account_number"] = account_number
+            tx["statement_date"] = statement_date
         return transactions
 
     def normalize_data(self, raw_data):
