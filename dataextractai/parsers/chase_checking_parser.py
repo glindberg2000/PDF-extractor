@@ -17,6 +17,8 @@ from ..utils.config import PARSER_INPUT_DIRS, PARSER_OUTPUT_PATHS
 from ..utils.utils import standardize_column_names, get_parent_dir_and_file
 from ..utils.logger import get_logger
 import argparse
+import unicodedata
+from dateutil import parser as dateutil_parser
 
 SOURCE_DIR = PARSER_INPUT_DIRS["chase_visa"]
 OUTPUT_PATH_CSV = PARSER_OUTPUT_PATHS["chase_visa"]["csv"]
@@ -123,28 +125,263 @@ def extract_statement_date_from_content(pdf_path):
     """
     Extract statement date from PDF content (statement period or explicit date fields). Only fall back to filename if content-based extraction fails. If both fail, return None.
     """
+    print("[DEBUG] ENTERED extract_statement_date_from_content")
     reader = PdfReader(pdf_path)
-    for page in reader.pages:
+    # --- NEW: Direct substring search after 'through' in full first page text (FIRST ATTEMPT) ---
+    try:
+        print("[DEBUG] ENTERED DIRECT SUBSTRING SEARCH block (FIRST)")
+        first_page_text = reader.pages[0].extract_text() or ""
+        idx = first_page_text.find("through")
+        print(f"[DEBUG] Index of 'through': {idx}")
+        if idx != -1:
+            after = first_page_text[idx + len("through") : idx + len("through") + 40]
+            print(
+                f"[DEBUG] Direct substring after 'through' (repr): {repr(after)} (len={len(after)})"
+            )
+            try:
+                date = dateutil_parser.parse(after, fuzzy=True)
+                print(f"[DEBUG] Direct substring: parsed date: {date}")
+                return date.strftime("%Y-%m-%d")
+            except Exception as e:
+                print(f"[DEBUG] Direct substring: failed to parse date: {e}")
+        else:
+            print("[DEBUG] 'through' not found in first_page_text")
+    except Exception as e:
+        print(f"[DEBUG] Direct substring fallback failed: {e}")
+    # --- END NEW ---
+    # Now proceed with all other extraction attempts as before
+    for i, page in enumerate(reader.pages):
         text = page.extract_text() or ""
-        # Try to find statement period
+        if i == 0:
+            print(
+                "\n[DEBUG] First page text (first 40 lines):\n"
+                + "\n".join(text.split("\n")[:40])
+            )
+        # Preprocess: insert a space after 'through' if immediately followed by a capital letter
+        fixed_text = re.sub(r"(through)([A-Z])", r"\1 \2", text.replace("\n", ""))
+        print("[DEBUG] fixed_text after preprocessing (repr):\n", repr(fixed_text))
+        # Try to find statement period in MM/DD/YYYY format
         match = re.search(
             r"Statement Period\s+(\d{2}/\d{2}/\d{4})\s+to\s+(\d{2}/\d{2}/\d{4})", text
         )
         if match:
+            print(
+                f"[DEBUG] Found Statement Period (MM/DD/YYYY): {match.group(1)} to {match.group(2)}"
+            )
             period_end = match.group(2)
             try:
                 return datetime.strptime(period_end, "%m/%d/%Y").strftime("%Y-%m-%d")
-            except Exception:
-                pass
-        # Try to find explicit date field
-        match = re.search(r"Statement Date:?\s*([0-9]{2}/[0-9]{2}/[0-9]{4})", text)
+            except Exception as e:
+                print(f"[DEBUG] Failed to parse period_end: {e}")
+        # Try to find statement period in 'Month DD, YYYY through Month DD, YYYY' format, now robust to missing space
+        match = re.search(
+            r"([A-Z][a-z]+ \d{1,2}, \d{4})\s*through\s*([A-Z][a-z]+ \d{1,2}, \d{4})",
+            fixed_text,
+        )
         if match:
+            print(
+                f"[DEBUG] Found Statement Period (long, robust): {match.group(1)} through {match.group(2)}"
+            )
+            period_end = match.group(2)
             try:
-                return datetime.strptime(match.group(1), "%m/%d/%Y").strftime(
+                return datetime.strptime(period_end, "%B %d, %Y").strftime("%Y-%m-%d")
+            except Exception as e:
+                print(f"[DEBUG] Failed to parse period_end (long, robust): {e}")
+        # Aggressive normalization: remove all whitespace and newlines
+        aggressive_text = re.sub(r"\s+", "", text)
+        print(
+            "[DEBUG] aggressive_text (all whitespace removed, repr):\n",
+            repr(aggressive_text),
+        )
+        idx = aggressive_text.find("through")
+        if idx != -1:
+            print(
+                "[DEBUG] Substring around 'through':",
+                repr(aggressive_text[max(0, idx - 20) : idx + 40]),
+            )
+        match = re.search(
+            r"([A-Z][a-z]+\d{1,2},\d{4})through([A-Z][a-z]+\d{1,2},\d{4})",
+            aggressive_text,
+        )
+        if match:
+            print(
+                f"[DEBUG] Found Statement Period (aggressive): {match.group(1)} through {match.group(2)}"
+            )
+            period_end = match.group(2)
+            try:
+                period_end_spaced = re.sub(r"([a-z])([A-Z])", r"\1 \2", period_end)
+                period_end_spaced = re.sub(
+                    r"([a-zA-Z]+)(\d{1,2},)", r"\1 \2", period_end_spaced
+                )
+                print(f"[DEBUG] Aggressive period_end for parsing: {period_end_spaced}")
+                return datetime.strptime(period_end_spaced, "%B %d, %Y").strftime(
                     "%Y-%m-%d"
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[DEBUG] Failed to parse period_end (aggressive): {e}")
+        match = re.search(
+            r"([A-Z][a-z]+\d{1,2},\d{4})through.*?([A-Z][a-z]+\d{1,2},\d{4})",
+            aggressive_text,
+        )
+        if match:
+            print(
+                f"[DEBUG] Found Statement Period (non-greedy wildcard): {match.group(1)} through {match.group(2)}"
+            )
+            period_end = match.group(2)
+            try:
+                period_end_spaced = re.sub(r"([a-z])([A-Z])", r"\1 \2", period_end)
+                period_end_spaced = re.sub(
+                    r"([a-zA-Z]+)(\d{1,2},)", r"\1 \2", period_end_spaced
+                )
+                print(
+                    f"[DEBUG] Non-greedy wildcard period_end for parsing: {period_end_spaced}"
+                )
+                return datetime.strptime(period_end_spaced, "%B %d, %Y").strftime(
+                    "%Y-%m-%d"
+                )
+            except Exception as e:
+                print(f"[DEBUG] Failed to parse period_end (non-greedy wildcard): {e}")
+        normalized_text = unicodedata.normalize("NFKD", aggressive_text)
+        print("[DEBUG] normalized_text (NFKD, repr):\n", repr(normalized_text))
+        idx2 = normalized_text.find("through")
+        if idx2 != -1:
+            print(
+                "[DEBUG] Substring around 'through' (normalized):",
+                repr(normalized_text[max(0, idx2 - 20) : idx2 + 40]),
+            )
+        match = re.search(
+            r"([A-Z][a-z]+\d{1,2},\d{4})through.*?([A-Z][a-z]+\d{1,2},\d{4})",
+            normalized_text,
+        )
+        if match:
+            print(
+                f"[DEBUG] Found Statement Period (unicode normalized): {match.group(1)} through {match.group(2)}"
+            )
+            period_end = match.group(2)
+            try:
+                period_end_spaced = re.sub(r"([a-z])([A-Z])", r"\1 \2", period_end)
+                period_end_spaced = re.sub(
+                    r"([a-zA-Z]+)(\d{1,2},)", r"\1 \2", period_end_spaced
+                )
+                print(
+                    f"[DEBUG] Unicode normalized period_end for parsing: {period_end_spaced}"
+                )
+                return datetime.strptime(period_end_spaced, "%B %d, %Y").strftime(
+                    "%Y-%m-%d"
+                )
+            except Exception as e:
+                print(f"[DEBUG] Failed to parse period_end (unicode normalized): {e}")
+    # Fallback: brute-force search for 'through' and grab the rest of the line
+    try:
+        first_page_text = reader.pages[0].extract_text() or ""
+        for line in first_page_text.splitlines():
+            if "through" in line:
+                after = line.split("through", 1)[1].strip()
+                print(f"[DEBUG] Brute-force: text after 'through': {repr(after)}")
+                try:
+                    date = dateutil_parser.parse(after, fuzzy=True)
+                    print(f"[DEBUG] Brute-force: parsed date: {date}")
+                    return date.strftime("%Y-%m-%d")
+                except Exception as e:
+                    print(f"[DEBUG] Brute-force: failed to parse date: {e}")
+    except Exception as e:
+        print(f"[DEBUG] Brute-force fallback failed: {e}")
+    # If all PyPDF2 attempts fail, try pdfplumber as a fallback for the first page only
+    try:
+        import pdfplumber
+
+        with pdfplumber.open(pdf_path) as pdf:
+            if len(pdf.pages) > 0:
+                plumber_text = pdf.pages[0].extract_text() or ""
+                print(
+                    "[DEBUG] pdfplumber first page text (repr):\n", repr(plumber_text)
+                )
+                # Repeat the same regex attempts on plumber_text
+                fixed_text = re.sub(
+                    r"(through)([A-Z])", r"\1 \2", plumber_text.replace("\n", "")
+                )
+                aggressive_text = re.sub(r"\s+", "", plumber_text)
+                normalized_text = unicodedata.normalize("NFKD", aggressive_text)
+                # Try all regexes in order
+                for candidate_text, label in [
+                    (fixed_text, "fixed_text"),
+                    (aggressive_text, "aggressive_text"),
+                    (normalized_text, "normalized_text"),
+                ]:
+                    match = re.search(
+                        r"([A-Z][a-z]+ \d{1,2}, \d{4})\s*through\s*([A-Z][a-z]+ \d{1,2}, \d{4})",
+                        candidate_text,
+                    )
+                    if match:
+                        print(
+                            f"[DEBUG] pdfplumber {label} (long, robust): {match.group(1)} through {match.group(2)}"
+                        )
+                        period_end = match.group(2)
+                        try:
+                            return datetime.strptime(period_end, "%B %d, %Y").strftime(
+                                "%Y-%m-%d"
+                            )
+                        except Exception as e:
+                            print(
+                                f"[DEBUG] pdfplumber {label} failed to parse period_end: {e}"
+                            )
+                    match = re.search(
+                        r"([A-Z][a-z]+\d{1,2},\d{4})through([A-Z][a-z]+\d{1,2},\d{4})",
+                        candidate_text,
+                    )
+                    if match:
+                        print(
+                            f"[DEBUG] pdfplumber {label} (aggressive): {match.group(1)} through {match.group(2)}"
+                        )
+                        period_end = match.group(2)
+                        try:
+                            period_end_spaced = re.sub(
+                                r"([a-z])([A-Z])", r"\1 \2", period_end
+                            )
+                            period_end_spaced = re.sub(
+                                r"([a-zA-Z]+)(\d{1,2},)", r"\1 \2", period_end_spaced
+                            )
+                            print(
+                                f"[DEBUG] pdfplumber {label} aggressive period_end for parsing: {period_end_spaced}"
+                            )
+                            return datetime.strptime(
+                                period_end_spaced, "%B %d, %Y"
+                            ).strftime("%Y-%m-%d")
+                        except Exception as e:
+                            print(
+                                f"[DEBUG] pdfplumber {label} failed to parse period_end (aggressive): {e}"
+                            )
+                    match = re.search(
+                        r"([A-Z][a-z]+\d{1,2},\d{4})through.*?([A-Z][a-z]+\d{1,2},\d{4})",
+                        candidate_text,
+                    )
+                    if match:
+                        print(
+                            f"[DEBUG] pdfplumber {label} (non-greedy wildcard): {match.group(1)} through {match.group(2)}"
+                        )
+                        period_end = match.group(2)
+                        try:
+                            period_end_spaced = re.sub(
+                                r"([a-z])([A-Z])", r"\1 \2", period_end
+                            )
+                            period_end_spaced = re.sub(
+                                r"([a-zA-Z]+)(\d{1,2},)", r"\1 \2", period_end_spaced
+                            )
+                            print(
+                                f"[DEBUG] pdfplumber {label} non-greedy wildcard period_end for parsing: {period_end_spaced}"
+                            )
+                            return datetime.strptime(
+                                period_end_spaced, "%B %d, %Y"
+                            ).strftime("%Y-%m-%d")
+                        except Exception as e:
+                            print(
+                                f"[DEBUG] pdfplumber {label} failed to parse period_end (non-greedy wildcard): {e}"
+                            )
+    except Exception as e:
+        print(f"[DEBUG] pdfplumber fallback failed: {e}")
+    print(
+        "[DEBUG] No statement date found in content; will fall back to filename if possible."
+    )
     return None
 
 
@@ -261,6 +498,7 @@ def extract_chase_statements(pdf_path, statement_date=None):
             "Balance",
         ],
     )
+    print("\n[DEBUG] Full DataFrame after parsing:\n", df)
     df["Statement Date"] = statement_date
     df["Statement Year"] = statement_year
     df["Statement Month"] = statement_month
