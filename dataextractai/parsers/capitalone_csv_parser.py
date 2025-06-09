@@ -22,6 +22,7 @@ from typing import Any
 from datetime import datetime
 from dataextractai.parsers_core.base import BaseParser
 from dataextractai.parsers_core.registry import ParserRegistry
+from app.utils.utils import extract_date_from_filename
 
 
 class CapitalOneCSVParser(BaseParser):
@@ -68,7 +69,9 @@ class CapitalOneCSVParser(BaseParser):
             print(f"[DEBUG] CapitalOneCSVParser.can_parse: Exception: {e}")
             return False
 
-    def parse_file(self, file_path: str, config: dict = None) -> list[dict]:
+    def parse_file(
+        self, file_path: str, config: dict = None, original_filename: str = None
+    ) -> list[dict]:
         """
         Parses the CapitalOne CSV file and returns a normalized DataFrame.
         """
@@ -112,6 +115,38 @@ class CapitalOneCSVParser(BaseParser):
         df["amount"] = df.apply(compute_amount, axis=1)
         # Drop rows with no amount or transaction_date
         df = df.dropna(subset=["amount", "transaction_date"])
+        # --- Robust statement_date extraction ---
+        statement_date = None
+        statement_date_source = None
+        # 1. Try original_filename
+        if original_filename:
+            statement_date = extract_date_from_filename(original_filename)
+            if statement_date:
+                statement_date_source = "original_filename"
+                print(
+                    f"[DEBUG] statement_date from original_filename: {statement_date}"
+                )
+        # 2. Try input filename
+        if not statement_date:
+            statement_date = extract_date_from_filename(file_path)
+            if statement_date:
+                statement_date_source = "filename"
+                print(f"[DEBUG] statement_date from filename: {statement_date}")
+        # 3. Try last row's transaction_date
+        if not statement_date and not df.empty:
+            last_row_date = df.iloc[-1]["transaction_date"]
+            if last_row_date:
+                statement_date = last_row_date
+                statement_date_source = "last_row"
+                print(f"[DEBUG] statement_date from last_row: {statement_date}")
+        # 4. If still not found, None
+        if not statement_date:
+            print("[DEBUG] statement_date could not be determined; set to None")
+        # Also get period start from first row if available
+        statement_period_start = (
+            df.iloc[0]["transaction_date"] if not df.empty else None
+        )
+        statement_period_end = statement_date
         # Build output dicts with normalized keys
         records = []
         for _, row in df.iterrows():
@@ -126,7 +161,10 @@ class CapitalOneCSVParser(BaseParser):
                     "source_file": os.path.basename(file_path),
                     "debit": row["Debit"],
                     "credit": row["Credit"],
-                    "statement_date": None,  # No statement date in CSV, but field included for consistency
+                    "statement_date": statement_date,
+                    "statement_date_source": statement_date_source,
+                    "statement_period_start": statement_period_start,
+                    "statement_period_end": statement_period_end,
                 }
             )
         return records
