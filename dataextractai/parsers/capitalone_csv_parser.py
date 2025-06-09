@@ -159,12 +159,14 @@ class CapitalOneCSVParser(BaseParser):
                     "category": row["Category"],
                     "amount": row["amount"],
                     "source_file": os.path.basename(file_path),
+                    "file_path": file_path,
                     "debit": row["Debit"],
                     "credit": row["Credit"],
                     "statement_date": statement_date,
                     "statement_date_source": statement_date_source,
                     "statement_period_start": statement_period_start,
                     "statement_period_end": statement_period_end,
+                    "account_number": None,
                 }
             )
         return records
@@ -180,6 +182,7 @@ class CapitalOneCSVParser(BaseParser):
                 "category": row.get("category"),
                 "amount": row.get("amount"),
                 "source_file": row.get("source_file", ""),
+                "file_path": row.get("file_path", ""),
                 "source": self.name,
                 "transaction_type": (
                     "credit"
@@ -187,6 +190,11 @@ class CapitalOneCSVParser(BaseParser):
                     or str(row.get("category", "")).lower().startswith("credit")
                     else "debit"
                 ),
+                "statement_date": row.get("statement_date"),
+                "statement_period_start": row.get("statement_period_start"),
+                "statement_period_end": row.get("statement_period_end"),
+                "statement_date_source": row.get("statement_date_source"),
+                "account_number": row.get("account_number"),
             }
             normalized.append(norm)
         return pd.DataFrame(normalized)
