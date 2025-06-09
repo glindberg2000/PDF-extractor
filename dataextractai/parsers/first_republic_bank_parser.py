@@ -515,55 +515,83 @@ def extract_all_transactions(
 
 
 def update_transaction_years(transactions, statement_end_date):
+    print("[DEBUG] update_transaction_years called")
     """
-    Update transaction years based on statement date to handle month transitions.
+    Update transaction years based on statement date to handle month transitions and normalize to YYYY-MM-DD.
 
     Parameters:
     transactions : list, list of transaction dictionaries
-    statement_end_date : str, the end date of the statement period
+    statement_end_date : str, the end date of the statement period (YYYY-MM-DD)
 
     Returns:
     list, updated transaction dictionaries
     """
+    import re
+    import string
+
     if not statement_end_date:
         return transactions
 
     try:
         statement_date = datetime.strptime(statement_end_date, "%Y-%m-%d")
         statement_year = statement_date.year
-        statement_month = statement_date.month
+        valid_transactions = []
+        failed_dates = []
 
         for transaction in transactions:
-            # Skip if missing transaction_date
             if "transaction_date" not in transaction:
                 continue
-
+            date_str = transaction["transaction_date"]
+            cleaned_date_str = "".join(
+                c for c in date_str if c in string.printable and ord(c) < 128
+            ).strip()
+            print(
+                f"[DEBUG] Original transaction_date: {repr(date_str)} | Cleaned: {repr(cleaned_date_str)}"
+            )
+            normalized = None
+            # Try MM/DD/YYYY
             try:
-                # Parse the transaction date
-                trans_date = datetime.strptime(
-                    transaction["transaction_date"], "%m/%d/%Y"
+                trans_date = datetime.strptime(cleaned_date_str, "%m/%d/%Y")
+                normalized = trans_date.strftime("%Y-%m-%d")
+                print(f"[DEBUG] Normalized (MM/DD/YYYY): {normalized}")
+            except ValueError as e1:
+                print(f"[ERROR] Failed MM/DD/YYYY for {repr(cleaned_date_str)}: {e1}")
+                failed_dates.append(cleaned_date_str)
+                # Try MM/DD (no year)
+                try:
+                    date_with_year = f"{cleaned_date_str}/{statement_year}"
+                    print(f"[DEBUG] Trying MM/DD + year: {repr(date_with_year)}")
+                    trans_date = datetime.strptime(date_with_year, "%m/%d/%Y")
+                    normalized = trans_date.strftime("%Y-%m-%d")
+                    print(f"[DEBUG] Normalized (MM/DD + year): {normalized}")
+                except ValueError as e2:
+                    print(
+                        f"[ERROR] Failed MM/DD + year for {repr(cleaned_date_str)}: {e2}"
+                    )
+                    failed_dates.append(date_with_year)
+                    # Try already normalized
+                    if re.match(r"^\d{4}-\d{2}-\d{2}$", cleaned_date_str):
+                        normalized = cleaned_date_str
+                        print(f"[DEBUG] Already normalized: {normalized}")
+            if normalized:
+                transaction["transaction_date"] = normalized
+                valid_transactions.append(transaction)
+            else:
+                print(
+                    f"[WARNING] Dropping transaction with unparseable date: {transaction}"
                 )
-
-                # If statement is in January and transaction is in December, use previous year
-                if statement_month == 1 and trans_date.month == 12:
-                    trans_date = trans_date.replace(year=statement_year - 1)
-                else:
-                    trans_date = trans_date.replace(year=statement_year)
-
-                # Update the transaction date
-                transaction["transaction_date"] = trans_date.strftime("%Y-%m-%d")
-                logger.debug(
-                    f"Updated transaction date: {transaction['transaction_date']}"
-                )
-            except ValueError as e:
-                logger.warning(
-                    f"Could not process date {transaction['transaction_date']}: {e}"
-                )
-
+        # Write all failed dates to a debug file for manual inspection
+        if failed_dates:
+            try:
+                with open("debug_failed_dates.txt", "a") as f:
+                    for d in failed_dates:
+                        f.write(d + "\n")
+            except Exception as e:
+                print(f"[ERROR] Failed to write debug_failed_dates.txt: {e}")
+        return valid_transactions
     except ValueError as e:
-        logger.error(f"Could not process statement date {statement_end_date}: {e}")
-
-    return transactions
+        print(f"[ERROR] Could not process statement date {statement_end_date}: {e}")
+        return []
 
 
 def process_pdf(pdf_path):
@@ -820,6 +848,8 @@ class FirstRepublicBankParser(BaseParser):
             tx["statement_end_date"] = statement_end_date
             tx["account_number"] = account_number
             tx["file_path"] = input_path
+        # Normalize all transaction dates to YYYY-MM-DD
+        transactions = update_transaction_years(transactions, statement_end_date)
         return transactions
 
     def normalize_data(self, raw_data):
@@ -830,6 +860,8 @@ class FirstRepublicBankParser(BaseParser):
         Returns:
             pd.DataFrame: Normalized DataFrame with standardized columns.
         """
+        import re
+
         df = pd.DataFrame(raw_data)
         if not df.empty:
             # Standardize column names and types
@@ -838,6 +870,25 @@ class FirstRepublicBankParser(BaseParser):
                 df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
             if "file_path" in df.columns:
                 df["file_path"] = df["file_path"].apply(get_parent_dir_and_file)
+
+            # Exclude rows with invalid transaction_date
+            def is_valid_date(date_str):
+                return bool(re.match(r"^\d{4}-\d{2}-\d{2}$", str(date_str)))
+
+            if "transaction_date" in df.columns:
+                invalid_rows = df[~df["transaction_date"].apply(is_valid_date)]
+                if not invalid_rows.empty:
+                    logger.warning(
+                        f"Excluding {len(invalid_rows)} rows with invalid dates:\n{invalid_rows}"
+                    )
+                    # Optionally, save to CSV for audit
+                    try:
+                        invalid_rows.to_csv(
+                            "first_republic_invalid_dates.csv", index=False
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to write invalid rows to CSV: {e}")
+                df = df[df["transaction_date"].apply(is_valid_date)]
         return df
 
     @classmethod
