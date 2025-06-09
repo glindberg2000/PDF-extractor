@@ -833,11 +833,17 @@ class FirstRepublicBankParser(BaseParser):
         Extract raw transaction data from a single PDF file.
         Args:
             input_path (str): Path to the PDF file.
-            config (dict, optional): Config dict (may include statement_date, etc.)
+            config (dict, optional): Config dict (may include original_filename, etc.)
         Returns:
             List[Dict]: List of raw transaction dicts, one per transaction.
         """
-        # Read the PDF and extract text
+        if config is None:
+            config = {}
+        original_filename = config.get("original_filename")
+        # Use robust extract_metadata to get statement_date and other metadata
+        meta = self.extract_metadata(input_path, original_filename=original_filename)
+        statement_date = meta.get("statement_date")
+        print(f"[DEBUG] Using statement_date for all rows: {statement_date}")
         with pdfplumber.open(input_path) as pdf:
             text = "\n".join(page.extract_text() or "" for page in pdf.pages)
         # Extract statement period and account number
@@ -853,6 +859,7 @@ class FirstRepublicBankParser(BaseParser):
             tx["statement_end_date"] = statement_end_date
             tx["account_number"] = account_number
             tx["file_path"] = input_path
+            tx["statement_date"] = statement_date
         # Normalize all transaction dates to YYYY-MM-DD
         transactions = update_transaction_years(transactions, statement_end_date)
         return transactions
