@@ -314,71 +314,32 @@ class ChaseCheckingParser(BaseParser):
                 print(
                     f"[DEBUG] Robust extraction succeeded for period_end: {period_end}"
                 )
-                # Find the last valid date before 'through' as period_start
-                idx = statement_period_text.find("through")
-                if idx != -1:
-                    before = statement_period_text[:idx]
-                    # Find all dates like 'Month DD, YYYY' in 'before'
-                    date_matches = list(
-                        re.finditer(r"([A-Z][a-z]+ \d{1,2}, \d{4})", before)
-                    )
-                    if date_matches:
-                        last_match = date_matches[-1].group(1)
-                        try:
-                            start_date = dateutil_parser.parse(last_match, fuzzy=True)
-                            period_start = start_date.strftime("%Y-%m-%d")
-                            print(
-                                f"[DEBUG] Regex date extraction succeeded for period_start: {period_start}"
-                            )
-                        except Exception as e:
-                            print(
-                                f"[DEBUG] Failed to parse period_start from regex match: {e}"
-                            )
-                    else:
-                        print(
-                            "[DEBUG] No valid date found before 'through' for period_start."
-                        )
             else:
-                print(
-                    "[DEBUG] Robust extraction failed for period_end; will try fallback methods."
-                )
+                print("[DEBUG] Robust extraction failed for period_end")
         except Exception as e:
-            print(f"[DEBUG] Exception in robust period extraction: {e}")
-        # Fallback: try simple regex on first page
-        if not period_start or not period_end:
-            match = re.search(
-                r"([A-Z][a-z]+ \d{1,2}, \d{4}) through ([A-Z][a-z]+ \d{1,2}, \d{4})",
-                first_page,
-            )
-            if match:
-                try:
-                    period_start = dateutil_parser.parse(
-                        match.group(1), fuzzy=True
-                    ).strftime("%Y-%m-%d")
-                    period_end = dateutil_parser.parse(
-                        match.group(2), fuzzy=True
-                    ).strftime("%Y-%m-%d")
-                    print(
-                        f"[DEBUG] Regex fallback succeeded for period: {period_start} through {period_end}"
-                    )
-                except Exception as e:
-                    print(f"[DEBUG] Regex fallback failed: {e}")
-        meta["statement_period_start"] = period_start
-        meta["statement_period_end"] = period_end
-        # --- Robust statement date extraction ---
+            print(f"[DEBUG] Exception in robust extraction: {e}")
+
+        # Fallback for statement_date
         statement_date = None
-        # Try period_end as statement_date if available
+        # 1. Try period_end from content
         if period_end:
             statement_date = period_end
             print(f"[DEBUG] Using period_end as statement_date: {statement_date}")
-        # Fallback: try filename (original_filename if provided)
-        if not statement_date:
-            fname = original_filename if original_filename else input_path
-            statement_date = extract_date_from_filename(fname)
-            if statement_date:
+        else:
+            # 2. Try original_filename
+            if original_filename:
+                statement_date = extract_date_from_filename(original_filename)
                 print(
-                    f"[DEBUG] Fallback to filename for statement_date: {statement_date} (from: {fname})"
+                    f"[DEBUG] statement_date from original_filename: {statement_date}"
                 )
+            # 3. Try input_path filename
+            if not statement_date:
+                statement_date = extract_date_from_filename(input_path)
+                print(f"[DEBUG] statement_date from input_path: {statement_date}")
+            # 4. If still not found, set to None
+            if not statement_date:
+                print("[DEBUG] No valid statement_date found; setting to None")
+                statement_date = None
         meta["statement_date"] = statement_date
         print("[DEBUG] Extracted metadata:\n", json.dumps(meta, indent=2))
         return meta
