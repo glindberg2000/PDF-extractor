@@ -25,6 +25,12 @@ from dataextractai.parsers_core.registry import ParserRegistry
 
 
 class CapitalOneCSVParser(BaseParser):
+    """
+    Parser for CapitalOne credit card CSV transaction downloads.
+
+    Statement date extraction should prioritize content-based extraction (if available in future formats), only falling back to filename if content-based extraction fails. If both fail, set to None. Currently, statement_date is set to None for all records.
+    """
+
     name = "capitalone_csv"
     description = "Parser for CapitalOne credit card CSV transaction downloads."
     file_types = [".csv"]
@@ -53,8 +59,13 @@ class CapitalOneCSVParser(BaseParser):
         try:
             df = pd.read_csv(file_path, nrows=0)
             headers = [str(h).strip() for h in df.columns]
+            print(f"[DEBUG] CapitalOneCSVParser.can_parse: headers={headers}")
+            print(
+                f"[DEBUG] CapitalOneCSVParser.can_parse: required_headers={required_headers}"
+            )
             return headers == required_headers
-        except Exception:
+        except Exception as e:
+            print(f"[DEBUG] CapitalOneCSVParser.can_parse: Exception: {e}")
             return False
 
     def parse_file(self, file_path: str, config: dict = None) -> list[dict]:
@@ -115,6 +126,7 @@ class CapitalOneCSVParser(BaseParser):
                     "source_file": os.path.basename(file_path),
                     "debit": row["Debit"],
                     "credit": row["Credit"],
+                    "statement_date": None,  # No statement date in CSV, but field included for consistency
                 }
             )
         return records

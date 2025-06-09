@@ -28,10 +28,14 @@ import json
 import csv
 from ..utils.config import PARSER_INPUT_DIRS, PARSER_OUTPUT_PATHS
 from ..utils.utils import standardize_column_names, get_parent_dir_and_file
+from PyPDF2 import PdfReader
+import logging
 
 SOURCE_DIR = PARSER_INPUT_DIRS["wellsfargo_bank"]
 OUTPUT_PATH_CSV = PARSER_OUTPUT_PATHS["wellsfargo_bank"]["csv"]
 OUTPUT_PATH_XLSX = PARSER_OUTPUT_PATHS["wellsfargo_bank"]["xlsx"]
+
+logger = logging.getLogger("wellsfargo_bank_parser")
 
 
 def analyze_line_for_transaction_type_all(line):
@@ -126,56 +130,50 @@ def add_statement_date_and_file_path(transaction, pdf_path):
     """
     Enhance a transaction dictionary with the statement date and file path information.
 
-    This function extracts the date from the filename of a PDF bank statement, formats it, and then updates
-    the transaction dictionary with this statement date and the path of the PDF file. If the transaction dictionary
-    has a 'date' field with a datetime object, it strips the time part, leaving only the date.
-
-    Parameters
-    ----------
-    transaction : dict
-        The transaction dictionary to be updated.
-    pdf_path : str
-        The file path of the PDF bank statement.
-
-    Returns
-    -------
-    dict
-        The updated transaction dictionary with the 'Statement Date' and 'File Path' included.
-
-    Raises
-    ------
-    ValueError
-        If the date in the filename does not match the expected format MMDDYY.
-
-    Examples
-    --------
-    >>> transaction = {'date': datetime(2023, 1, 4), 'amount': 200.00}
-    >>> pdf_path = '/path/to/statement010423.pdf'
-    >>> add_statement_date_and_file_path(transaction, pdf_path)
-    {
-        'date': '2023-01-04',
-        'amount': 200.00,
-        'Statement Date': '2023-01-04',
-        'File Path': '/path/to/statement010423.pdf'
-    }
+    Statement date extraction prioritizes PDF content (statement period or explicit date fields). Only falls back to filename if content-based extraction fails. If both fail, logs a warning and sets statement_date to None.
     """
-
-    base_name = os.path.basename(pdf_path).split(".")[0]
-    date_str = base_name[:6]
+    # Try to extract statement date from PDF content
     try:
-        statement_date = datetime.strptime(date_str, "%m%d%y").date()
-    except ValueError:
-        raise ValueError(
-            f"Date in filename {base_name} does not match expected format MMDDYY."
+        reader = PdfReader(pdf_path)
+        first_page_text = reader.pages[0].extract_text() if reader.pages else ""
+        match = re.search(
+            r"Statement Period\s+(\d{2}/\d{2}/\d{4})\s+to\s+(\d{2}/\d{2}/\d{4})",
+            first_page_text,
         )
+        statement_date = None
+        if match:
+            period_end = match.group(2)
+            try:
+                statement_date = datetime.strptime(period_end, "%m/%d/%Y").strftime(
+                    "%Y-%m-%d"
+                )
+            except Exception:
+                pass
+        if not statement_date:
+            base_name = os.path.basename(pdf_path).split(".")[0]
+            date_str = base_name[:6]
+            try:
+                statement_date = datetime.strptime(date_str, "%m%d%y").strftime(
+                    "%Y-%m-%d"
+                )
+                logger.warning(
+                    f"Statement date not found in content, using filename: {statement_date}"
+                )
+            except Exception:
+                logger.warning(
+                    "Could not extract statement date from content or filename. Setting to None."
+                )
+                statement_date = None
+    except Exception:
+        logger.warning(
+            "Could not extract statement date from content or filename. Setting to None."
+        )
+        statement_date = None
 
-    # Add or update the statement date and file path in the transaction dictionary
-    transaction["Statement Date"] = statement_date.strftime("%Y-%m-%d")
+    transaction["Statement Date"] = statement_date
     transaction["File Path"] = pdf_path
-    # Remove the time part from the date if present
     if isinstance(transaction.get("date"), datetime):
         transaction["date"] = transaction["date"].date()
-
     return transaction
 
 

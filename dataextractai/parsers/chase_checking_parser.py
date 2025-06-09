@@ -119,11 +119,60 @@ def clean_description(desc):
     return desc.strip()
 
 
-def extract_chase_statements(pdf_path, statement_date):
+def extract_statement_date_from_content(pdf_path):
+    """
+    Extract statement date from PDF content (statement period or explicit date fields). Only fall back to filename if content-based extraction fails. If both fail, return None.
+    """
+    reader = PdfReader(pdf_path)
+    for page in reader.pages:
+        text = page.extract_text() or ""
+        # Try to find statement period
+        match = re.search(
+            r"Statement Period\s+(\d{2}/\d{2}/\d{4})\s+to\s+(\d{2}/\d{2}/\d{4})", text
+        )
+        if match:
+            period_end = match.group(2)
+            try:
+                return datetime.strptime(period_end, "%m/%d/%Y").strftime("%Y-%m-%d")
+            except Exception:
+                pass
+        # Try to find explicit date field
+        match = re.search(r"Statement Date:?\s*([0-9]{2}/[0-9]{2}/[0-9]{4})", text)
+        if match:
+            try:
+                return datetime.strptime(match.group(1), "%m/%d/%Y").strftime(
+                    "%Y-%m-%d"
+                )
+            except Exception:
+                pass
+    return None
+
+
+def extract_statement_date_from_filename(pdf_path):
+    fname = os.path.basename(pdf_path)
+    m = re.search(r"(\d{8})", fname)
+    if m:
+        try:
+            return datetime.strptime(m.group(1), "%Y%m%d").strftime("%Y-%m-%d")
+        except Exception:
+            return None
+    return None
+
+
+def extract_chase_statements(pdf_path, statement_date=None):
+    """
+    Extract Chase Checking statement transactions. Statement date extraction prioritizes PDF content, then filename, else None.
+    """
+    if not statement_date:
+        statement_date = extract_statement_date_from_content(pdf_path)
+        if not statement_date:
+            statement_date = extract_statement_date_from_filename(pdf_path)
     skipped_pages = 0
     pdf_reader = PdfReader(pdf_path)
     transactions = []
-    statement_year, statement_month, _ = map(int, statement_date.split("-"))
+    statement_year, statement_month, _ = (
+        map(int, statement_date.split("-")) if statement_date else (None, None, None)
+    )
     account_number = None
     pages_with_transactions = []
     tx_count_per_page = []

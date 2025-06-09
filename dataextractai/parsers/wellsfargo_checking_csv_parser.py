@@ -23,6 +23,12 @@ import re
 
 
 class WellsFargoCheckingCSVParser(BaseParser):
+    """
+    Parser for Wells Fargo checking account CSV exports.
+
+    Statement date extraction should prioritize content-based extraction (if available in future formats), only falling back to filename if content-based extraction fails. If both fail, set to None. Currently, statement_date is set to None for all records.
+    """
+
     name = "wellsfargo_checking_csv"
     description = "Parser for Wells Fargo checking account CSV exports."
     file_types = [".csv"]
@@ -96,6 +102,7 @@ class WellsFargoCheckingCSVParser(BaseParser):
                     "source": self.name,
                     "transaction_type": "Unknown",
                     "account_number": None,
+                    "statement_date": None,  # No statement date in CSV, but field included for consistency
                 }
             )
         return records

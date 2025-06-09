@@ -11,6 +11,12 @@ Usage:
     df = parser.normalize_data(raw)
 
 This parser is importable for CLI, Django, or other Python integrations.
+
+ChaseChecking Parser: Statement date extraction pattern
+- Always extract the statement date from PDF content first (using parser-specific logic).
+- Only fall back to extracting from the original_filename if provided and if content-based extraction fails.
+- If both fail, log a warning and set statement_date to None (never raise).
+- Do not assume the filename is always available or always in a specific format.
 """
 
 import os
@@ -296,6 +302,46 @@ class ChaseCheckingParser(BaseParser):
         meta["statement_period_start"] = period_start
         meta["statement_period_end"] = period_end
         return meta
+
+    def extract_statement_date(self, pdf_text, original_filename=None):
+        """
+        Extract the statement date from PDF content. If not found, optionally try filename if original_filename is provided.
+        Returns ISO date string (YYYY-MM-DD) or None.
+        """
+        import re
+        from datetime import datetime
+
+        # Try to extract date from PDF content (parser-specific logic)
+        date_match = re.search(
+            r"Statement Date:?\s*([0-9]{2}/[0-9]{2}/[0-9]{4})", pdf_text
+        )
+        if date_match:
+            try:
+                return (
+                    datetime.strptime(date_match.group(1), "%m/%d/%Y")
+                    .date()
+                    .isoformat()
+                )
+            except Exception as e:
+                print(f"[WARNING] Failed to parse statement date from PDF content: {e}")
+        # Fallback: only use filename if explicitly provided
+        if original_filename:
+            fn_match = re.search(r"(20[0-9]{6})", original_filename)
+            if fn_match:
+                try:
+                    return (
+                        datetime.strptime(fn_match.group(1), "%Y%m%d")
+                        .date()
+                        .isoformat()
+                    )
+                except Exception as e:
+                    print(
+                        f"[WARNING] Failed to parse statement date from filename: {e}"
+                    )
+        print(
+            "[WARNING] Could not extract statement date from PDF or filename. Setting to None."
+        )
+        return None
 
 
 # Register the parser for dynamic use

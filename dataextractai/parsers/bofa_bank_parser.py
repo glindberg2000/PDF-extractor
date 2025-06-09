@@ -9,6 +9,7 @@ and then sorts the transactions by date.
 Usage:
     python3 -m dataextractai.parsers.bofa_bank_parser
 """
+
 import pdfplumber
 import pandas as pd
 import re
@@ -16,27 +17,60 @@ import os
 import glob
 from ..utils.config import PARSER_INPUT_DIRS, PARSER_OUTPUT_PATHS
 from ..utils.utils import standardize_column_names, get_parent_dir_and_file
+from PyPDF2 import PdfReader
+import logging
 
 SOURCE_DIR = PARSER_INPUT_DIRS["bofa_bank"]
 OUTPUT_PATH_CSV = PARSER_OUTPUT_PATHS["bofa_bank"]["csv"]
 OUTPUT_PATH_XLSX = PARSER_OUTPUT_PATHS["bofa_bank"]["xlsx"]
 
+logger = logging.getLogger("bofa_bank_parser")
+
 
 def add_statement_date_and_file_path(df, file_path):
-    base_name = os.path.basename(file_path)
-    # The filename is expected to have one underscore, separating "eStmt" from the date
-    parts = base_name.split(".")[0].split("_")
-    if len(parts) == 2:
-        _, date_str = parts
-        statement_date = pd.to_datetime(date_str).date()
-    else:
-        raise ValueError(
-            f"Filename {base_name} does not match expected format 'eStmt_YYYY-MM-DD.pdf'."
+    """
+    Enhance a DataFrame with the statement date and file path information.
+
+    Statement date extraction prioritizes PDF content (statement period or explicit date fields). Only falls back to filename if content-based extraction fails. If both fail, logs a warning and sets statement_date to None.
+    """
+    statement_date = None
+    try:
+        reader = PdfReader(file_path)
+        first_page_text = reader.pages[0].extract_text() if reader.pages else ""
+        match = re.search(
+            r"Statement Period\s+(\d{2}/\d{2}/\d{4})\s+to\s+(\d{2}/\d{2}/\d{4})",
+            first_page_text,
         )
+        if match:
+            period_end = match.group(2)
+            try:
+                statement_date = pd.to_datetime(period_end, format="%m/%d/%Y").date()
+            except Exception:
+                pass
+        if not statement_date:
+            base_name = os.path.basename(file_path).split(".")[0]
+            parts = base_name.split("_")
+            if len(parts) == 2:
+                _, date_str = parts
+                try:
+                    statement_date = pd.to_datetime(date_str).date()
+                    logger.warning(
+                        f"Statement date not found in content, using filename: {statement_date}"
+                    )
+                except Exception:
+                    statement_date = None
+            if not statement_date:
+                logger.warning(
+                    "Could not extract statement date from content or filename. Setting to None."
+                )
+    except Exception:
+        logger.warning(
+            "Could not extract statement date from content or filename. Setting to None."
+        )
+        statement_date = None
 
     df["Statement Date"] = statement_date
     df["File Path"] = file_path
-
     return df
 
 
