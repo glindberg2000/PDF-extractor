@@ -28,7 +28,7 @@ import os
 import logging
 import json
 from ..utils.config import PARSER_INPUT_DIRS, PARSER_OUTPUT_PATHS
-from app.utils.utils import (
+from dataextractai.utils.utils import (
     standardize_column_names,
     get_parent_dir_and_file,
     extract_date_from_filename,

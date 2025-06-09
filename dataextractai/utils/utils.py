@@ -3,6 +3,7 @@
 import re
 import os
 import pandas as pd
+from dateutil import parser as dateutil_parser
 
 from dataextractai.utils.config import (
     PARSER_OUTPUT_PATHS,
@@ -123,3 +124,16 @@ def standardize_classifications(df, column_name="Amelia_AI_classification"):
 # df = pd.read_csv(CONSOLIDATED_BATCH_PATH)  # Load your DataFrame
 # df_standardized = standardize_classifications(df)
 # df_standardized.to_csv(CONSOLIDATED_BATCH_PATH, index=False)
+
+
+def extract_date_from_filename(filename: str) -> str | None:
+    """Extracts a YYYY-MM-DD date from an 8-digit sequence in the filename, if possible."""
+    base = os.path.basename(filename)
+    m = re.search(r"(\d{8})", base)
+    if m:
+        try:
+            dt = dateutil_parser.parse(m.group(1), fuzzy=True)
+            return dt.strftime("%Y-%m-%d")
+        except Exception:
+            return None
+    return None

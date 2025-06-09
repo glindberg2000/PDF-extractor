@@ -20,7 +20,7 @@ from dataextractai.parsers_core.base import BaseParser
 from dataextractai.parsers_core.registry import ParserRegistry
 from dataextractai.utils.config import TRANSFORMATION_MAPS
 import re
-from app.utils.utils import extract_date_from_filename
+from dataextractai.utils.utils import extract_date_from_filename
 
 
 class WellsFargoCheckingCSVParser(BaseParser):

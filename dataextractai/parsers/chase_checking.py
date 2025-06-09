@@ -36,7 +36,7 @@ from dataextractai.parsers.chase_checking_parser import (
     extract_statement_date_from_content,
 )
 from dateutil import parser as dateutil_parser
-from app.utils.utils import extract_date_from_filename
+from dataextractai.utils.utils import extract_date_from_filename
 
 logger = get_logger("chase_checking_parser_modular")
 
