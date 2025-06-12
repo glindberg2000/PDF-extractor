@@ -374,4 +374,77 @@ ASSISTANTS_CONFIG = {
 - Modular parsers can expose an `extract_metadata(input_path)` method to return all key metadata fields for a statement file.
 - Example: `ChaseCheckingParser.extract_metadata(path)` returns a dict with bank_name, account_type, parser_name, file_type, account_number, statement_date, account_holder_name, address, statement_period_start, statement_period_end.
 - This method is robust to PDF quirks, works across all tested files, and is callable on demand by downstream consumers (e.g., LedgerDev, CLI, Django, etc.).
-- Pattern: Keep all extraction logic self-contained and robust to formatting variations. Test across all available statement files before release. 
+- Pattern: Keep all extraction logic self-contained and robust to formatting variations. Test across all available statement files before release.
+
+# System Patterns: Iterative Extraction and Debugging
+
+- When standard extraction (regex, line search) fails, escalate to:
+  - Aggressive normalization (remove whitespace, unicode normalization)
+  - Alternate extraction libraries (e.g., pdfplumber)
+  - Brute-force substring or character search
+- Always print debug output for each attempt to aid in diagnosis.
+- Document each step and result in the memory bank for future reference.
+- This pattern ensures that even edge cases are eventually handled or at least diagnosed for future improvement. 
+
+## Canonical Parser Output Contract (2025-06)
+
+### Canonical Pydantic Models (Finalized)
+```python
+from typing import Optional, List, Dict
+from pydantic import BaseModel
+
+class TransactionRecord(BaseModel):
+    transaction_date: str  # ISO 8601, e.g. "2024-12-13"
+    amount: float  # Transaction amount
+    description: str  # Raw transaction description from statement
+    posted_date: Optional[str] = None  # Date transaction was posted, if available
+    transaction_type: Optional[str] = None  # e.g. "debit", "credit", only if present in source
+    extra: Optional[Dict] = None  # For parser/bank-specific fields
+
+class StatementMetadata(BaseModel):
+    statement_date: Optional[str] = None  # Statement end date (ISO 8601)
+    statement_period_start: Optional[str] = None  # Statement period start date
+    statement_period_end: Optional[str] = None  # Statement period end date
+    statement_date_source: Optional[str] = None  # Where the date was extracted from
+    original_filename: Optional[str] = None  # Original uploaded filename
+    account_number: Optional[str] = None  # Account number for the statement
+    bank_name: Optional[str] = None  # e.g., "Chase", "Capital One"
+    account_type: Optional[str] = None  # e.g., "checking", "savings", "VISA"
+    parser_name: Optional[str] = None  # Name of the parser used
+    parser_version: Optional[str] = None  # Version of the parser used
+    currency: Optional[str] = "USD"  # Currency, default "USD"
+    extra: Optional[Dict] = None  # For parser/bank-specific metadata
+
+class ParserOutput(BaseModel):
+    transactions: List[TransactionRecord]  # List of transactions
+    metadata: Optional[StatementMetadata] = None  # Statement-level metadata
+    schema_version: Optional[str] = "1.0"  # Output schema version
+    errors: Optional[List[str]] = None  # List of error messages
+    warnings: Optional[List[str]] = None  # List of warning messages
+```
+
+### Enforcement Policy
+- All modularized parsers must validate output with these models before returning.
+- Only fields in TransactionRecord are allowed in the transaction list; all context/statement-level info goes in StatementMetadata.
+- Use `extra` for parser/bank-specific or experimental fields.
+
+### Transformation/Normalization Rules
+- Each parser/source uses a transformation map (see TRANSFORMATION_MAPS in dataextractai/utils/config.py) to map legacy/variant fields to canonical fields.
+- Required fields: `transaction_date`, `description`, `amount`.
+- Dates must be ISO 8601 (YYYY-MM-DD), amounts must be floats, and all required fields must be present or set to None.
+- Lambda functions are used for computed/static fields.
+
+### Schema Validation Requirement
+- A dedicated test/validation script must run each parser on sample data and validate the output using the canonical Pydantic models.
+- The test fails if any required field is missing or the schema is not strictly followed.
+
+### Migration Notes
+- Remove all context fields (e.g., statement_file, client, file_path) from per-transaction output.
+- Only include fields present in TransactionRecord in the transaction list.
+- All statement-level/contextual info goes in StatementMetadata.
+- Use the `extra` field for any parser/bank-specific or experimental fields.
+- Ingestion pipeline will attach metadata to transactions as needed.
+
+### Status
+- All modularized parsers can be refactored to this contract with moderate effort. Most already separate transaction and metadata fields, so migration is straightforward.
+- This contract is now the standard for all new parser development and ingestion integration. 

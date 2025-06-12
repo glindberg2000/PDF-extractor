@@ -130,4 +130,26 @@
 ### Google Sheets
 - API quota management
 - Format consistency
-- Update conflicts 
+- Update conflicts
+
+# Progress: Chase Checking Statement Date Extraction
+
+## What Works
+- Statement date extraction works for most Chase Checking PDFs using content-based regexes or fallback to filename.
+- The parser is robust for standard formats and most real-world files.
+
+## What's Left
+- Some PDFs (notably `test-statement-4894.pdf`) have the statement period in content, but the date is not extractable by any current method (regex, normalization, pdfplumber, brute-force line search).
+
+## Progress Status
+- All standard and advanced extraction methods have failed for these edge cases.
+- The next step is to try a direct substring search after 'through' in the full first page text, and parse a date from that substring.
+
+## Canonical Parser Output Contract (2025-06)
+
+- Canonical Pydantic models: TransactionRecord, StatementMetadata, ParserOutput
+- All parser outputs must validate against these models before returning
+- Normalization rules: Each parser uses a transformation map to map legacy/variant fields to canonical fields; required fields are transaction_date, description, amount
+- All context/statement-level info goes in StatementMetadata; use `extra` for parser/bank-specific fields
+- **Schema enforcement:** A dedicated test/validation script must be created to enforce this contract
+- **PRIORITY:** Migration to this contract is now the top priority for all parser and ingestion work 

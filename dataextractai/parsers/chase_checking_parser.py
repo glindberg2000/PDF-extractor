@@ -19,6 +19,11 @@ from ..utils.logger import get_logger
 import argparse
 import unicodedata
 from dateutil import parser as dateutil_parser
+from dataextractai.parsers_core.models import (
+    TransactionRecord,
+    StatementMetadata,
+    ParserOutput,
+)
 
 SOURCE_DIR = PARSER_INPUT_DIRS["chase_visa"]
 OUTPUT_PATH_CSV = PARSER_OUTPUT_PATHS["chase_visa"]["csv"]
@@ -536,6 +541,7 @@ def main(write_to_file=True, source_dir=None, output_csv=None, output_xlsx=None)
     file_list = os.listdir(source_dir if source_dir is not None else SOURCE_DIR)
     logger.info(f"Files in source_dir: {file_list}")
     print(f"[DEBUG] Files in source_dir: {file_list}")
+    parser_outputs = []
     for filename in file_list:
         if filename.endswith(".pdf") and "statements" in filename:
             statement_date = filename.split("-")[0]
@@ -552,13 +558,52 @@ def main(write_to_file=True, source_dir=None, output_csv=None, output_xlsx=None)
                 logger.info(f"Extracted {len(df)} transactions from {filename}")
                 print(f"Extracted {len(df)} transactions from {filename}")
                 all_data = pd.concat([all_data, df], ignore_index=True)
+                # --- Canonical Output Construction ---
+                transactions = []
+                for _, row in df.iterrows():
+                    transactions.append(
+                        TransactionRecord(
+                            transaction_date=row.get("Date", ""),
+                            amount=row.get("Amount", 0.0),
+                            description=row.get(
+                                "Merchant Name or Transaction Description", ""
+                            ),
+                            posted_date=None,  # Not available in this parser
+                            transaction_type=None,  # Not available in this parser
+                            extra={
+                                "balance": row.get("Balance"),
+                                "account_number": row.get("Account Number"),
+                                "file_path": row.get("File Path"),
+                            },
+                        )
+                    )
+                metadata = StatementMetadata(
+                    statement_date=row.get("Statement Date", None),
+                    original_filename=filename,
+                    account_number=row.get("Account Number", None),
+                    bank_name="Chase",
+                    account_type="Checking",
+                    parser_name="ChaseCheckingParser",
+                    parser_version="1.0",
+                    currency="USD",
+                    extra={},
+                )
+                parser_outputs.append(
+                    ParserOutput(
+                        transactions=transactions,
+                        metadata=metadata,
+                        schema_version="1.0",
+                        errors=None,
+                        warnings=None,
+                    )
+                )
+                # --- End Canonical Output Construction ---
             except Exception as e:
                 logger.error(f"Exception processing {filename}: {e}")
                 print(f"Exception processing {filename}: {e}")
     logger.info(f"Total Transactions: {len(all_data)}")
     print(f"Total Transactions:{len(all_data)}")
     print(f"[DEBUG] all_data shape: {all_data.shape}")
-
     # Standardize the Column Names
     df = standardize_column_names(all_data)
     if not df.empty and "file_path" in df.columns:
@@ -579,9 +624,11 @@ def main(write_to_file=True, source_dir=None, output_csv=None, output_xlsx=None)
         df.to_excel(output_xlsx_path, index=False)
         logger.info(f"Wrote CSV: {output_csv_path}")
         logger.info(f"Wrote XLSX: {output_xlsx_path}")
-
     logger.info("--- Chase Visa Parser Run Finished ---")
-    return df
+    # If only one file, return the single ParserOutput; else, return a list
+    if len(parser_outputs) == 1:
+        return parser_outputs[0]
+    return parser_outputs
 
 
 def run(write_to_file=True, input_dir=None, output_paths=None):

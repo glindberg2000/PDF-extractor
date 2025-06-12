@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 from dataextractai.parsers.chase_checking import ChaseCheckingParser
 
@@ -94,20 +95,34 @@ def extract_metadata(pdf_path):
 
 
 def main():
-    directory = "data/clients/chase_test/input/chase_checking"
-    pdf_files = [
-        os.path.join(directory, f)
-        for f in os.listdir(directory)
-        if f.lower().endswith(".pdf")
-    ]
     parser = ChaseCheckingParser()
-    for pdf_path in sorted(pdf_files):
+    if len(sys.argv) > 1:
+        # Single file mode
+        pdf_path = sys.argv[1]
+        if not os.path.isfile(pdf_path):
+            print(f"[ERROR] File not found: {pdf_path}")
+            return
         print(f"\n=== METADATA FOR: {pdf_path} ===")
         try:
             meta = parser.extract_metadata(pdf_path)
             print(json.dumps(meta, indent=2))
         except Exception as e:
             print(f"[ERROR] Failed to process {pdf_path}: {e}")
+    else:
+        # Bulk directory mode (default)
+        directory = "data/clients/chase_test/input/chase_checking"
+        pdf_files = [
+            os.path.join(directory, f)
+            for f in os.listdir(directory)
+            if f.lower().endswith(".pdf")
+        ]
+        for pdf_path in sorted(pdf_files):
+            print(f"\n=== METADATA FOR: {pdf_path} ===")
+            try:
+                meta = parser.extract_metadata(pdf_path)
+                print(json.dumps(meta, indent=2))
+            except Exception as e:
+                print(f"[ERROR] Failed to process {pdf_path}: {e}")
 
 
 if __name__ == "__main__":

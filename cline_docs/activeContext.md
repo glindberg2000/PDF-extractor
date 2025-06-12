@@ -318,4 +318,69 @@ The `ChaseCheckingParser` outputs columns like:
 - Ready to begin development of the CapitalOne CSV parser
 
 ## Known Issues
-- PDF parser for CapitalOne Visa print statements cannot extract amounts; CSV parser is the recommended path forward 
+- PDF parser for CapitalOne Visa print statements cannot extract amounts; CSV parser is the recommended path forward
+
+# Active Context: Chase Checking Statement Date Extraction Debugging
+
+## Problem
+- The Chase Checking parser is failing to extract the statement date from the content of certain PDFs (e.g., `test-statement-4894.pdf`).
+- The date is present in the text (e.g., 'September 10, 2024 throughOctober 07, 2024') but not being parsed by any of the current methods.
+
+## Attempts So Far
+- Multiple regexes for both 'MM/DD/YYYY' and 'Month DD, YYYY' formats, including robust and aggressive variants.
+- Aggressive normalization: removing all whitespace, using non-greedy wildcards, and unicode normalization.
+- Fallback to pdfplumber for alternate text extraction.
+- Brute-force: searching for 'through' in split lines and parsing the rest of the line.
+- None of these approaches have successfully extracted the date from the problematic file.
+
+## Current Plan
+- Try a direct substring search: find 'through' in the entire first page text (not split by lines), grab the next 30–40 characters, and attempt to parse a date from that substring using dateutil.parser.
+- Print debug output for the substring and parsing attempt.
+
+## Next Step
+- Implement and test this direct substring search approach.
+
+---
+This is the current active context for the next session.
+
+---
+## Active Context Update: Migration to Canonical Pydantic Parser Output Contract (2025-06)
+
+### Current State
+- All modularized parsers are being migrated to output a canonical, Pydantic-validated contract (see productContext.md and .taskmaster/docs/prd_parser_contract_migration.txt).
+- The PRD for this migration is written and parsed into Task Master; tasks have been generated and appended to the project plan.
+- Canonical Pydantic models are defined in dataextractai/parsers_core/models.py and documented in systemPatterns.md.
+- Internal and external stakeholders have agreed on the contract and migration plan.
+
+### Next Steps
+- (Recommended) Create a new git branch for the migration: `feature/parser-output-contract-migration`
+- Begin work on the highest-priority pending tasks in Task Master (see .taskmaster/tasks/tasks.json or use Task Master tools to list next tasks)
+- Refactor each modularized parser to output ParserOutput, removing context fields from per-transaction output and moving all metadata to StatementMetadata.
+- Update ingestion and downstream systems to consume the new contract.
+- Update and validate all documentation and memory bank files as migration progresses.
+- Communicate progress and blockers in internal chat and update Task Master task statuses as work proceeds.
+
+### Crucial Details to Preserve
+- The canonical contract and rationale (see productContext.md, systemPatterns.md, and parsers_core/models.py)
+- The full migration plan and deliverables (see PRD)
+- The current state of all tasks and their dependencies (see .taskmaster/tasks/tasks.json)
+- Any feedback or requirements from LedgerFlow_Dev and other stakeholders
+
+## Canonical Parser Output Contract (2025-06)
+
+- **Canonical Pydantic Models:**
+    - TransactionRecord, StatementMetadata, ParserOutput (see systemPatterns.md for full code)
+    - All parser outputs must validate against these models
+- **Normalization Rules:**
+    - Each parser uses a transformation map to map legacy/variant fields to canonical fields
+    - Required: transaction_date, description, amount (ISO 8601, float, str)
+    - All context/statement-level info in StatementMetadata
+    - Use `extra` for parser/bank-specific fields
+- **Schema Enforcement:**
+    - All outputs must be validated before returning
+    - A dedicated test/validation script is required to enforce this contract
+- **PRIORITY:**
+    - Migration to this contract is now the top priority for all parser and ingestion work
+    - All future parser migrations depend on this foundation
+
+--- 

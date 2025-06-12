@@ -78,4 +78,27 @@ The PDF Extractor is a specialized tool designed to automate the extraction and 
 - Universal file-to-parser detection function: All modularized parsers are auto-registered and available for strict, robust detection.
 - Detection utility is available both as a CLI and as a function for module users.
 - Strict detection logic ensures no guessing or misclassification, improving reliability and extensibility.
-- **NEW:** Modular parsers (starting with ChaseCheckingParser) now expose a robust `extract_metadata` method, enabling reliable, on-demand metadata extraction for downstream consumers (e.g., LedgerDev, CLI, Django, etc.). 
+- **NEW:** Modular parsers (starting with ChaseCheckingParser) now expose a robust `extract_metadata` method, enabling reliable, on-demand metadata extraction for downstream consumers (e.g., LedgerDev, CLI, Django, etc.).
+
+# Product Context: Robust Date Extraction for Chase Checking
+
+- The product must reliably extract statement dates from Chase Checking PDFs, even when text extraction is non-standard or edge-case.
+- Robust date extraction is critical for downstream normalization, reporting, and client trust.
+- The current debugging session is focused on ensuring that all client files, including edge cases, are handled correctly.
+
+## Migration to Canonical Pydantic Parser Output Contract (2025-06)
+
+### Motivation
+- Ensure all modularized parsers output transaction data in a strictly enforced, minimal, and extensible schema.
+- Guarantee schema reliability for ingestion, 3rd parties, and downstream consumers.
+- Enforce separation of concerns: transaction data only in main output, all context/statement-level metadata returned separately.
+- Use Pydantic models for type safety, validation, and maintainability.
+
+### Goals
+- Refactor all modularized parsers to output only transaction data fields in a list of TransactionRecord objects.
+- Move all statement-level/contextual info to a StatementMetadata object.
+- Return a ParserOutput object from each parser, validated by Pydantic.
+- Remove all context fields (e.g., statement_file, client, file_path) from per-transaction output.
+- Use the `extra` field for parser/bank-specific or experimental fields.
+- Update ingestion and downstream systems to consume the new contract.
+- Document the migration and update all relevant developer and system documentation. 

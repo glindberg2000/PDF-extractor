@@ -137,3 +137,126 @@ def extract_date_from_filename(filename: str) -> str | None:
         except Exception:
             return None
     return None
+
+
+def extract_statement_date_from_content(pdf_path):
+    """
+    Extract statement end date from PDF content using robust fallback logic.
+    Tries direct substring search, regexes, normalization, and pdfplumber fallback.
+    Returns date as YYYY-MM-DD or None if not found.
+    """
+    from PyPDF2 import PdfReader
+    import unicodedata
+    from dateutil import parser as dateutil_parser
+
+    try:
+        reader = PdfReader(pdf_path)
+    except Exception:
+        return None
+    # --- Direct substring search after 'through' in first page text ---
+    try:
+        first_page_text = reader.pages[0].extract_text() or ""
+        idx = first_page_text.find("through")
+        if idx != -1:
+            after = first_page_text[idx + len("through") : idx + len("through") + 40]
+            try:
+                date = dateutil_parser.parse(after, fuzzy=True)
+                return date.strftime("%Y-%m-%d")
+            except Exception:
+                pass
+    except Exception:
+        pass
+    # --- Regex and normalization attempts on all pages ---
+    for i, page in enumerate(reader.pages):
+        text = page.extract_text() or ""
+        fixed_text = re.sub(r"(through)([A-Z])", r"\1 \2", text.replace("\n", ""))
+        match = re.search(
+            r"Statement Period\s+(\d{2}/\d{2}/\d{4})\s+to\s+(\d{2}/\d{2}/\d{4})", text
+        )
+        if match:
+            period_end = match.group(2)
+            try:
+                return pd.to_datetime(period_end, format="%m/%d/%Y").strftime(
+                    "%Y-%m-%d"
+                )
+            except Exception:
+                pass
+        match = re.search(
+            r"([A-Z][a-z]+ \d{1,2}, \d{4})\s*through\s*([A-Z][a-z]+ \d{1,2}, \d{4})",
+            fixed_text,
+        )
+        if match:
+            period_end = match.group(2)
+            try:
+                return pd.to_datetime(period_end, format="%B %d, %Y").strftime(
+                    "%Y-%m-%d"
+                )
+            except Exception:
+                pass
+        aggressive_text = re.sub(r"\s+", "", text)
+        idx = aggressive_text.find("through")
+        if idx != -1:
+            after = aggressive_text[idx + len("through") : idx + len("through") + 40]
+            try:
+                date = dateutil_parser.parse(after, fuzzy=True)
+                return date.strftime("%Y-%m-%d")
+            except Exception:
+                pass
+        normalized_text = unicodedata.normalize("NFKD", aggressive_text)
+        idx2 = normalized_text.find("through")
+        if idx2 != -1:
+            after = normalized_text[idx2 + len("through") : idx2 + len("through") + 40]
+            try:
+                date = dateutil_parser.parse(after, fuzzy=True)
+                return date.strftime("%Y-%m-%d")
+            except Exception:
+                pass
+    # --- Brute-force line search ---
+    try:
+        first_page_text = reader.pages[0].extract_text() or ""
+        for line in first_page_text.splitlines():
+            if "through" in line:
+                after = line.split("through", 1)[1].strip()
+                try:
+                    date = dateutil_parser.parse(after, fuzzy=True)
+                    return date.strftime("%Y-%m-%d")
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    # --- pdfplumber fallback ---
+    try:
+        import pdfplumber
+
+        with pdfplumber.open(pdf_path) as pdf:
+            if len(pdf.pages) > 0:
+                plumber_text = pdf.pages[0].extract_text() or ""
+                fixed_text = re.sub(
+                    r"(through)([A-Z])", r"\1 \2", plumber_text.replace("\n", "")
+                )
+                match = re.search(
+                    r"([A-Z][a-z]+ \d{1,2}, \d{4})\s*through\s*([A-Z][a-z]+ \d{1,2}, \d{4})",
+                    fixed_text,
+                )
+                if match:
+                    period_end = match.group(2)
+                    try:
+                        return pd.to_datetime(period_end, format="%B %d, %Y").strftime(
+                            "%Y-%m-%d"
+                        )
+                    except Exception:
+                        pass
+                aggressive_text = re.sub(r"\s+", "", plumber_text)
+                idx = aggressive_text.find("through")
+                if idx != -1:
+                    after = aggressive_text[
+                        idx + len("through") : idx + len("through") + 40
+                    ]
+                    try:
+                        date = dateutil_parser.parse(after, fuzzy=True)
+                        return date.strftime("%Y-%m-%d")
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+    return None
