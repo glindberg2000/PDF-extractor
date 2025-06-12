@@ -23,6 +23,11 @@ from datetime import datetime
 from dataextractai.parsers_core.base import BaseParser
 from dataextractai.parsers_core.registry import ParserRegistry
 from dataextractai.utils.utils import extract_date_from_filename
+from dataextractai.parsers_core.models import (
+    TransactionRecord,
+    StatementMetadata,
+    ParserOutput,
+)
 
 
 class CapitalOneCSVParser(BaseParser):
@@ -202,3 +207,72 @@ class CapitalOneCSVParser(BaseParser):
 
 # Register the parser
 ParserRegistry.register_parser(CapitalOneCSVParser.name, CapitalOneCSVParser)
+
+
+def main(write_to_file=True, source_dir=None, output_csv=None, output_xlsx=None):
+    import glob
+    import pandas as pd
+    import os
+
+    parser = CapitalOneCSVParser()
+    source_dir = source_dir or os.path.join(
+        os.path.dirname(__file__), "../../data/clients/capitalone/input"
+    )
+    file_list = glob.glob(os.path.join(source_dir, "*.csv"))
+    all_records = []
+    for file_path in file_list:
+        raw_data = parser.parse_file(
+            file_path, original_filename=os.path.basename(file_path)
+        )
+        all_records.extend(raw_data)
+    df = parser.normalize_data(all_records)
+    # Build TransactionRecord list
+    transactions = []
+    for _, row in df.iterrows():
+        transactions.append(
+            TransactionRecord(
+                transaction_date=row["transaction_date"],
+                amount=row["amount"],
+                description=row["description"],
+                posted_date=row.get("posted_date"),
+                transaction_type=row.get("transaction_type"),
+                extra={
+                    "card_no": row.get("card_no"),
+                    "category": row.get("category"),
+                    "source_file": row.get("source_file"),
+                    "file_path": row.get("file_path"),
+                    "debit": row.get("debit"),
+                    "credit": row.get("credit"),
+                },
+            )
+        )
+    # Build StatementMetadata (use first record for metadata)
+    metadata = None
+    if not df.empty:
+        metadata = StatementMetadata(
+            statement_date=df.iloc[0].get("statement_date"),
+            statement_period_start=df.iloc[0].get("statement_period_start"),
+            statement_period_end=df.iloc[0].get("statement_period_end"),
+            statement_date_source=df.iloc[0].get("statement_date_source"),
+            original_filename=df.iloc[0].get("source_file"),
+            account_number=df.iloc[0].get("account_number"),
+            bank_name="Capital One",
+            account_type="Credit Card",
+            parser_name=CapitalOneCSVParser.name,
+            parser_version=None,
+            currency="USD",
+            extra=None,
+        )
+    output = ParserOutput(
+        transactions=transactions,
+        metadata=metadata,
+        schema_version="1.0",
+        errors=None,
+        warnings=None,
+    )
+    if write_to_file:
+        if output_csv:
+            df.to_csv(output_csv, index=False)
+        if output_xlsx:
+            df.to_excel(output_xlsx, index=False)
+    return output
