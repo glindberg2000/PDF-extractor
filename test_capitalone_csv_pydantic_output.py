@@ -8,9 +8,14 @@ from dataextractai.parsers_core.models import (
 
 
 def test_capitalone_csv_parser_pydantic_output():
-    # Replace this with the actual path to your test CSV(s)
+    # Use the provided directory with sample files
     test_dir = os.path.join(
-        os.path.dirname(__file__), "data", "clients", "capitalone", "input"
+        os.path.dirname(__file__),
+        "data",
+        "clients",
+        "chase_test",
+        "input",
+        "capitalone_csv",
     )
     result = capitalone_main(write_to_file=False, source_dir=test_dir)
     outputs = result if isinstance(result, list) else [result]
