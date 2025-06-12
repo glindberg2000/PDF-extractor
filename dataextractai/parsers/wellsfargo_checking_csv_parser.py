@@ -21,6 +21,11 @@ from dataextractai.parsers_core.registry import ParserRegistry
 from dataextractai.utils.config import TRANSFORMATION_MAPS
 import re
 from dataextractai.utils.utils import extract_date_from_filename
+from dataextractai.parsers_core.models import (
+    TransactionRecord,
+    StatementMetadata,
+    ParserOutput,
+)
 
 
 class WellsFargoCheckingCSVParser(BaseParser):
@@ -171,6 +176,82 @@ class WellsFargoCheckingCSVParser(BaseParser):
             }
             normalized.append(norm)
         return pd.DataFrame(normalized)
+
+    def main(
+        self, write_to_file=True, source_dir=None, output_csv=None, output_xlsx=None
+    ):
+        import glob
+        import pandas as pd
+        import os
+
+        source_dir = source_dir or os.path.join(
+            os.path.dirname(__file__), "../../data/clients/wellsfargo_checking/input"
+        )
+        file_list = glob.glob(os.path.join(source_dir, "*.csv"))
+        all_outputs = []
+        for file_path in file_list:
+            raw_data = self.parse_file(
+                file_path, original_filename=os.path.basename(file_path)
+            )
+            df = self.normalize_data(raw_data)
+            # Build transactions list
+            transactions = [
+                TransactionRecord(
+                    transaction_date=row.get("transaction_date"),
+                    amount=row.get("amount"),
+                    description=row.get("description"),
+                    posted_date=None,
+                    transaction_type=row.get("transaction_type"),
+                    extra={
+                        k: v
+                        for k, v in row.items()
+                        if k
+                        not in [
+                            "transaction_date",
+                            "amount",
+                            "description",
+                            "transaction_type",
+                        ]
+                    },
+                )
+                for _, row in df.iterrows()
+            ]
+            # Build metadata
+            metadata = StatementMetadata(
+                statement_date=raw_data[0].get("statement_date") if raw_data else None,
+                statement_period_start=(
+                    raw_data[0].get("statement_period_start") if raw_data else None
+                ),
+                statement_period_end=(
+                    raw_data[0].get("statement_period_end") if raw_data else None
+                ),
+                statement_date_source=(
+                    raw_data[0].get("statement_date_source") if raw_data else None
+                ),
+                original_filename=os.path.basename(file_path),
+                account_number=raw_data[0].get("account_number") if raw_data else None,
+                bank_name="Wells Fargo",
+                account_type="Checking",
+                parser_name=self.name,
+                parser_version=None,
+                currency="USD",
+                extra=None,
+            )
+            output = ParserOutput(
+                transactions=transactions,
+                metadata=metadata,
+                schema_version="1.0",
+                errors=None,
+                warnings=None,
+            )
+            all_outputs.append(output)
+            # Optionally write DataFrame to CSV/XLSX for CLI/legacy
+            if write_to_file:
+                if output_csv:
+                    df.to_csv(output_csv, index=False)
+                if output_xlsx:
+                    df.to_excel(output_xlsx, index=False)
+        return all_outputs if len(all_outputs) > 1 else all_outputs[0]
 
 
 ParserRegistry.register_parser(
