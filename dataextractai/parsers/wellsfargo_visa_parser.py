@@ -22,10 +22,19 @@ import os
 import logging
 import json
 from ..utils.config import PARSER_INPUT_DIRS, PARSER_OUTPUT_PATHS
-from dataextractai.utils.utils import extract_date_from_filename
+from dataextractai.utils.utils import (
+    extract_date_from_filename,
+    standardize_column_names,
+    get_parent_dir_and_file,
+)
 from dataextractai.parsers_core.base import BaseParser
 from dataextractai.parsers_core.registry import ParserRegistry
 from dateutil import parser as dateutil_parser
+from dataextractai.parsers_core.models import (
+    TransactionRecord,
+    StatementMetadata,
+    ParserOutput,
+)
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
@@ -241,34 +250,79 @@ def process_all_pdfs(source_dir):
     return all_transactions
 
 
-def main(write_to_file=True):
-    """Main function to process PDFs and save results."""
-    # Process all PDFs in the source directory
-    all_transactions = process_all_pdfs(SOURCE_DIR)
+def main(write_to_file=True, source_dir=None, output_csv=None, output_xlsx=None):
+    import glob
+    import pandas as pd
+    import os
 
-    logger.info(f"Total Transactions: {len(all_transactions)}")
-
-    if not all_transactions:
-        logger.warning("No transactions found!")
-        return pd.DataFrame()
-
-    # Convert to DataFrame
-    df = pd.DataFrame(all_transactions)
-
-    # Standardize column names
-    df = standardize_column_names(df)
-
-    # Format file path
-    if "file_path" in df.columns:
-        df["file_path"] = df["file_path"].apply(get_parent_dir_and_file)
-
-    # Save to CSV and Excel
-    if write_to_file and not df.empty:
-        df.to_csv(OUTPUT_PATH_CSV, index=False)
-        df.to_excel(OUTPUT_PATH_XLSX, index=False)
-        logger.info(f"Saved {len(df)} transactions to CSV and Excel files")
-
-    return df
+    parser = WellsFargoVisaParser()
+    # Use the provided test directory if not specified
+    source_dir = source_dir or os.path.join(
+        os.path.dirname(__file__), "../../data/clients/chase_test/input/wellsfargo_visa"
+    )
+    file_list = glob.glob(os.path.join(source_dir, "*.pdf"))
+    all_outputs = []
+    for file_path in file_list:
+        raw_data = parser.parse_file(
+            file_path, config={"original_filename": os.path.basename(file_path)}
+        )
+        df = parser.normalize_data(raw_data)
+        # Build transactions list
+        transactions = [
+            TransactionRecord(
+                transaction_date=row.get("transaction_date"),
+                amount=row.get("amount"),
+                description=row.get("description"),
+                posted_date=row.get("post_date"),
+                transaction_type=row.get("transaction_type"),
+                extra={
+                    k: v
+                    for k, v in row.items()
+                    if k
+                    not in [
+                        "transaction_date",
+                        "amount",
+                        "description",
+                        "transaction_type",
+                        "post_date",
+                    ]
+                },
+            )
+            for _, row in df.iterrows()
+        ]
+        # Build metadata
+        meta = parser.extract_metadata(
+            file_path, original_filename=os.path.basename(file_path)
+        )
+        metadata = StatementMetadata(
+            statement_date=meta.get("statement_date"),
+            statement_period_start=meta.get("statement_period_start"),
+            statement_period_end=meta.get("statement_period_end"),
+            statement_date_source=meta.get("date_source", "content"),
+            original_filename=os.path.basename(file_path),
+            account_number=meta.get("account_number"),
+            bank_name=meta.get("bank_name", "Wells Fargo"),
+            account_type=meta.get("account_type", "credit_card"),
+            parser_name=meta.get("parser_name", parser.name),
+            parser_version=None,
+            currency="USD",
+            extra=None,
+        )
+        output = ParserOutput(
+            transactions=transactions,
+            metadata=metadata,
+            schema_version="1.0",
+            errors=None,
+            warnings=None,
+        )
+        all_outputs.append(output)
+        # Optionally write DataFrame to CSV/XLSX for CLI/legacy
+        if write_to_file:
+            if output_csv:
+                df.to_csv(output_csv, index=False)
+            if output_xlsx:
+                df.to_excel(output_xlsx, index=False)
+    return all_outputs if len(all_outputs) > 1 else all_outputs[0]
 
 
 def run(write_to_file=True):
