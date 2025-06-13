@@ -422,3 +422,11 @@ class ChaseCheckingParser(BaseParser):
 
 # Register the parser for dynamic use
 ParserRegistry.register_parser("chase_checking", ChaseCheckingParser)
+
+
+def main(input_path: str) -> ParserOutput:
+    """
+    Canonical entrypoint for contract-based integration. Parses a single Chase Checking PDF and returns a ParserOutput.
+    """
+    parser = ChaseCheckingParser()
+    return parser.parse_file(input_path)
