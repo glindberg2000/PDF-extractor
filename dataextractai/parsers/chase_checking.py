@@ -91,6 +91,8 @@ class ChaseCheckingParser(BaseParser):
         def is_number(s):
             return bool(number_re.match(s.replace(",", "")))
 
+        errors = []
+        warnings = []
         for page_num in range(len(pdf_reader.pages)):
             text = pdf_reader.pages[page_num].extract_text()
             if not account_number:
@@ -153,14 +155,16 @@ class ChaseCheckingParser(BaseParser):
                                 }
                             )
                         else:
-                            logger.warning(
-                                f"[ColumnSplit] Skipped line (not enough tokens or invalid numbers): {tx_line}"
-                            )
+                            msg = f"[ColumnSplit] Skipped line (not enough tokens or invalid numbers): {tx_line}"
+                            logger.warning(msg)
+                            warnings.append(msg)
                         i = j
                     else:
                         i += 1
             except Exception as e:
-                logger.error(f"Exception on page {page_num+1} of {input_path}: {e}")
+                msg = f"Exception on page {page_num+1} of {input_path}: {e}\n{traceback.format_exc()}"
+                logger.error(msg)
+                errors.append(msg)
         # --- Canonical Output Construction ---
         tx_records = []
         skipped_rows = 0
@@ -170,7 +174,6 @@ class ChaseCheckingParser(BaseParser):
         file_name = os.path.basename(input_path)
         for idx, row in enumerate(transactions):
             considered += 1
-            # Log every transaction dict before validation
             logger.info(f"[TRANSACTION] File: {file_name}, Index: {idx}, Raw: {row}")
             try:
                 year = row.get("Statement Year")
@@ -186,35 +189,40 @@ class ChaseCheckingParser(BaseParser):
                 amount = float(row.get("Amount", 0.0))
             except Exception:
                 amount = 0.0
-            tx_record = TransactionRecord(
-                transaction_date=transaction_date,
-                amount=amount,
-                description=row.get("Merchant Name or Transaction Description", ""),
-                posted_date=None,
-                transaction_type=None,
-                extra={
-                    "balance": row.get("Balance"),
-                    "account_number": row.get("Account Number"),
-                    "file_path": row.get("File Path"),
-                    "source": "ChaseCheckingParser",
-                },
-            )
-            logger.info(
-                f"[TRANSACTION_OBJ] File: {file_name}, Index: {idx}, Object: {tx_record}"
-            )
-            if not tx_record.transaction_date:
-                logger.warning(
-                    f"[SKIP] File: {file_name}, Index: {idx}, Reason: missing transaction_date, Data: {row}"
+            try:
+                tx_record = TransactionRecord(
+                    transaction_date=transaction_date,
+                    amount=amount,
+                    description=row.get("Merchant Name or Transaction Description", ""),
+                    posted_date=None,
+                    transaction_type=None,
+                    extra={
+                        "balance": row.get("Balance"),
+                        "account_number": row.get("Account Number"),
+                        "file_path": row.get("File Path"),
+                        "source": "ChaseCheckingParser",
+                    },
                 )
-                skipped_rows += 1
-                skipped_details.append((idx, row, "missing transaction_date"))
-                continue
-            tx_records.append(tx_record)
-            created += 1
+                if not tx_record.transaction_date:
+                    msg = f"[SKIP] File: {file_name}, Index: {idx}, Reason: missing transaction_date, Data: {row}"
+                    logger.warning(msg)
+                    warnings.append(msg)
+                    skipped_rows += 1
+                    skipped_details.append((idx, row, "missing transaction_date"))
+                    continue
+                tx_records.append(tx_record)
+                created += 1
+                logger.info(
+                    f"[TRANSACTION_OBJ] File: {file_name}, Index: {idx}, Object: {tx_record}"
+                )
+            except Exception as e:
+                msg = f"TransactionRecord validation error at row {idx} in {file_name}: {e}\n{traceback.format_exc()}"
+                logger.error(msg)
+                errors.append(msg)
         if skipped_rows > 0:
-            logger.warning(
-                f"[SUMMARY] File: {file_name}, Skipped {skipped_rows} transaction(s) with missing transaction_date."
-            )
+            msg = f"[SUMMARY] File: {file_name}, Skipped {skipped_rows} transaction(s) with missing transaction_date."
+            logger.warning(msg)
+            warnings.append(msg)
         metadata = StatementMetadata(
             statement_date=statement_date,
             original_filename=original_filename,
@@ -230,22 +238,19 @@ class ChaseCheckingParser(BaseParser):
             transactions=tx_records,
             metadata=metadata,
             schema_version="1.0",
-            errors=None,
-            warnings=None,
+            errors=errors if errors else None,
+            warnings=warnings if warnings else None,
         )
         try:
             ParserOutput.model_validate(parser_output.model_dump())
         except Exception as e:
-            logger.error(
-                f"[VALIDATION_ERROR] File: {file_name}, Error: {e}\n{traceback.format_exc()}"
-            )
-            for idx, t in enumerate(tx_records):
-                logger.error(
-                    f"[INVALID_TRANSACTION] File: {file_name}, Index: {idx}, Object: {t}"
-                )
+            msg = f"[VALIDATION_ERROR] File: {file_name}, Error: {e}\n{traceback.format_exc()}"
+            logger.error(msg)
+            errors.append(msg)
+            parser_output.errors = errors
             raise
         logger.info(
-            f"[SUMMARY] File: {file_name}, Total considered: {considered}, Created: {created}, Skipped: {skipped_rows}"
+            f"[SUMMARY] File: {file_name}, Total considered: {considered}, Created: {created}, Skipped: {skipped_rows}, Errors: {len(errors)}, Warnings: {len(warnings)}"
         )
         return parser_output
 
