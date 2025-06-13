@@ -39,8 +39,20 @@ from dataextractai.parsers_core.models import (
     StatementMetadata,
     ParserOutput,
 )
+import logging
+import traceback
 
-logger = get_logger("chase_checking_parser_modular")
+# Setup persistent logging
+log_dir = os.path.join(os.path.abspath(os.path.dirname(__file__)), "../../../logs")
+os.makedirs(log_dir, exist_ok=True)
+log_path = os.path.join(log_dir, "chase_checking_parser.log")
+logger = logging.getLogger("chase_checking_parser_persistent")
+if not logger.hasHandlers():
+    file_handler = logging.FileHandler(log_path, mode="a")
+    formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+    logger.setLevel(logging.INFO)
 
 
 class ChaseCheckingParser(BaseParser):
@@ -151,8 +163,14 @@ class ChaseCheckingParser(BaseParser):
         # --- Canonical Output Construction ---
         tx_records = []
         skipped_rows = 0
+        considered = 0
+        skipped_details = []
+        created = 0
+        file_name = os.path.basename(input_path)
         for idx, row in enumerate(transactions):
-            # Normalize date to ISO
+            considered += 1
+            # Log every transaction dict before validation
+            logger.info(f"[TRANSACTION] File: {file_name}, Index: {idx}, Raw: {row}")
             try:
                 year = row.get("Statement Year")
                 month_day = row.get("Date of Transaction")
@@ -163,7 +181,6 @@ class ChaseCheckingParser(BaseParser):
                     transaction_date = None
             except Exception:
                 transaction_date = None
-            # Amount as float
             try:
                 amount = float(row.get("Amount", 0.0))
             except Exception:
@@ -181,17 +198,21 @@ class ChaseCheckingParser(BaseParser):
                     "source": "ChaseCheckingParser",
                 },
             )
-            print(f"[DEBUG] Transaction {idx}: {tx_record}")
+            logger.info(
+                f"[TRANSACTION_OBJ] File: {file_name}, Index: {idx}, Object: {tx_record}"
+            )
             if not tx_record.transaction_date:
-                print(
-                    f"[DEBUG] Skipping transaction {idx} with missing transaction_date: {row}"
+                logger.warning(
+                    f"[SKIP] File: {file_name}, Index: {idx}, Reason: missing transaction_date, Data: {row}"
                 )
                 skipped_rows += 1
+                skipped_details.append((idx, row, "missing transaction_date"))
                 continue
             tx_records.append(tx_record)
+            created += 1
         if skipped_rows > 0:
-            print(
-                f"[DEBUG] Skipped {skipped_rows} transaction(s) with missing transaction_date in file: {row.get('File Path', 'unknown')}"
+            logger.warning(
+                f"[SUMMARY] File: {file_name}, Skipped {skipped_rows} transaction(s) with missing transaction_date."
             )
         metadata = StatementMetadata(
             statement_date=statement_date,
@@ -211,14 +232,20 @@ class ChaseCheckingParser(BaseParser):
             errors=None,
             warnings=None,
         )
-        # Final Pydantic validation: fail fast if any invalid data remains
         try:
             ParserOutput.model_validate(parser_output.model_dump())
         except Exception as e:
-            print(f"[ERROR] ParserOutput validation failed: {e}")
+            logger.error(
+                f"[VALIDATION_ERROR] File: {file_name}, Error: {e}\n{traceback.format_exc()}"
+            )
             for idx, t in enumerate(tx_records):
-                print(f"[ERROR] Transaction {idx}: {t}")
+                logger.error(
+                    f"[INVALID_TRANSACTION] File: {file_name}, Index: {idx}, Object: {t}"
+                )
             raise
+        logger.info(
+            f"[SUMMARY] File: {file_name}, Total considered: {considered}, Created: {created}, Skipped: {skipped_rows}"
+        )
         return parser_output
 
     def normalize_data(self, raw_data):
