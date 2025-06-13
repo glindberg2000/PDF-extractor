@@ -167,21 +167,22 @@ class ChaseCheckingParser(BaseParser):
                 amount = float(row.get("Amount", 0.0))
             except Exception:
                 amount = 0.0
-            tx_records.append(
-                TransactionRecord(
-                    transaction_date=transaction_date,
-                    amount=amount,
-                    description=row.get("Merchant Name or Transaction Description", ""),
-                    posted_date=None,
-                    transaction_type=None,
-                    extra={
-                        "balance": row.get("Balance"),
-                        "account_number": row.get("Account Number"),
-                        "file_path": row.get("File Path"),
-                        "source": "ChaseCheckingParser",
-                    },
-                )
+            tx_record = TransactionRecord(
+                transaction_date=transaction_date,
+                amount=amount,
+                description=row.get("Merchant Name or Transaction Description", ""),
+                posted_date=None,
+                transaction_type=None,
+                extra={
+                    "balance": row.get("Balance"),
+                    "account_number": row.get("Account Number"),
+                    "file_path": row.get("File Path"),
+                    "source": "ChaseCheckingParser",
+                },
             )
+            # Only include if transaction_date is present and not None
+            if tx_record.transaction_date:
+                tx_records.append(tx_record)
         metadata = StatementMetadata(
             statement_date=statement_date,
             original_filename=original_filename,
