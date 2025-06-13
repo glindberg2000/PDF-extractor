@@ -150,6 +150,7 @@ class ChaseCheckingParser(BaseParser):
                 logger.error(f"Exception on page {page_num+1} of {input_path}: {e}")
         # --- Canonical Output Construction ---
         tx_records = []
+        skipped_rows = 0
         for row in transactions:
             # Normalize date to ISO
             try:
@@ -180,9 +181,17 @@ class ChaseCheckingParser(BaseParser):
                     "source": "ChaseCheckingParser",
                 },
             )
-            # Only include if transaction_date is present and not None
-            if tx_record.transaction_date:
-                tx_records.append(tx_record)
+            if not tx_record.transaction_date:
+                print(
+                    f"[DEBUG] Skipping transaction with missing transaction_date: {row}"
+                )
+                skipped_rows += 1
+                continue
+            tx_records.append(tx_record)
+        if skipped_rows > 0:
+            print(
+                f"[DEBUG] Skipped {skipped_rows} transaction(s) with missing transaction_date in file: {row.get('File Path', 'unknown')}"
+            )
         metadata = StatementMetadata(
             statement_date=statement_date,
             original_filename=original_filename,
