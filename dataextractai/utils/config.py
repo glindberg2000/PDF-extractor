@@ -380,9 +380,26 @@ TRANSFORMATION_MAPS = {
         "file_path": lambda x: x["file_path"],
     },
     "chase_checking": {
-        "transaction_date": "date_of_transaction",
+        # Use normalized_date if present, else fallback to date_of_transaction parsed as ISO
+        "transaction_date": lambda row: (
+            row["normalized_date"].strftime("%Y-%m-%d")
+            if "normalized_date" in row and pd.notnull(row["normalized_date"])
+            else (
+                pd.to_datetime(row["date_of_transaction"], errors="coerce").strftime(
+                    "%Y-%m-%d"
+                )
+                if "date_of_transaction" in row
+                and pd.notnull(row["date_of_transaction"])
+                else None
+            )
+        ),
         "description": "merchant_name_or_transaction_description",
-        "amount": "amount",
+        # Always output float for amount
+        "amount": lambda row: (
+            float(row["amount"])
+            if "amount" in row and row["amount"] is not None
+            else 0.0
+        ),
         "file_path": "file_path",
         "source": lambda x: "chase_checking",
         "transaction_type": lambda x: "Debit/Check",
