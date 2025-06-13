@@ -6,6 +6,9 @@ import pandas as pd
 import os
 from dataextractai.utils.utils import standardize_column_names
 from dataextractai.parsers_core.autodiscover import autodiscover_parsers
+from dataextractai.parsers.chase_checking import (
+    ChaseCheckingParser,
+)  # Ensure parser is registered
 
 # Register all available parsers at import time
 autodiscover_parsers()

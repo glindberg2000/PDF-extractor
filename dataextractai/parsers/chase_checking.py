@@ -32,9 +32,6 @@ from dataextractai.utils.utils import (
     get_parent_dir_and_file,
 )
 import json
-from dataextractai.parsers.chase_checking_parser import (
-    extract_statement_date_from_content,
-)
 from dateutil import parser as dateutil_parser
 from dataextractai.utils.utils import extract_date_from_filename
 from dataextractai.parsers_core.models import (
@@ -260,13 +257,6 @@ class ChaseCheckingParser(BaseParser):
                 - statement_period_start (str or None): Start date of statement period if found
                 - statement_period_end (str or None): End date of statement period if found
         """
-        import re
-        import json
-        from PyPDF2 import PdfReader
-        from dataextractai.parsers.chase_checking_parser import (
-            extract_statement_date_from_content,
-        )
-        from dateutil import parser as dateutil_parser
 
         def extract_account_number(text):
             match = re.search(r"\b\d{12,}\b", text)
