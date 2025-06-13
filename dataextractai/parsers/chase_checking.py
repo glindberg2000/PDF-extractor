@@ -30,6 +30,7 @@ from dataextractai.utils.logger import get_logger
 from dataextractai.utils.utils import (
     standardize_column_names,
     get_parent_dir_and_file,
+    extract_statement_date_from_content,
 )
 import json
 from dateutil import parser as dateutil_parser
