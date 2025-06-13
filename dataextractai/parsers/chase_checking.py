@@ -151,7 +151,7 @@ class ChaseCheckingParser(BaseParser):
         # --- Canonical Output Construction ---
         tx_records = []
         skipped_rows = 0
-        for row in transactions:
+        for idx, row in enumerate(transactions):
             # Normalize date to ISO
             try:
                 year = row.get("Statement Year")
@@ -181,9 +181,10 @@ class ChaseCheckingParser(BaseParser):
                     "source": "ChaseCheckingParser",
                 },
             )
+            print(f"[DEBUG] Transaction {idx}: {tx_record}")
             if not tx_record.transaction_date:
                 print(
-                    f"[DEBUG] Skipping transaction with missing transaction_date: {row}"
+                    f"[DEBUG] Skipping transaction {idx} with missing transaction_date: {row}"
                 )
                 skipped_rows += 1
                 continue
@@ -203,13 +204,22 @@ class ChaseCheckingParser(BaseParser):
             currency="USD",
             extra={},
         )
-        return ParserOutput(
+        parser_output = ParserOutput(
             transactions=tx_records,
             metadata=metadata,
             schema_version="1.0",
             errors=None,
             warnings=None,
         )
+        # Final Pydantic validation: fail fast if any invalid data remains
+        try:
+            ParserOutput.model_validate(parser_output.model_dump())
+        except Exception as e:
+            print(f"[ERROR] ParserOutput validation failed: {e}")
+            for idx, t in enumerate(tx_records):
+                print(f"[ERROR] Transaction {idx}: {t}")
+            raise
+        return parser_output
 
     def normalize_data(self, raw_data):
         """
