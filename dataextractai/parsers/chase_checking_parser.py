@@ -561,10 +561,26 @@ def main(write_to_file=True, source_dir=None, output_csv=None, output_xlsx=None)
                 # --- Canonical Output Construction ---
                 transactions = []
                 for _, row in df.iterrows():
+                    # Use normalized_date if present, else fallback
+                    transaction_date = row.get("normalized_date")
+                    if not transaction_date:
+                        transaction_date = row.get("Date", "")
+                        print("[WARNING] normalized_date missing, using Date column")
+                    # Ensure amount is always a float
+                    amount = row.get("Amount", 0.0)
+                    try:
+                        amount = float(amount)
+                    except Exception:
+                        print(f"[WARNING] Could not convert amount to float: {amount}")
+                        amount = 0.0
+                    # Ensure required fields are present
+                    file_path = row.get("File Path") or pdf_path
+                    account_number = row.get("Account Number") or None
+                    source = "ChaseCheckingParser"
                     transactions.append(
                         TransactionRecord(
-                            transaction_date=row.get("Date", ""),
-                            amount=row.get("Amount", 0.0),
+                            transaction_date=transaction_date,
+                            amount=amount,
                             description=row.get(
                                 "Merchant Name or Transaction Description", ""
                             ),
@@ -572,8 +588,9 @@ def main(write_to_file=True, source_dir=None, output_csv=None, output_xlsx=None)
                             transaction_type=None,  # Not available in this parser
                             extra={
                                 "balance": row.get("Balance"),
-                                "account_number": row.get("Account Number"),
-                                "file_path": row.get("File Path"),
+                                "account_number": account_number,
+                                "file_path": file_path,
+                                "source": source,
                             },
                         )
                     )
