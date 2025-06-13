@@ -28,6 +28,20 @@ from dataextractai.parsers_core.models import (
     StatementMetadata,
     ParserOutput,
 )
+import logging
+import traceback
+
+# Setup persistent logging
+log_dir = os.path.join(os.path.abspath(os.path.dirname(__file__)), "../../../logs")
+os.makedirs(log_dir, exist_ok=True)
+log_path = os.path.join(log_dir, "capitalone_csv_parser.log")
+logger = logging.getLogger("capitalone_csv_parser")
+if not logger.handlers:
+    fh = logging.FileHandler(log_path, mode="a")
+    formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+    fh.setFormatter(formatter)
+    logger.addHandler(fh)
+    logger.setLevel(logging.INFO)
 
 
 class CapitalOneCSVParser(BaseParser):
@@ -220,17 +234,38 @@ def main(write_to_file=True, source_dir=None, output_csv=None, output_xlsx=None)
     )
     file_list = glob.glob(os.path.join(source_dir, "*.csv"))
     all_records = []
+    errors = []
+    warnings = []
+    total_considered = 0
+    total_created = 0
+    total_skipped = 0
     for file_path in file_list:
-        raw_data = parser.parse_file(
-            file_path, original_filename=os.path.basename(file_path)
-        )
-        all_records.extend(raw_data)
+        try:
+            raw_data = parser.parse_file(
+                file_path, original_filename=os.path.basename(file_path)
+            )
+            for idx, row in enumerate(raw_data):
+                logger.info(f"[FILE={file_path}] [IDX={idx}] [RAW] {row}")
+                total_considered += 1
+                # Check for required fields
+                if not row.get("transaction_date") or row.get("amount") is None:
+                    msg = f"Row {idx}: Skipped due to missing transaction_date or amount in {file_path}: {row}"
+                    logger.warning(msg)
+                    warnings.append(msg)
+                    total_skipped += 1
+                    continue
+                all_records.append(row)
+                total_created += 1
+        except Exception as e:
+            tb = traceback.format_exc()
+            msg = f"Exception in file {file_path}: {e}\n{tb}"
+            logger.error(msg)
+            errors.append(msg)
     df = parser.normalize_data(all_records)
-    # Build TransactionRecord list
     transactions = []
-    for _, row in df.iterrows():
-        transactions.append(
-            TransactionRecord(
+    for idx, row in df.iterrows():
+        try:
+            tr = TransactionRecord(
                 transaction_date=row["transaction_date"],
                 amount=row["amount"],
                 description=row["description"],
@@ -245,8 +280,12 @@ def main(write_to_file=True, source_dir=None, output_csv=None, output_xlsx=None)
                     "credit": row.get("credit"),
                 },
             )
-        )
-    # Build StatementMetadata (use first record for metadata)
+            transactions.append(tr)
+        except Exception as e:
+            tb = traceback.format_exc()
+            msg = f"TransactionRecord validation error at row {idx} in {file_path}: {e}\n{tb}"
+            logger.error(msg)
+            errors.append(msg)
     metadata = None
     if not df.empty:
         metadata = StatementMetadata(
@@ -267,8 +306,19 @@ def main(write_to_file=True, source_dir=None, output_csv=None, output_xlsx=None)
         transactions=transactions,
         metadata=metadata,
         schema_version="1.0",
-        errors=None,
-        warnings=None,
+        errors=errors if errors else None,
+        warnings=warnings if warnings else None,
+    )
+    # Final Pydantic validation
+    try:
+        ParserOutput.model_validate(output.model_dump())
+    except Exception as e:
+        tb = traceback.format_exc()
+        msg = f"Final ParserOutput validation error: {e}\n{tb}"
+        logger.error(msg)
+        raise
+    logger.info(
+        f"SUMMARY for {source_dir}: considered={total_considered}, created={total_created}, skipped={total_skipped}, errors={len(errors)}, warnings={len(warnings)}"
     )
     if write_to_file:
         if output_csv:
