@@ -37,6 +37,11 @@ from dataextractai.parsers.chase_checking_parser import (
 )
 from dateutil import parser as dateutil_parser
 from dataextractai.utils.utils import extract_date_from_filename
+from dataextractai.parsers_core.models import (
+    TransactionRecord,
+    StatementMetadata,
+    ParserOutput,
+)
 
 logger = get_logger("chase_checking_parser_modular")
 
@@ -56,22 +61,13 @@ class ChaseCheckingParser(BaseParser):
 
     def parse_file(self, input_path: str, config=None):
         """
-        Extract raw transaction data from a single PDF file.
-
-        Args:
-            input_path (str): Path to the PDF file.
-            config (dict, optional): Config dict (may include original_filename, etc.)
-
-        Returns:
-            List[Dict]: List of raw transaction dicts, one per transaction.
+        Extract raw transaction data from a single PDF file and return a ParserOutput object.
         """
         if config is None:
             config = {}
         original_filename = config.get("original_filename")
-        # Use robust extract_metadata to get statement_date and other metadata
         meta = self.extract_metadata(input_path, original_filename=original_filename)
         statement_date = meta.get("statement_date")
-        print(f"[DEBUG] Using statement_date for all rows: {statement_date}")
         pdf_reader = PdfReader(input_path)
         transactions = []
         account_number = None
@@ -85,14 +81,12 @@ class ChaseCheckingParser(BaseParser):
         def is_number(s):
             return bool(number_re.match(s.replace(",", "")))
 
-        # Extract account number from any page
         for page_num in range(len(pdf_reader.pages)):
             text = pdf_reader.pages[page_num].extract_text()
             if not account_number:
                 match = re.search(r"\b\d{12,}\b", text)
                 if match:
                     account_number = match.group(0)
-        # Extract transactions from all pages
         for page_num in range(len(pdf_reader.pages)):
             try:
                 text = pdf_reader.pages[page_num].extract_text()
@@ -157,7 +151,58 @@ class ChaseCheckingParser(BaseParser):
                         i += 1
             except Exception as e:
                 logger.error(f"Exception on page {page_num+1} of {input_path}: {e}")
-        return transactions
+        # --- Canonical Output Construction ---
+        tx_records = []
+        for row in transactions:
+            # Normalize date to ISO
+            try:
+                year = row.get("Statement Year")
+                month_day = row.get("Date of Transaction")
+                if year and month_day:
+                    m, d = [int(x) for x in month_day.split("/")]
+                    transaction_date = datetime(year, m, d).strftime("%Y-%m-%d")
+                else:
+                    transaction_date = None
+            except Exception:
+                transaction_date = None
+            # Amount as float
+            try:
+                amount = float(row.get("Amount", 0.0))
+            except Exception:
+                amount = 0.0
+            tx_records.append(
+                TransactionRecord(
+                    transaction_date=transaction_date,
+                    amount=amount,
+                    description=row.get("Merchant Name or Transaction Description", ""),
+                    posted_date=None,
+                    transaction_type=None,
+                    extra={
+                        "balance": row.get("Balance"),
+                        "account_number": row.get("Account Number"),
+                        "file_path": row.get("File Path"),
+                        "source": "ChaseCheckingParser",
+                    },
+                )
+            )
+        metadata = StatementMetadata(
+            statement_date=statement_date,
+            original_filename=original_filename,
+            account_number=account_number,
+            bank_name="Chase",
+            account_type="Checking",
+            parser_name="ChaseCheckingParser",
+            parser_version="1.0",
+            currency="USD",
+            extra={},
+        )
+        return ParserOutput(
+            transactions=tx_records,
+            metadata=metadata,
+            schema_version="1.0",
+            errors=None,
+            warnings=None,
+        )
 
     def normalize_data(self, raw_data):
         """
