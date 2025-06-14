@@ -35,6 +35,8 @@ from dataextractai.parsers_core.models import (
     StatementMetadata,
     ParserOutput,
 )
+import math
+import numpy as np
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
@@ -250,13 +252,23 @@ def process_all_pdfs(source_dir):
     return all_transactions
 
 
-# CONTRACT-COMPLIANT ENTRYPOINT: main(input_path: str) -> ParserOutput
-# This is the ONLY supported entrypoint. Do not add CLI/batch logic here.
+def _replace_nan_with_none(obj):
+    """Recursively replace NaN/np.nan/float('nan') with None in dicts/lists/values."""
+    if isinstance(obj, float) and (math.isnan(obj) or obj == np.nan):
+        return None
+    if isinstance(obj, dict):
+        return {k: _replace_nan_with_none(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_replace_nan_with_none(v) for v in obj]
+    return obj
+
+
 def main(input_path: str) -> ParserOutput:
     """
     Canonical entrypoint for contract-based integration. Parses a single Wells Fargo Visa PDF and returns a ParserOutput.
     Accepts a single file path and returns a ParserOutput object. No directory or batch logic.
     All transaction_date, post_date, and metadata date fields are normalized to YYYY-MM-DD format.
+    All NaN values in the output are replaced with None for JSON compatibility.
     """
     parser = WellsFargoVisaParser()
     errors = []
@@ -379,9 +391,11 @@ def main(input_path: str) -> ParserOutput:
     logger.info(
         f"SUMMARY for {input_path}: created={len(transactions)}, errors={len(errors)}, warnings={len(warnings)}"
     )
-    # Print the full output dict for verification
-    print("[DEBUG] ParserOutput sample:", output.model_dump())
-    return output
+    # Clean up NaN values in the output dict
+    output_dict = output.model_dump()
+    output_dict = _replace_nan_with_none(output_dict)
+    print("[DEBUG] Cleaned ParserOutput sample:", output_dict)
+    return ParserOutput.model_validate(output_dict)
 
 
 def _normalize_date_to_yyyy_mm_dd(val):
