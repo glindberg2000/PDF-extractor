@@ -256,6 +256,7 @@ def main(input_path: str) -> ParserOutput:
     """
     Canonical entrypoint for contract-based integration. Parses a single Wells Fargo Visa PDF and returns a ParserOutput.
     Accepts a single file path and returns a ParserOutput object. No directory or batch logic.
+    All transaction_date and post_date fields are normalized to YYYY-MM-DD format.
     """
     parser = WellsFargoVisaParser()
     errors = []
@@ -265,6 +266,10 @@ def main(input_path: str) -> ParserOutput:
             input_path, config={"original_filename": os.path.basename(input_path)}
         )
         df = parser.normalize_data(raw_data)
+        # Normalize all date fields to YYYY-MM-DD
+        for col in ["transaction_date", "post_date"]:
+            if col in df.columns:
+                df[col] = df[col].apply(_normalize_date_to_yyyy_mm_dd)
         transactions = []
         for idx, row in df.iterrows():
             try:
@@ -349,6 +354,20 @@ def main(input_path: str) -> ParserOutput:
         f"SUMMARY for {input_path}: created={len(transactions)}, errors={len(errors)}, warnings={len(warnings)}"
     )
     return output
+
+
+def _normalize_date_to_yyyy_mm_dd(val):
+    """Convert MM/DD/YYYY or other date strings to YYYY-MM-DD. Return None if invalid."""
+    from datetime import datetime
+
+    if not val or not isinstance(val, str):
+        return None
+    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y"):
+        try:
+            return datetime.strptime(val, fmt).strftime("%Y-%m-%d")
+        except Exception:
+            continue
+    return None
 
 
 def run(write_to_file=True):
