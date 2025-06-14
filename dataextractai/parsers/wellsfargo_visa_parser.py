@@ -250,79 +250,105 @@ def process_all_pdfs(source_dir):
     return all_transactions
 
 
-def main(write_to_file=True, source_dir=None, output_csv=None, output_xlsx=None):
-    import glob
-    import pandas as pd
-    import os
-
+# CONTRACT-COMPLIANT ENTRYPOINT: main(input_path: str) -> ParserOutput
+# This is the ONLY supported entrypoint. Do not add CLI/batch logic here.
+def main(input_path: str) -> ParserOutput:
+    """
+    Canonical entrypoint for contract-based integration. Parses a single Wells Fargo Visa PDF and returns a ParserOutput.
+    Accepts a single file path and returns a ParserOutput object. No directory or batch logic.
+    """
     parser = WellsFargoVisaParser()
-    # Use the provided test directory if not specified
-    source_dir = source_dir or os.path.join(
-        os.path.dirname(__file__), "../../data/clients/chase_test/input/wellsfargo_visa"
-    )
-    file_list = glob.glob(os.path.join(source_dir, "*.pdf"))
-    all_outputs = []
-    for file_path in file_list:
+    errors = []
+    warnings = []
+    try:
         raw_data = parser.parse_file(
-            file_path, config={"original_filename": os.path.basename(file_path)}
+            input_path, config={"original_filename": os.path.basename(input_path)}
         )
         df = parser.normalize_data(raw_data)
-        # Build transactions list
-        transactions = [
-            TransactionRecord(
-                transaction_date=row.get("transaction_date"),
-                amount=row.get("amount"),
-                description=row.get("description"),
-                posted_date=row.get("post_date"),
-                transaction_type=row.get("transaction_type"),
-                extra={
-                    k: v
-                    for k, v in row.items()
-                    if k
-                    not in [
-                        "transaction_date",
-                        "amount",
-                        "description",
-                        "transaction_type",
-                        "post_date",
-                    ]
-                },
-            )
-            for _, row in df.iterrows()
-        ]
-        # Build metadata
-        meta = parser.extract_metadata(
-            file_path, original_filename=os.path.basename(file_path)
-        )
-        metadata = StatementMetadata(
-            statement_date=meta.get("statement_date"),
-            statement_period_start=meta.get("statement_period_start"),
-            statement_period_end=meta.get("statement_period_end"),
-            statement_date_source=meta.get("date_source", "content"),
-            original_filename=os.path.basename(file_path),
-            account_number=meta.get("account_number"),
-            bank_name=meta.get("bank_name", "Wells Fargo"),
-            account_type=meta.get("account_type", "credit_card"),
-            parser_name=meta.get("parser_name", parser.name),
-            parser_version=None,
-            currency="USD",
-            extra=None,
-        )
-        output = ParserOutput(
-            transactions=transactions,
-            metadata=metadata,
-            schema_version="1.0",
-            errors=None,
-            warnings=None,
-        )
-        all_outputs.append(output)
-        # Optionally write DataFrame to CSV/XLSX for CLI/legacy
-        if write_to_file:
-            if output_csv:
-                df.to_csv(output_csv, index=False)
-            if output_xlsx:
-                df.to_excel(output_xlsx, index=False)
-    return all_outputs if len(all_outputs) > 1 else all_outputs[0]
+        transactions = []
+        for idx, row in df.iterrows():
+            try:
+                tr = TransactionRecord(
+                    transaction_date=row.get("transaction_date"),
+                    amount=row.get("amount"),
+                    description=row.get("description"),
+                    posted_date=row.get("post_date"),
+                    transaction_type=row.get("transaction_type"),
+                    extra={
+                        k: v
+                        for k, v in row.items()
+                        if k
+                        not in [
+                            "transaction_date",
+                            "amount",
+                            "description",
+                            "transaction_type",
+                            "post_date",
+                        ]
+                    },
+                )
+                if not tr.transaction_date:
+                    msg = f"[SKIP] File: {input_path}, Index: {idx}, Reason: missing transaction_date, Data: {row}"
+                    warnings.append(msg)
+                    continue
+                transactions.append(tr)
+            except Exception as e:
+                import traceback
+
+                tb = traceback.format_exc()
+                msg = f"TransactionRecord validation error at row {idx} in {input_path}: {e}\n{tb}"
+                errors.append(msg)
+    except Exception as e:
+        import traceback
+
+        tb = traceback.format_exc()
+        msg = f"Exception in file {input_path}: {e}\n{tb}"
+        errors.append(msg)
+        transactions = []
+        df = None
+    # Build metadata
+    meta = parser.extract_metadata(
+        input_path, original_filename=os.path.basename(input_path)
+    )
+    metadata = StatementMetadata(
+        statement_date=meta.get("statement_date"),
+        statement_period_start=meta.get("statement_period_start"),
+        statement_period_end=meta.get("statement_period_end"),
+        statement_date_source=meta.get("date_source", "content"),
+        original_filename=os.path.basename(input_path),
+        account_number=meta.get("account_number"),
+        bank_name=meta.get("bank_name", "Wells Fargo"),
+        account_type=meta.get("account_type", "credit_card"),
+        parser_name=meta.get("parser_name", parser.name),
+        parser_version=None,
+        currency="USD",
+        extra=None,
+    )
+    output = ParserOutput(
+        transactions=transactions,
+        metadata=metadata,
+        schema_version="1.0",
+        errors=errors if errors else None,
+        warnings=warnings if warnings else None,
+    )
+    # Final Pydantic validation
+    try:
+        ParserOutput.model_validate(output.model_dump())
+    except Exception as e:
+        import traceback
+
+        tb = traceback.format_exc()
+        msg = f"Final ParserOutput validation error: {e}\n{tb}"
+        errors.append(msg)
+        output.errors = errors
+        raise
+    import logging
+
+    logger = logging.getLogger("wellsfargo_visa_parser")
+    logger.info(
+        f"SUMMARY for {input_path}: created={len(transactions)}, errors={len(errors)}, warnings={len(warnings)}"
+    )
+    return output
 
 
 def run(write_to_file=True):
