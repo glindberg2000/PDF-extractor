@@ -17,9 +17,10 @@ def test_first_republic_bank_parser_pydantic_output():
         "input",
         "first_republic",
     )
-    result = frb_main(write_to_file=False, source_dir=test_dir)
-    outputs = result if isinstance(result, list) else [result]
-    for output in outputs:
+    sample_files = [f for f in os.listdir(test_dir) if f.lower().endswith(".pdf")]
+    for fname in sample_files:
+        fpath = os.path.join(test_dir, fname)
+        output = frb_main(fpath)
         assert isinstance(output, ParserOutput)
         assert isinstance(output.transactions, list)
         for txn in output.transactions:

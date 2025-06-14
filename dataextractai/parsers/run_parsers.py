@@ -65,9 +65,6 @@ from dataextractai.parsers.wellsfargo_bank_parser import (
 from dataextractai.parsers.wellsfargo_mastercard_parser import (
     run as run_wells_fargo_mastercard_parser,
 )
-from dataextractai.parsers.wellsfargo_bank_csv_parser import (
-    run as run_wells_fargo_bank_csv_parser,
-)
 from dataextractai.parsers.wellsfargo_visa_parser import (
     run as run_wells_fargo_visa_parser,
 )
@@ -87,7 +84,6 @@ PARSER_FUNCTIONS = {
     "chase_visa": run_chase_visa_parser,
     "wellsfargo_bank": run_wells_fargo_bank_parser,
     "wellsfargo_mastercard": run_wells_fargo_mastercard_parser,
-    "wellsfargo_bank_csv": run_wells_fargo_bank_csv_parser,
     "wellsfargo_visa": run_wells_fargo_visa_parser,
     "first_republic_bank": run_first_republic_bank_parser,
 }
@@ -204,7 +200,6 @@ def run_all_parsers(
                 "wellsfargo_visa",
                 "wellsfargo_bank",
                 "first_republic_bank",
-                "wellsfargo_bank_csv",
             ]
 
             # If parser is directory-based, process as before
@@ -255,20 +250,6 @@ def run_all_parsers(
 
                         # Restore the original value
                         wfv_parser.SOURCE_DIR = original_source_dir
-                    elif parser_name == "wellsfargo_bank_csv":
-                        # Wells Fargo Bank CSV parser needs to have its SOURCE_DIR monkey-patched
-                        import dataextractai.parsers.wellsfargo_bank_csv_parser as wfbc_parser
-
-                        # Save the original value to restore later
-                        original_source_dir = wfbc_parser.SOURCE_DIR
-                        # Set the new value to our client-specific input directory
-                        wfbc_parser.SOURCE_DIR = input_dir
-
-                        # Now run the parser
-                        df = parser_func(write_to_file=False)
-
-                        # Restore the original value
-                        wfbc_parser.SOURCE_DIR = original_source_dir
                     else:
                         # For other directory-based parsers, we need a different approach
                         # Patch the source directory in the config
@@ -296,65 +277,6 @@ def run_all_parsers(
                             df.to_excel(xlsx_path, index=False)
                             progress.print(f"Saved Excel output to {xlsx_path}")
 
-                        total_processed += len(df)
-                        progress.print(
-                            f"Successfully processed {parser_name} directory with {len(df)} transactions"
-                        )
-                    else:
-                        progress.print(
-                            f"No data extracted from {parser_name} directory"
-                        )
-
-                    if dump_per_statement_raw:
-                        # After processing, if dump_per_statement_raw, dump the full DataFrame
-                        out_path = os.path.join(raw_dir, f"{parser_name}_all.raw.csv")
-                        df.to_csv(out_path, index=False)
-                        print(f"[DEBUG] Saved directory-based raw data to {out_path}")
-
-                except Exception as e:
-                    progress.print(
-                        f"Error processing {parser_name} directory: {str(e)}"
-                    )
-
-                progress.advance(task)
-                continue
-
-            # Special handling for Wells Fargo Bank CSV files
-            elif parser_name == "wellsfargo_bank_csv":
-                try:
-                    # Look for actual CSV files, not just PDFs
-                    csv_files = glob.glob(os.path.join(input_dir, "*.csv"))
-                    if not csv_files:
-                        progress.print(f"No CSV files found in {input_dir}")
-                        progress.advance(task)
-                        continue
-
-                    progress.print(
-                        f"Found {len(csv_files)} CSV files in {parser_name} directory"
-                    )
-
-                    # Import and modify the module
-                    import dataextractai.parsers.wellsfargo_bank_csv_parser as wfbc_parser
-
-                    # Save original values
-                    original_source_dir = wfbc_parser.SOURCE_DIR
-                    original_output_csv = wfbc_parser.OUTPUT_PATH_CSV
-                    original_output_xlsx = wfbc_parser.OUTPUT_PATH_XLSX
-
-                    # Set new values
-                    wfbc_parser.SOURCE_DIR = input_dir
-                    wfbc_parser.OUTPUT_PATH_CSV = output_paths[parser_name]["csv"]
-                    wfbc_parser.OUTPUT_PATH_XLSX = output_paths[parser_name]["xlsx"]
-
-                    # Run parser
-                    df = parser_func(write_to_file=True)  # Let it write directly
-
-                    # Restore original values
-                    wfbc_parser.SOURCE_DIR = original_source_dir
-                    wfbc_parser.OUTPUT_PATH_CSV = original_output_csv
-                    wfbc_parser.OUTPUT_PATH_XLSX = original_output_xlsx
-
-                    if df is not None and not df.empty:
                         total_processed += len(df)
                         progress.print(
                             f"Successfully processed {parser_name} directory with {len(df)} transactions"
