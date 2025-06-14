@@ -95,6 +95,10 @@ class CapitalOneCSVParser(BaseParser):
         Parses the CapitalOne CSV file and returns a normalized DataFrame.
         """
         df = pd.read_csv(file_path)
+        logger.info(f"[DEBUG] Read CSV: {file_path}, rows={len(df)}")
+        logger.info(
+            f"[DEBUG] First 3 rows after read:\n{df.head(3).to_dict(orient='records')}"
+        )
         df.columns = [c.strip() for c in df.columns]
         # Map columns to normalized names
         colmap = {
@@ -117,6 +121,10 @@ class CapitalOneCSVParser(BaseParser):
             df[norm_col] = pd.to_datetime(df[date_col], errors="coerce").dt.strftime(
                 "%Y-%m-%d"
             )
+        logger.info(f"[DEBUG] After date normalization, rows={len(df)}")
+        logger.info(
+            f"[DEBUG] First 3 rows after date normalization:\n{df.head(3).to_dict(orient='records')}"
+        )
 
         # Combine Debit and Credit into amount
         def compute_amount(row):
@@ -132,8 +140,20 @@ class CapitalOneCSVParser(BaseParser):
             return None
 
         df["amount"] = df.apply(compute_amount, axis=1)
+        logger.info(f"[DEBUG] After amount calculation, rows={len(df)}")
+        logger.info(
+            f"[DEBUG] First 3 rows after amount calculation:\n{df.head(3).to_dict(orient='records')}"
+        )
         # Drop rows with no amount or transaction_date
+        before_drop = len(df)
         df = df.dropna(subset=["amount", "transaction_date"])
+        after_drop = len(df)
+        logger.info(
+            f"[DEBUG] After dropna, rows before={before_drop}, after={after_drop}"
+        )
+        logger.info(
+            f"[DEBUG] First 3 rows after dropna:\n{df.head(3).to_dict(orient='records')}"
+        )
         # --- Robust statement_date extraction ---
         statement_date = None
         statement_date_source = None
@@ -223,46 +243,19 @@ class CapitalOneCSVParser(BaseParser):
 ParserRegistry.register_parser(CapitalOneCSVParser.name, CapitalOneCSVParser)
 
 
-def main(write_to_file=True, source_dir=None, output_csv=None, output_xlsx=None):
-    import glob
-    import pandas as pd
-    import os
-
+def main(input_path: str) -> ParserOutput:
+    """
+    Canonical entrypoint for contract-based integration. Parses a single Capital One CSV and returns a ParserOutput.
+    """
     parser = CapitalOneCSVParser()
-    source_dir = source_dir or os.path.join(
-        os.path.dirname(__file__), "../../data/clients/capitalone/input"
+    # Parse the file and get raw records
+    raw_data = parser.parse_file(
+        input_path, original_filename=os.path.basename(input_path)
     )
-    file_list = glob.glob(os.path.join(source_dir, "*.csv"))
-    all_records = []
+    df = parser.normalize_data(raw_data)
+    transactions = []
     errors = []
     warnings = []
-    total_considered = 0
-    total_created = 0
-    total_skipped = 0
-    for file_path in file_list:
-        try:
-            raw_data = parser.parse_file(
-                file_path, original_filename=os.path.basename(file_path)
-            )
-            for idx, row in enumerate(raw_data):
-                logger.info(f"[FILE={file_path}] [IDX={idx}] [RAW] {row}")
-                total_considered += 1
-                # Check for required fields
-                if not row.get("transaction_date") or row.get("amount") is None:
-                    msg = f"Row {idx}: Skipped due to missing transaction_date or amount in {file_path}: {row}"
-                    logger.warning(msg)
-                    warnings.append(msg)
-                    total_skipped += 1
-                    continue
-                all_records.append(row)
-                total_created += 1
-        except Exception as e:
-            tb = traceback.format_exc()
-            msg = f"Exception in file {file_path}: {e}\n{tb}"
-            logger.error(msg)
-            errors.append(msg)
-    df = parser.normalize_data(all_records)
-    transactions = []
     for idx, row in df.iterrows():
         try:
             tr = TransactionRecord(
@@ -283,7 +276,7 @@ def main(write_to_file=True, source_dir=None, output_csv=None, output_xlsx=None)
             transactions.append(tr)
         except Exception as e:
             tb = traceback.format_exc()
-            msg = f"TransactionRecord validation error at row {idx} in {file_path}: {e}\n{tb}"
+            msg = f"TransactionRecord validation error at row {idx} in {input_path}: {e}\n{tb}"
             logger.error(msg)
             errors.append(msg)
     metadata = None
@@ -318,11 +311,6 @@ def main(write_to_file=True, source_dir=None, output_csv=None, output_xlsx=None)
         logger.error(msg)
         raise
     logger.info(
-        f"SUMMARY for {source_dir}: considered={total_considered}, created={total_created}, skipped={total_skipped}, errors={len(errors)}, warnings={len(warnings)}"
+        f"SUMMARY for {input_path}: created={len(transactions)}, errors={len(errors)}, warnings={len(warnings)}"
     )
-    if write_to_file:
-        if output_csv:
-            df.to_csv(output_csv, index=False)
-        if output_xlsx:
-            df.to_excel(output_xlsx, index=False)
     return output
