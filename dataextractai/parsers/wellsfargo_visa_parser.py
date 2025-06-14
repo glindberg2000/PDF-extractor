@@ -256,7 +256,7 @@ def main(input_path: str) -> ParserOutput:
     """
     Canonical entrypoint for contract-based integration. Parses a single Wells Fargo Visa PDF and returns a ParserOutput.
     Accepts a single file path and returns a ParserOutput object. No directory or batch logic.
-    All transaction_date and post_date fields are normalized to YYYY-MM-DD format.
+    All transaction_date, post_date, and metadata date fields are normalized to YYYY-MM-DD format.
     """
     parser = WellsFargoVisaParser()
     errors = []
@@ -268,7 +268,6 @@ def main(input_path: str) -> ParserOutput:
         df = parser.normalize_data(raw_data)
         transactions = []
         for idx, row in df.iterrows():
-            # Enforce normalization at the point of record creation
             norm_transaction_date = _normalize_date_to_yyyy_mm_dd(
                 row.get("transaction_date")
             )
@@ -324,10 +323,28 @@ def main(input_path: str) -> ParserOutput:
     meta = parser.extract_metadata(
         input_path, original_filename=os.path.basename(input_path)
     )
+    # Normalize all date fields in metadata
+    norm_statement_date = _normalize_date_to_yyyy_mm_dd(meta.get("statement_date"))
+    norm_period_start = _normalize_date_to_yyyy_mm_dd(
+        meta.get("statement_period_start")
+    )
+    norm_period_end = _normalize_date_to_yyyy_mm_dd(meta.get("statement_period_end"))
+    if meta.get("statement_date") and norm_statement_date is None:
+        warnings.append(
+            f"[WARN] Could not normalize statement_date '{meta.get('statement_date')}' in metadata for {input_path}"
+        )
+    if meta.get("statement_period_start") and norm_period_start is None:
+        warnings.append(
+            f"[WARN] Could not normalize statement_period_start '{meta.get('statement_period_start')}' in metadata for {input_path}"
+        )
+    if meta.get("statement_period_end") and norm_period_end is None:
+        warnings.append(
+            f"[WARN] Could not normalize statement_period_end '{meta.get('statement_period_end')}' in metadata for {input_path}"
+        )
     metadata = StatementMetadata(
-        statement_date=meta.get("statement_date"),
-        statement_period_start=meta.get("statement_period_start"),
-        statement_period_end=meta.get("statement_period_end"),
+        statement_date=norm_statement_date,
+        statement_period_start=norm_period_start,
+        statement_period_end=norm_period_end,
         statement_date_source=meta.get("date_source", "content"),
         original_filename=os.path.basename(input_path),
         account_number=meta.get("account_number"),
@@ -362,6 +379,8 @@ def main(input_path: str) -> ParserOutput:
     logger.info(
         f"SUMMARY for {input_path}: created={len(transactions)}, errors={len(errors)}, warnings={len(warnings)}"
     )
+    # Print the full output dict for verification
+    print("[DEBUG] ParserOutput sample:", output.model_dump())
     return output
 
 
