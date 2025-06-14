@@ -266,18 +266,27 @@ def main(input_path: str) -> ParserOutput:
             input_path, config={"original_filename": os.path.basename(input_path)}
         )
         df = parser.normalize_data(raw_data)
-        # Normalize all date fields to YYYY-MM-DD
-        for col in ["transaction_date", "post_date"]:
-            if col in df.columns:
-                df[col] = df[col].apply(_normalize_date_to_yyyy_mm_dd)
         transactions = []
         for idx, row in df.iterrows():
+            # Enforce normalization at the point of record creation
+            norm_transaction_date = _normalize_date_to_yyyy_mm_dd(
+                row.get("transaction_date")
+            )
+            norm_post_date = _normalize_date_to_yyyy_mm_dd(row.get("post_date"))
+            if row.get("transaction_date") and norm_transaction_date is None:
+                warnings.append(
+                    f"[WARN] Could not normalize transaction_date '{row.get('transaction_date')}' at row {idx} in {input_path}"
+                )
+            if row.get("post_date") and norm_post_date is None:
+                warnings.append(
+                    f"[WARN] Could not normalize post_date '{row.get('post_date')}' at row {idx} in {input_path}"
+                )
             try:
                 tr = TransactionRecord(
-                    transaction_date=row.get("transaction_date"),
+                    transaction_date=norm_transaction_date,
                     amount=row.get("amount"),
                     description=row.get("description"),
-                    posted_date=row.get("post_date"),
+                    posted_date=norm_post_date,
                     transaction_type=row.get("transaction_type"),
                     extra={
                         k: v
@@ -293,7 +302,7 @@ def main(input_path: str) -> ParserOutput:
                     },
                 )
                 if not tr.transaction_date:
-                    msg = f"[SKIP] File: {input_path}, Index: {idx}, Reason: missing transaction_date, Data: {row}"
+                    msg = f"[SKIP] File: {input_path}, Index: {idx}, Reason: missing or invalid transaction_date, Data: {row}"
                     warnings.append(msg)
                     continue
                 transactions.append(tr)
