@@ -26,6 +26,8 @@ from dataextractai.parsers_core.models import (
     StatementMetadata,
     ParserOutput,
 )
+import math
+import numpy as np
 
 
 class WellsFargoCheckingCSVParser(BaseParser):
@@ -257,3 +259,130 @@ class WellsFargoCheckingCSVParser(BaseParser):
 ParserRegistry.register_parser(
     WellsFargoCheckingCSVParser.name, WellsFargoCheckingCSVParser
 )
+
+
+def _replace_nan_with_none(obj):
+    """Recursively replace NaN/np.nan/float('nan') with None in dicts/lists/values."""
+    if isinstance(obj, float) and (math.isnan(obj) or obj == np.nan):
+        return None
+    if isinstance(obj, dict):
+        return {k: _replace_nan_with_none(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_replace_nan_with_none(v) for v in obj]
+    return obj
+
+
+def main(input_path: str) -> ParserOutput:
+    """
+    Canonical entrypoint for contract-based integration. Parses a single Wells Fargo Checking CSV and returns a ParserOutput.
+    Accepts a single file path and returns a ParserOutput object. No directory or batch logic.
+    All transaction_date and metadata date fields are normalized to YYYY-MM-DD format.
+    """
+    errors = []
+    warnings = []
+    try:
+        parser = WellsFargoCheckingCSVParser()
+        raw_data = parser.parse_file(
+            input_path, original_filename=os.path.basename(input_path)
+        )
+        df = parser.normalize_data(raw_data)
+        transactions = []
+        for idx, row in df.iterrows():
+            try:
+                t_date = row.get("transaction_date")
+                if t_date:
+                    try:
+                        t_date = datetime.strptime(t_date, "%Y-%m-%d").strftime(
+                            "%Y-%m-%d"
+                        )
+                    except Exception:
+                        warnings.append(
+                            f"[WARN] Could not normalize transaction_date '{t_date}' at row {idx} in {input_path}"
+                        )
+                        t_date = None
+                tr = TransactionRecord(
+                    transaction_date=t_date,
+                    amount=row.get("amount"),
+                    description=row.get("description"),
+                    posted_date=None,
+                    transaction_type=row.get("transaction_type"),
+                    extra={
+                        k: v
+                        for k, v in row.items()
+                        if k
+                        not in [
+                            "transaction_date",
+                            "amount",
+                            "description",
+                            "transaction_type",
+                        ]
+                    },
+                )
+                transactions.append(tr)
+            except Exception as e:
+                import traceback
+
+                tb = traceback.format_exc()
+                msg = f"TransactionRecord validation error at row {idx} in {input_path}: {e}\n{tb}"
+                errors.append(msg)
+        meta = raw_data[0] if raw_data else {}
+
+        def norm_date(val):
+            if not val:
+                return None
+            try:
+                return datetime.strptime(val, "%Y-%m-%d").strftime("%Y-%m-%d")
+            except Exception:
+                warnings.append(
+                    f"[WARN] Could not normalize metadata date '{val}' in {input_path}"
+                )
+                return None
+
+        metadata = StatementMetadata(
+            statement_date=norm_date(meta.get("statement_date")),
+            statement_period_start=norm_date(meta.get("statement_period_start")),
+            statement_period_end=norm_date(meta.get("statement_period_end")),
+            statement_date_source=meta.get("statement_date_source"),
+            original_filename=os.path.basename(input_path),
+            account_number=meta.get("account_number"),
+            bank_name="Wells Fargo",
+            account_type="Checking",
+            parser_name="wellsfargo_checking_csv",
+            parser_version=None,
+            currency="USD",
+            extra=None,
+        )
+        output = ParserOutput(
+            transactions=transactions,
+            metadata=metadata,
+            schema_version="1.0",
+            errors=errors if errors else None,
+            warnings=warnings if warnings else None,
+        )
+        try:
+            ParserOutput.model_validate(output.model_dump())
+        except Exception as e:
+            import traceback
+
+            tb = traceback.format_exc()
+            msg = f"Final ParserOutput validation error: {e}\n{tb}"
+            errors.append(msg)
+            output.errors = errors
+            raise
+        output_dict = output.model_dump()
+        output_dict = _replace_nan_with_none(output_dict)
+        print("[DEBUG] Cleaned ParserOutput sample:", output_dict)
+        return ParserOutput.model_validate(output_dict)
+    except Exception as e:
+        import traceback
+
+        tb = traceback.format_exc()
+        msg = f"[FATAL] Error in main() for {input_path}: {e}\n{tb}"
+        print(msg)
+        return ParserOutput(
+            transactions=[],
+            metadata=None,
+            schema_version="1.0",
+            errors=[msg],
+            warnings=None,
+        )
