@@ -42,6 +42,8 @@ from dataextractai.parsers_core.models import (
     StatementMetadata,
     ParserOutput,
 )
+import math
+import numpy as np
 
 # Set up logging
 logging.basicConfig(
@@ -689,56 +691,94 @@ def process_all_pdfs(source_dir):
     return all_transactions
 
 
-def main(write_to_file=True, source_dir=None, output_csv=None, output_xlsx=None):
-    import glob
-    import pandas as pd
-    import os
+def _replace_nan_with_none(obj):
+    """Recursively replace NaN/np.nan/float('nan') with None in dicts/lists/values."""
+    if isinstance(obj, float) and (math.isnan(obj) or obj == np.nan):
+        return None
+    if isinstance(obj, dict):
+        return {k: _replace_nan_with_none(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_replace_nan_with_none(v) for v in obj]
+    return obj
 
-    parser = FirstRepublicBankParser()
-    # Use the provided test directory if not specified
-    source_dir = source_dir or os.path.join(
-        os.path.dirname(__file__), "../../data/clients/chase_test/input/first_republic"
-    )
-    file_list = glob.glob(os.path.join(source_dir, "*.pdf"))
-    all_outputs = []
-    for file_path in file_list:
+
+def main(input_path: str) -> ParserOutput:
+    """
+    Canonical entrypoint for contract-based integration. Parses a single First Republic Bank PDF and returns a ParserOutput.
+    Accepts a single file path and returns a ParserOutput object. No directory or batch logic.
+    All transaction_date and metadata date fields are normalized to YYYY-MM-DD format.
+    """
+    errors = []
+    warnings = []
+    try:
+        parser = FirstRepublicBankParser()
         raw_data = parser.parse_file(
-            file_path, config={"original_filename": os.path.basename(file_path)}
+            input_path, config={"original_filename": os.path.basename(input_path)}
         )
         df = parser.normalize_data(raw_data)
-        # Build transactions list
-        transactions = [
-            TransactionRecord(
-                transaction_date=row.get("transaction_date"),
-                amount=row.get("amount"),
-                description=row.get("description"),
-                posted_date=row.get("posted_date") if "posted_date" in row else None,
-                transaction_type=row.get("transaction_type"),
-                extra={
-                    k: v
-                    for k, v in row.items()
-                    if k
-                    not in [
-                        "transaction_date",
-                        "amount",
-                        "description",
-                        "transaction_type",
-                        "posted_date",
-                    ]
-                },
-            )
-            for _, row in df.iterrows()
-        ]
-        # Build metadata
+        transactions = []
+        for idx, row in df.iterrows():
+            try:
+                # Normalize transaction_date
+                t_date = row.get("transaction_date")
+                if t_date:
+                    try:
+                        t_date = datetime.strptime(t_date, "%Y-%m-%d").strftime(
+                            "%Y-%m-%d"
+                        )
+                    except Exception:
+                        warnings.append(
+                            f"[WARN] Could not normalize transaction_date '{t_date}' at row {idx} in {input_path}"
+                        )
+                        t_date = None
+                tr = TransactionRecord(
+                    transaction_date=t_date,
+                    amount=row.get("amount"),
+                    description=row.get("description"),
+                    posted_date=row.get("posted_date"),
+                    transaction_type=row.get("transaction_type"),
+                    extra={
+                        k: v
+                        for k, v in row.items()
+                        if k
+                        not in [
+                            "transaction_date",
+                            "amount",
+                            "description",
+                            "transaction_type",
+                            "posted_date",
+                        ]
+                    },
+                )
+                transactions.append(tr)
+            except Exception as e:
+                import traceback
+
+                tb = traceback.format_exc()
+                msg = f"TransactionRecord validation error at row {idx} in {input_path}: {e}\n{tb}"
+                errors.append(msg)
+        # Normalize metadata date fields
         meta = parser.extract_metadata(
-            file_path, original_filename=os.path.basename(file_path)
+            input_path, original_filename=os.path.basename(input_path)
         )
+
+        def norm_date(val):
+            if not val:
+                return None
+            try:
+                return datetime.strptime(val, "%Y-%m-%d").strftime("%Y-%m-%d")
+            except Exception:
+                warnings.append(
+                    f"[WARN] Could not normalize metadata date '{val}' in {input_path}"
+                )
+                return None
+
         metadata = StatementMetadata(
-            statement_date=meta.get("statement_date"),
-            statement_period_start=meta.get("statement_period_start"),
-            statement_period_end=meta.get("statement_period_end"),
+            statement_date=norm_date(meta.get("statement_date")),
+            statement_period_start=norm_date(meta.get("statement_period_start")),
+            statement_period_end=norm_date(meta.get("statement_period_end")),
             statement_date_source=meta.get("date_source", "content"),
-            original_filename=os.path.basename(file_path),
+            original_filename=os.path.basename(input_path),
             account_number=meta.get("account_number"),
             bank_name=meta.get("bank_name", "First Republic Bank"),
             account_type=meta.get("account_type", "checking"),
@@ -751,17 +791,38 @@ def main(write_to_file=True, source_dir=None, output_csv=None, output_xlsx=None)
             transactions=transactions,
             metadata=metadata,
             schema_version="1.0",
-            errors=None,
+            errors=errors if errors else None,
+            warnings=warnings if warnings else None,
+        )
+        # Final Pydantic validation
+        try:
+            ParserOutput.model_validate(output.model_dump())
+        except Exception as e:
+            import traceback
+
+            tb = traceback.format_exc()
+            msg = f"Final ParserOutput validation error: {e}\n{tb}"
+            errors.append(msg)
+            output.errors = errors
+            raise
+        # Clean up NaN values in the output dict
+        output_dict = output.model_dump()
+        output_dict = _replace_nan_with_none(output_dict)
+        print("[DEBUG] Cleaned ParserOutput sample:", output_dict)
+        return ParserOutput.model_validate(output_dict)
+    except Exception as e:
+        import traceback
+
+        tb = traceback.format_exc()
+        msg = f"[FATAL] Error in main() for {input_path}: {e}\n{tb}"
+        print(msg)
+        return ParserOutput(
+            transactions=[],
+            metadata=None,
+            schema_version="1.0",
+            errors=[msg],
             warnings=None,
         )
-        all_outputs.append(output)
-        # Optionally write DataFrame to CSV/XLSX for CLI/legacy
-        if write_to_file:
-            if output_csv:
-                df.to_csv(output_csv, index=False)
-            if output_xlsx:
-                df.to_excel(output_xlsx, index=False)
-    return all_outputs if len(all_outputs) > 1 else all_outputs[0]
 
 
 def run(

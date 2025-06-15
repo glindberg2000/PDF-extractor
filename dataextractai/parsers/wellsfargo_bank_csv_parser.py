@@ -19,6 +19,13 @@ from datetime import datetime
 from dataextractai.utils.config import PARSER_INPUT_DIRS, PARSER_OUTPUT_PATHS
 from dataextractai.utils.utils import extract_date_from_filename
 from dateutil import parser as dateutil_parser
+import math
+import numpy as np
+from dataextractai.parsers_core.models import (
+    TransactionRecord,
+    StatementMetadata,
+    ParserOutput,
+)
 
 SOURCE_DIR = PARSER_INPUT_DIRS["wellsfargo_bank_csv"]
 OUTPUT_PATH_CSV = PARSER_OUTPUT_PATHS["wellsfargo_bank_csv"]["csv"]
@@ -126,62 +133,128 @@ def process_csv_file(file_path, original_filename=None):
     return result_df
 
 
-def run(input_dir=None, output_paths=None, write_to_file=True, original_filename=None):
+def _replace_nan_with_none(obj):
+    """Recursively replace NaN/np.nan/float('nan') with None in dicts/lists/values."""
+    if isinstance(obj, float) and (math.isnan(obj) or obj == np.nan):
+        return None
+    if isinstance(obj, dict):
+        return {k: _replace_nan_with_none(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_replace_nan_with_none(v) for v in obj]
+    return obj
+
+
+def main(input_path: str) -> ParserOutput:
     """
-    Run the Wells Fargo CSV parser on all files in the source directory.
-
-    Args:
-        input_dir (str, optional): Directory containing CSV files. If None, uses default.
-        output_paths (dict, optional): Dictionary containing output paths. If None, uses default.
-        write_to_file (bool, optional): Whether to write results to file. Default is True.
-        original_filename (str, optional): Original filename if available.
-
-    Returns:
-        pandas.DataFrame: Combined data from all processed files
+    Canonical entrypoint for contract-based integration. Parses a single Wells Fargo Bank CSV and returns a ParserOutput.
+    Accepts a single file path and returns a ParserOutput object. No directory or batch logic.
+    All transaction_date and metadata date fields are normalized to YYYY-MM-DD format.
     """
-    all_data = []
-
-    # Use provided paths or fall back to defaults
-    source_dir = input_dir if input_dir is not None else SOURCE_DIR
-
-    if output_paths is not None:
-        output_csv = (
-            output_paths["csv"] if output_paths is not None else OUTPUT_PATH_CSV
+    errors = []
+    warnings = []
+    try:
+        df = process_csv_file(
+            input_path, original_filename=os.path.basename(input_path)
         )
-        output_xlsx = (
-            output_paths["xlsx"] if output_paths is not None else OUTPUT_PATH_XLSX
-        )
-    else:
-        output_csv = OUTPUT_PATH_CSV
-        output_xlsx = OUTPUT_PATH_XLSX
-
-    # Process each CSV file in the source directory
-    for filename in os.listdir(source_dir):
-        if filename.endswith(".csv"):
-            file_path = os.path.join(source_dir, filename)
+        transactions = []
+        for idx, row in df.iterrows():
             try:
-                df = process_csv_file(file_path, original_filename=original_filename)
-                all_data.append(df)
-                print(f"Successfully processed {filename}")
+                # Normalize transaction_date
+                t_date = row.get("transaction_date")
+                if t_date:
+                    try:
+                        t_date = datetime.strptime(t_date, "%Y-%m-%d").strftime(
+                            "%Y-%m-%d"
+                        )
+                    except Exception:
+                        warnings.append(
+                            f"[WARN] Could not normalize transaction_date '{t_date}' at row {idx} in {input_path}"
+                        )
+                        t_date = None
+                tr = TransactionRecord(
+                    transaction_date=t_date,
+                    amount=row.get("amount"),
+                    description=row.get("description"),
+                    posted_date=None,
+                    transaction_type=row.get("transaction_type"),
+                    extra={
+                        "check_number": row.get("check_number"),
+                        "source_file": row.get("source_file"),
+                        "file_path": row.get("file_path"),
+                    },
+                )
+                transactions.append(tr)
             except Exception as e:
-                print(f"Error processing {filename}: {str(e)}")
+                import traceback
 
-    if not all_data:
-        return pd.DataFrame()
+                tb = traceback.format_exc()
+                msg = f"TransactionRecord validation error at row {idx} in {input_path}: {e}\n{tb}"
+                errors.append(msg)
+        # Normalize metadata date fields
+        meta = df.iloc[0] if not df.empty else {}
 
-    # Combine all processed data
-    combined_df = pd.concat(all_data, ignore_index=True)
+        def norm_date(val):
+            if not val:
+                return None
+            try:
+                return datetime.strptime(val, "%Y-%m-%d").strftime("%Y-%m-%d")
+            except Exception:
+                warnings.append(
+                    f"[WARN] Could not normalize metadata date '{val}' in {input_path}"
+                )
+                return None
 
-    # Sort by date
-    combined_df = combined_df.sort_values("transaction_date")
+        metadata = StatementMetadata(
+            statement_date=norm_date(meta.get("statement_date")),
+            statement_period_start=norm_date(meta.get("statement_period_start")),
+            statement_period_end=norm_date(meta.get("statement_period_end")),
+            statement_date_source=meta.get("statement_date_source"),
+            original_filename=os.path.basename(input_path),
+            account_number=meta.get("account_number"),
+            bank_name="Wells Fargo",
+            account_type="Checking",
+            parser_name="wellsfargo_bank_csv",
+            parser_version=None,
+            currency="USD",
+            extra=None,
+        )
+        output = ParserOutput(
+            transactions=transactions,
+            metadata=metadata,
+            schema_version="1.0",
+            errors=errors if errors else None,
+            warnings=warnings if warnings else None,
+        )
+        # Final Pydantic validation
+        try:
+            ParserOutput.model_validate(output.model_dump())
+        except Exception as e:
+            import traceback
 
-    # Export to CSV and XLSX if write_to_file is True
-    if write_to_file:
-        combined_df.to_csv(output_csv, index=False)
-        combined_df.to_excel(output_xlsx, index=False)
+            tb = traceback.format_exc()
+            msg = f"Final ParserOutput validation error: {e}\n{tb}"
+            errors.append(msg)
+            output.errors = errors
+            raise
+        # Clean up NaN values in the output dict
+        output_dict = output.model_dump()
+        output_dict = _replace_nan_with_none(output_dict)
+        print("[DEBUG] Cleaned ParserOutput sample:", output_dict)
+        return ParserOutput.model_validate(output_dict)
+    except Exception as e:
+        import traceback
 
-    return combined_df
+        tb = traceback.format_exc()
+        msg = f"[FATAL] Error in main() for {input_path}: {e}\n{tb}"
+        print(msg)
+        return ParserOutput(
+            transactions=[],
+            metadata=None,
+            schema_version="1.0",
+            errors=[msg],
+            warnings=None,
+        )
 
 
 if __name__ == "__main__":
-    run()
+    main()
