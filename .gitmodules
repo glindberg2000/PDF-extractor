@@ -1,0 +1,3 @@
+[submodule "amazon-invoice-downloader"]
+	path = amazon-invoice-downloader
+	url = https://github.com/dcwangmit01/amazon-invoice-downloader.git
