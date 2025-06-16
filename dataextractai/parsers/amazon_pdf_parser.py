@@ -87,7 +87,29 @@ class AmazonPDFParser(BaseParser):
                         product_lines.append(line.strip())
                     if len(product_lines) >= 3:
                         break
-            description = product_lines[0] if product_lines else "Amazon Order"
+            # Improved description extraction
+            description = None
+            for pline in product_lines:
+                if pline.lower() not in [
+                    "view invoice",
+                    "view your item",
+                    "replace item",
+                    "share gift receipt",
+                    "write a product review",
+                    "get product support",
+                    "ask product question",
+                    "buy it again",
+                ] and not pline.lower().startswith("return"):
+                    description = pline
+                    break
+            if not description:
+                # fallback: try to find a line in product_lines that is not boilerplate
+                for pline in product_lines:
+                    if len(pline.strip()) > 10:
+                        description = pline
+                        break
+            if not description:
+                description = "Amazon Order"
             records.append(
                 {
                     "transaction_date": order_date,
