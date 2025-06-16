@@ -83,6 +83,21 @@ class ChaseVisaCSVParser(BaseParser):
             normalized.append(norm)
         return pd.DataFrame(normalized)
 
+    @classmethod
+    def can_parse(cls, file_path: str, **kwargs) -> bool:
+        try:
+            df = pd.read_csv(file_path, nrows=0)
+            headers = set([str(h).strip() for h in df.columns])
+            required_headers = {
+                "Transaction Date",
+                "Post Date",
+                "Amount",
+                "Description",
+            }
+            return required_headers.issubset(headers)
+        except Exception:
+            return False
+
 
 ParserRegistry.register_parser(ChaseVisaCSVParser.name, ChaseVisaCSVParser)
 

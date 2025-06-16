@@ -108,6 +108,16 @@ class AmazonPDFParser(BaseParser):
         # For Amazon, just return as DataFrame for contract
         return raw_data
 
+    @classmethod
+    def can_parse(cls, file_path: str, **kwargs) -> bool:
+        try:
+            with open(file_path, "rb") as f:
+                reader = PyPDF2.PdfReader(f)
+                first_page_text = reader.pages[0].extract_text() or ""
+            return ("ORDER PLACED" in first_page_text) and ("Amazon" in first_page_text)
+        except Exception:
+            return False
+
 
 ParserRegistry.register_parser(AmazonPDFParser.name, AmazonPDFParser)
 
