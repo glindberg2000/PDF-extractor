@@ -179,6 +179,19 @@ class AmazonInvoicePDFParser(BaseParser):
             raise
         return output
 
+    def normalize_data(self, raw_data):
+        """
+        Contract-compliant normalization: returns a list of transaction dicts for downstream use.
+        Accepts either a ParserOutput or a list of dicts.
+        """
+        if hasattr(raw_data, "transactions"):
+            # If raw_data is a ParserOutput, extract transactions as dicts
+            return [
+                t if isinstance(t, dict) else t.model_dump()
+                for t in raw_data.transactions
+            ]
+        return raw_data
+
 
 def _replace_nan_with_none(obj):
     """Recursively replace NaN/np.nan/float('nan') with None in dicts/lists/values."""
