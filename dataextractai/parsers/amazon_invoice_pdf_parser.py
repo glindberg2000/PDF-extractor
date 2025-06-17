@@ -139,50 +139,94 @@ class AmazonInvoicePDFParser(BaseParser):
         with open(file_path, "rb") as f:
             reader = PyPDF2.PdfReader(f)
             text = "\n".join([p.extract_text() or "" for p in reader.pages])
-        fields = cls.parse_invoice_text(text)
-        # Build transaction
-        description = fields.get("item_description")
-        if not description or not isinstance(description, str):
-            description = "Amazon Invoice"
-        transaction = TransactionRecord(
-            transaction_date=fields.get("order_placed"),
-            amount=fields.get("order_total"),
-            description=description,
-            transaction_type="Amazon Invoice",
-            extra={
-                "paid_by": fields.get("paid_by"),
-                "placed_by": fields.get("placed_by"),
-                "order_number": fields.get("order_number"),
-                "item_price": fields.get("item_price"),
-                "payment_method": fields.get("payment_method"),
-                "payment_date": fields.get("payment_date"),
-                "payment_amount": fields.get("payment_amount"),
-                "shipping_address": fields.get("shipping_address"),
-                "shipped_date": fields.get("shipped_date"),
-                "source_file": Path(file_path).name,
-                "file_path": str(file_path),
-                "source": "amazon_invoice_pdf",
-                "items_ordered": fields.get("items_ordered"),
-                "items": fields.get("items"),
-                "items_ordered_block": fields.get("items_ordered_block"),
-            },
+        # Extract top-level metadata
+        order_placed_match = re.search(
+            r"Order Placed: ([A-Za-z]+ \d{1,2}, \d{4})", text
         )
+        order_placed = (
+            cls.to_iso_date(order_placed_match.group(1).strip())
+            if order_placed_match
+            else None
+        )
+        order_total_match = re.search(r"Order Total: \$([\d\.,]+)", text)
+        order_total = (
+            cls.parse_amount(order_total_match.group(1)) if order_total_match else None
+        )
+        # Split into shipment/item blocks using 'Shipped on' or 'Shipping Address' as delimiters
+        # We'll use 'Shipped on' as the start of each block
+        shipment_blocks = re.split(r"(?=Shipped on [A-Za-z]+ \d{1,2}, \d{4})", text)
+        transactions = []
+        for block in shipment_blocks:
+            if "Items Ordered" not in block:
+                continue
+            # Extract items block
+            items_match = re.search(
+                r"Items Ordered\s*Price\n([\s\S]+?)(?=Shipping Address:|Shipped on|Payment information|$)",
+                block,
+            )
+            items_block = items_match.group(1).strip() if items_match else None
+            items = []
+            descriptions = []
+            total_amount = 0.0
+            if items_block:
+                # Find all items: look for patterns like 'n of: ... $amount'
+                item_pattern = re.compile(r"(\d+) of:([\s\S]+?)(?=\d+ of:|$)")
+                for match in item_pattern.finditer(items_block):
+                    qty = match.group(1).strip()
+                    item_text = match.group(2).strip()
+                    # Find the last $amount in the item_text
+                    price_match = re.findall(r"\$([\d\.,]+)", item_text)
+                    price = (
+                        float(price_match[-1].replace(",", "")) if price_match else None
+                    )
+                    # Remove price from description
+                    desc = re.sub(r"\$[\d\.,]+", "", item_text).strip()
+                    # Remove trailing seller/supplied/condition lines if present
+                    desc = re.sub(
+                        r"(Sold by:.*|Supplied by:.*|Condition:.*)", "", desc
+                    ).strip()
+                    items.append({"quantity": qty, "description": desc, "price": price})
+                    descriptions.append(desc)
+                    if price is not None:
+                        try:
+                            total_amount += float(price) * float(qty)
+                        except Exception:
+                            pass
+            if not items:
+                continue  # skip if no items found
+            description = "; ".join(descriptions) if descriptions else "Amazon Invoice"
+            # Use top-level order_placed as transaction_date
+            transaction_date = order_placed
+            if not transaction_date:
+                continue  # skip if no valid date
+            transaction = TransactionRecord(
+                transaction_date=transaction_date,
+                amount=total_amount if total_amount > 0 else order_total,
+                description=description,
+                transaction_type="Amazon Invoice",
+                extra={
+                    "order_placed": order_placed,
+                    "order_total": order_total,
+                    "items": items,
+                    "items_block": items_block,
+                    "source_file": Path(file_path).name,
+                    "file_path": str(file_path),
+                    "source": "amazon_invoice_pdf",
+                },
+            )
+            transactions.append(_replace_nan_with_none(transaction.model_dump()))
+        # Use metadata from the top-level
         metadata = StatementMetadata(
             parser_name=cls.parser_name,
             parser_version=cls.parser_version,
             original_filename=Path(file_path).name,
             extra={
-                "order_number": fields.get("order_number"),
-                "order_total": fields.get("order_total"),
-                "order_placed": fields.get("order_placed"),
-                "shipped_date": fields.get("shipped_date"),
-                "paid_by": fields.get("paid_by"),
-                "placed_by": fields.get("placed_by"),
-                "shipping_address": fields.get("shipping_address"),
+                "order_placed": order_placed,
+                "order_total": order_total,
             },
         )
         output = ParserOutput(
-            transactions=[_replace_nan_with_none(transaction.model_dump())],
+            transactions=transactions,
             metadata=metadata,
             schema_version="1.0",
         )
@@ -261,12 +305,14 @@ if __name__ == "__main__":
     try:
         ParserOutput.model_validate(output.model_dump())
         print("[PASS] ParserOutput contract validated.")
-        # Print transaction_date for inspection
-        for tx in output.transactions:
-            print(
-                "transaction_date:",
-                tx["transaction_date"] if isinstance(tx, dict) else tx.transaction_date,
-            )
+        # Print all transactions for inspection
+        for i, tx in enumerate(output.transactions):
+            tx_dict = tx if isinstance(tx, dict) else tx.model_dump()
+            print(f"Transaction {i+1}:")
+            print("  transaction_date:", tx_dict.get("transaction_date"))
+            print("  amount:", tx_dict.get("amount"))
+            print("  description:", tx_dict.get("description"))
+            print("  extra.items:", tx_dict.get("extra", {}).get("items"))
     except Exception as e:
         print("[FAIL] ParserOutput contract validation failed:", e)
         sys.exit(2)
