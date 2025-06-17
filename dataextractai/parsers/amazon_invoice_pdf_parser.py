@@ -216,3 +216,12 @@ def _replace_nan_with_none(obj):
 ParserRegistry.register_parser(
     AmazonInvoicePDFParser.parser_name, AmazonInvoicePDFParser
 )
+
+
+def main(input_path: str) -> ParserOutput:
+    """
+    Canonical entrypoint for contract-based integration. Parses a single Amazon Invoice PDF and returns a ParserOutput.
+    Accepts a single file path and returns a ParserOutput object. No directory or batch logic.
+    """
+    parser = AmazonInvoicePDFParser()
+    return parser.parse_file(input_path)
