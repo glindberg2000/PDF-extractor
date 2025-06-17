@@ -16,6 +16,20 @@ class AmazonInvoicePDFParser(BaseParser):
     parser_name = "amazon_invoice_pdf"
     parser_version = "1.0"
 
+    @staticmethod
+    def to_iso_date(date_str: str) -> Optional[str]:
+        """Convert 'Month Day, Year' to 'YYYY-MM-DD'. Return None if invalid."""
+        import datetime
+
+        if not date_str or not isinstance(date_str, str):
+            return None
+        try:
+            return datetime.datetime.strptime(date_str.strip(), "%B %d, %Y").strftime(
+                "%Y-%m-%d"
+            )
+        except Exception:
+            return None
+
     @classmethod
     def can_parse(cls, file_path: str, **kwargs) -> bool:
         try:
@@ -58,11 +72,15 @@ class AmazonInvoicePDFParser(BaseParser):
         # Order Placed
         m = re.search(r"Order Placed: ([A-Za-z]+ \d{1,2}, \d{4})", text)
         if m:
-            result["order_placed"] = m.group(1).strip()
+            result["order_placed"] = AmazonInvoicePDFParser.to_iso_date(
+                m.group(1).strip()
+            )
         # Shipped on
         m = re.search(r"Shipped on ([A-Za-z]+ \d{1,2}, \d{4})", text)
         if m:
-            result["shipped_date"] = m.group(1).strip()
+            result["shipped_date"] = AmazonInvoicePDFParser.to_iso_date(
+                m.group(1).strip()
+            )
         # Shipping Address
         m = re.search(r"Shipping Address:\n([\s\S]+?)\nShipping Speed:", text)
         if m:
@@ -77,7 +95,9 @@ class AmazonInvoicePDFParser(BaseParser):
             )
             if m2:
                 result["payment_method"] = m2.group(1).strip() + " " + m2.group(2)
-                result["payment_date"] = m2.group(3).strip()
+                result["payment_date"] = AmazonInvoicePDFParser.to_iso_date(
+                    m2.group(3).strip()
+                )
                 result["payment_amount"] = AmazonInvoicePDFParser.parse_amount(
                     m2.group(4)
                 )
@@ -225,3 +245,28 @@ def main(input_path: str) -> ParserOutput:
     """
     parser = AmazonInvoicePDFParser()
     return parser.parse_file(input_path)
+
+
+# --- TEST: Contract Adherence ---
+if __name__ == "__main__":
+    import sys
+
+    test_file = sys.argv[1] if len(sys.argv) > 1 else None
+    if not test_file:
+        print("Usage: python amazon_invoice_pdf_parser.py <pdf_file>")
+        sys.exit(1)
+    parser = AmazonInvoicePDFParser()
+    output = parser.parse_file(test_file)
+    # Validate contract
+    try:
+        ParserOutput.model_validate(output.model_dump())
+        print("[PASS] ParserOutput contract validated.")
+        # Print transaction_date for inspection
+        for tx in output.transactions:
+            print(
+                "transaction_date:",
+                tx["transaction_date"] if isinstance(tx, dict) else tx.transaction_date,
+            )
+    except Exception as e:
+        print("[FAIL] ParserOutput contract validation failed:", e)
+        sys.exit(2)
