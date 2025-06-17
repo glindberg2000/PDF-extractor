@@ -80,19 +80,37 @@ class AmazonInvoicePDFParser(BaseParser):
                 result["payment_amount"] = AmazonInvoicePDFParser.parse_amount(
                     m2.group(4)
                 )
-        # Items Ordered
-        m = re.search(r"Items OrderedPrice\n([\s\S]+?)\nShipping Address:", text)
+        # Items Ordered (extract the whole block as a string)
+        m = re.search(r"Items Ordered\s*Price\n([\s\S]+?)\nShipping Address:", text)
+        items_block = None
         if m:
-            items_block = m.group(1)
-            # Take the first item as main
-            lines = [l.strip() for l in items_block.split("\n") if l.strip()]
-            if lines:
-                result["item_description"] = lines[0]
-                # Try to get price from the last line with a $ sign
-                for l in reversed(lines):
-                    if "$" in l:
-                        result["item_price"] = AmazonInvoicePDFParser.parse_amount(l)
-                        break
+            items_block = m.group(1).strip()
+            result["items_ordered_block"] = items_block
+            # Find all items: look for patterns like 'n of: ... $amount'
+            item_pattern = re.compile(r"(\d+) of:([\s\S]+?)(?=\d+ of:|$)")
+            items = []
+            descriptions = []
+            for match in item_pattern.finditer(items_block):
+                qty = match.group(1).strip()
+                item_text = match.group(2).strip()
+                # Find the last $amount in the item_text
+                price_match = re.findall(r"\$([\d\.,]+)", item_text)
+                price = float(price_match[-1].replace(",", "")) if price_match else None
+                # Remove price from description
+                desc = re.sub(r"\$[\d\.,]+", "", item_text).strip()
+                # Remove trailing seller/supplied/condition lines if present
+                desc = re.sub(
+                    r"(Sold by:.*|Supplied by:.*|Condition:.*)", "", desc
+                ).strip()
+                items.append({"quantity": qty, "description": desc, "price": price})
+                descriptions.append(desc)
+            if items:
+                result["items"] = items
+                # Set main description as all item descriptions joined
+                result["item_description"] = "; ".join(descriptions)
+            else:
+                # fallback: use the full block as description
+                result["item_description"] = items_block
         return result
 
     @classmethod
@@ -123,6 +141,9 @@ class AmazonInvoicePDFParser(BaseParser):
                 "source_file": Path(file_path).name,
                 "file_path": str(file_path),
                 "source": "amazon_invoice_pdf",
+                "items_ordered": fields.get("items_ordered"),
+                "items": fields.get("items"),
+                "items_ordered_block": fields.get("items_ordered_block"),
             },
         )
         metadata = StatementMetadata(
