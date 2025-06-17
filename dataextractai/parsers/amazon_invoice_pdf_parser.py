@@ -9,6 +9,7 @@ from dataextractai.parsers_core.models import (
     TransactionRecord,
     StatementMetadata,
 )
+from dataextractai.parsers_core.registry import ParserRegistry
 
 
 class AmazonInvoicePDFParser(BaseParser):
@@ -197,3 +198,8 @@ def _replace_nan_with_none(obj):
     if isinstance(obj, list):
         return [_replace_nan_with_none(v) for v in obj]
     return obj
+
+
+ParserRegistry.register_parser(
+    AmazonInvoicePDFParser.parser_name, AmazonInvoicePDFParser
+)
