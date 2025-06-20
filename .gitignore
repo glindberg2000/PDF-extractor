@@ -353,4 +353,182 @@ tasks/ chase_visa_full_raw.txt
 chase_visa_raw_extracted.txt
 
 # Added by Task Master AI
+tasks/
+
+# Translations
+*.mo
+*.pot
+
+# Django stuff:
+*.log
+local_settings.py
+db.sqlite3
+
+# Flask stuff:
+instance/
+.webassets-cache
+
+# Scrapy stuff:
+.scrapy
+
+# PyBuilder
+target/
+
+# Virtualenv
+venv-py311/
+env-py311/
+ENV-py311/
+
+# Spyder project settings
+.spyderworkspace
+
+# Sphinx documentation
+docs/_build/
+
+# VS Code
+.vscode/
+
+# Virtual Environment
+venv/
+env/
+.env
+
+# Client Data
+clients/*/
+!clients/_template/
+!clients/_examples/
+!clients/*/client_config.yaml
+
+# Web Backend
+web/backend/uploads/
+web/backend/output/
+web/backend/*.db
+web/backend/*.sqlite
+web/backend/*.sqlite3
+
+# Data Directory
+data/input/*
+data/output/*
+!data/input/.gitkeep
+!data/output/.gitkeep
+
+# Temporary files
+*.tmp
+temp_*.jpg
+temp_*.png
+
+# Output files
+*.csv
+!clients/_examples/**/*.csv
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Database
+*.db
+*.sqlite3
+
+# Credentials and Secrets
+credentials.json
+token.json
+*.key
+sheets_config.yaml
+client_config.yaml
+!data/clients/_template/client_config.yaml
+!data/clients/_examples/*/client_config.yaml
+
+# Client Data Structure
+data/clients/*
+!data/clients/_template/
+!data/clients/_examples/
+!data/clients/_template/**/.gitkeep
+!data/clients/_examples/**/.gitkeep
+
+# Input/Output Structure for each client
+data/clients/*/input/*
+data/clients/*/output/*
+!data/clients/*/input/.gitkeep
+!data/clients/*/output/.gitkeep
+
+# Parser-specific input directories
+data/clients/*/input/amazon/*
+data/clients/*/input/bofa_bank/*
+data/clients/*/input/bofa_visa/*
+data/clients/*/input/chase_visa/*
+data/clients/*/input/wellsfargo_bank/*
+data/clients/*/input/wellsfargo_mastercard/*
+data/clients/*/input/wellsfargo_visa/*
+data/clients/*/input/wellsfargo_bank_csv/*
+data/clients/*/input/first_republic_bank/*
+!data/clients/_template/input/**/.gitkeep
+!data/clients/_examples/*/input/**/.gitkeep
+
+# Deprecated files and directories
+deprecated/
+dataextractai_vision/
+dataextractai_vision.egg-info/
+web/
+processing_history.db
+extraction.log
+directory_structure.txt
+test_run_parsers.py
+test_menu.py
+conda-requirements.txt
+environment.yml
+new_requirements.txt
+
+# Added by Task Master AI
+logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+dev-debug.log
+# Dependency directories
+node_modules/
+# Environment variables
+# Editor directories and files
+.idea
+.vscode
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+# OS specific
+# Task files
+tasks.json
+tasks/ chase_visa_full_raw.txt
+chase_visa_raw_extracted.txt
+
+# Added by Task Master AI
 tasks/ 

@@ -296,34 +296,3 @@ def main(input_path: str) -> ParserOutput:
     """
     parser = AmazonInvoicePDFParser()
     return parser.parse_file(input_path)
-
-
-if __name__ == "__main__":
-    import sys
-
-    if len(sys.argv) < 2:
-        print("Usage: python amazon_invoice_pdf_parser.py <path_to_pdf>")
-        sys.exit(1)
-
-    input_file = sys.argv[1]
-    output = main(input_file)
-
-    # --- TEST VERIFICATION ---
-    print(f"--- Verification for {input_file} ---")
-    if output.errors:
-        print("[FAIL] Parser encountered errors:")
-        for err in output.errors:
-            print(f"  - {err}")
-    else:
-        print("[PASS] Parser ran without fatal errors.")
-
-    print(f"Found {len(output.transactions)} transactions.")
-    if output.transactions:
-        print("Sample of first 3 transactions:")
-        for i, tx in enumerate(output.transactions[:3]):
-            tx_dict = tx.model_dump()
-            print(f"  - TX {i+1}:")
-            print(f"    Date: {tx_dict.get('transaction_date')}")
-            print(f"    Amount: {tx_dict.get('amount')}")
-            print(f"    Description: {tx_dict.get('description')}")
-    print("--- End Verification ---")
