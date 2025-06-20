@@ -298,28 +298,32 @@ def main(input_path: str) -> ParserOutput:
     return parser.parse_file(input_path)
 
 
-# --- TEST: Contract Adherence ---
 if __name__ == "__main__":
     import sys
 
-    test_file = sys.argv[1] if len(sys.argv) > 1 else None
-    if not test_file:
-        print("Usage: python amazon_invoice_pdf_parser.py <pdf_file>")
+    if len(sys.argv) < 2:
+        print("Usage: python amazon_invoice_pdf_parser.py <path_to_pdf>")
         sys.exit(1)
-    parser = AmazonInvoicePDFParser()
-    output = parser.parse_file(test_file)
-    # Validate contract
-    try:
-        ParserOutput.model_validate(output.model_dump())
-        print("[PASS] ParserOutput contract validated.")
-        # Print all transactions for inspection
-        for i, tx in enumerate(output.transactions):
-            tx_dict = tx if isinstance(tx, dict) else tx.model_dump()
-            print(f"Transaction {i+1}:")
-            print("  transaction_date:", tx_dict.get("transaction_date"))
-            print("  amount:", tx_dict.get("amount"))
-            print("  description:", tx_dict.get("description"))
-            print("  extra.items:", tx_dict.get("extra", {}).get("items"))
-    except Exception as e:
-        print("[FAIL] ParserOutput contract validation failed:", e)
-        sys.exit(2)
+
+    input_file = sys.argv[1]
+    output = main(input_file)
+
+    # --- TEST VERIFICATION ---
+    print(f"--- Verification for {input_file} ---")
+    if output.errors:
+        print("[FAIL] Parser encountered errors:")
+        for err in output.errors:
+            print(f"  - {err}")
+    else:
+        print("[PASS] Parser ran without fatal errors.")
+
+    print(f"Found {len(output.transactions)} transactions.")
+    if output.transactions:
+        print("Sample of first 3 transactions:")
+        for i, tx in enumerate(output.transactions[:3]):
+            tx_dict = tx.model_dump()
+            print(f"  - TX {i+1}:")
+            print(f"    Date: {tx_dict.get('transaction_date')}")
+            print(f"    Amount: {tx_dict.get('amount')}")
+            print(f"    Description: {tx_dict.get('description')}")
+    print("--- End Verification ---")

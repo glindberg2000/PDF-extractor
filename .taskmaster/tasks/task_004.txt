@@ -1,109 +1,18 @@
 # Task ID: 4
-# Title: Implement Configuration System
-# Status: pending
-# Dependencies: 1
+# Title: Implement Normalization in Credit Card Parsers
+# Status: done
+# Dependencies: 3
 # Priority: medium
-# Description: Create a flexible configuration system that can load settings from CLI flags, config files, and environment variables.
+# Description: Update all credit card parsers to use the new normalization logic.
 # Details:
-Create `utils/config.py` with the following implementation:
-
-```python
-import os
-import json
-import yaml
-from pathlib import Path
-from typing import Dict, Any, Optional
-from dataclasses import dataclass
-
-@dataclass
-class ParserConfig:
-    """Configuration for parser execution."""
-    input_path: str
-    output_path: Optional[str] = None
-    parser_name: Optional[str] = None
-    parser_options: Dict[str, Any] = None
-    
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'ParserConfig':
-        """Create config from dictionary."""
-        return cls(
-            input_path=data.get('input_path'),
-            output_path=data.get('output_path'),
-            parser_name=data.get('parser_name'),
-            parser_options=data.get('parser_options', {})
-        )
-
-class ConfigLoader:
-    """Loads configuration from various sources with priority:
-    1. CLI arguments (highest priority)
-    2. Config file
-    3. Environment variables (lowest priority)
-    """
-    
-    ENV_PREFIX = 'DATAEXTRACTAI_'
-    DEFAULT_CONFIG_PATHS = [
-        './parser_config.yaml',
-        './parser_config.json',
-        '~/.config/dataextractai/config.yaml',
-    ]
-    
-    @classmethod
-    def load_config(cls, 
-                   cli_args: Optional[Dict[str, Any]] = None, 
-                   config_path: Optional[str] = None) -> ParserConfig:
-        """Load configuration from all sources and merge according to priority."""
-        # Start with environment variables (lowest priority)
-        config_data = cls._load_from_env()
-        
-        # Load from config file if specified or try default locations
-        file_config = cls._load_from_file(config_path)
-        if file_config:
-            config_data.update(file_config)
-        
-        # CLI args have highest priority
-        if cli_args:
-            # Filter out None values to avoid overriding with None
-            filtered_args = {k: v for k, v in cli_args.items() if v is not None}
-            config_data.update(filtered_args)
-        
-        return ParserConfig.from_dict(config_data)
-    
-    @classmethod
-    def _load_from_env(cls) -> Dict[str, Any]:
-        """Load configuration from environment variables."""
-        config = {}
-        for key, value in os.environ.items():
-            if key.startswith(cls.ENV_PREFIX):
-                config_key = key[len(cls.ENV_PREFIX):].lower()
-                config[config_key] = value
-        return config
-    
-    @classmethod
-    def _load_from_file(cls, config_path: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        """Load configuration from a file."""
-        paths_to_try = [config_path] if config_path else cls.DEFAULT_CONFIG_PATHS
-        paths_to_try = [Path(p).expanduser() for p in paths_to_try if p]
-        
-        for path in paths_to_try:
-            if not path.exists():
-                continue
-                
-            with open(path, 'r') as f:
-                if path.suffix.lower() == '.json':
-                    return json.load(f)
-                elif path.suffix.lower() in ('.yaml', '.yml'):
-                    try:
-                        import yaml
-                        return yaml.safe_load(f)
-                    except ImportError:
-                        print("YAML support requires PyYAML package")
-                        continue
-        return None
-```
+1. Identify all credit card parsers from the audit results.
+2. For each parser:
+   a. Import the normalization function if not using base class method.
+   b. Modify the parsing logic to call normalization before setting the amount.
+   c. Update any existing sign-flipping logic to use the new convention.
+   d. Ensure proper handling of fees, interest charges, and payments.
+3. Use logging to track normalization actions for debugging.
+4. Consider using a decorator pattern for applying normalization consistently.
 
 # Test Strategy:
-Write unit tests to verify:
-1. Configuration can be loaded from environment variables
-2. Configuration can be loaded from YAML and JSON files
-3. CLI arguments properly override file and environment configs
-4. The ParserConfig dataclass correctly stores and validates configuration
+Update existing unit tests to check for correct sign convention. Add new tests specifically for normalization. Use real (anonymized) credit card statements as test inputs.

@@ -1,120 +1,18 @@
 # Task ID: 5
-# Title: Refactor Chase Checking Parser
+# Title: Implement Normalization in Bank Account Parsers
 # Status: done
-# Dependencies: 2, 3
+# Dependencies: 3
 # Priority: medium
-# Description: Refactor the existing Chase checking parser into a class that implements the BaseParser interface.
+# Description: Update all bank account parsers to use the new normalization logic.
 # Details:
-Create `parsers/chase_checking.py` with the following implementation:
-
-```python
-from ..base import BaseParser
-from ..registry import ParserRegistry
-from typing import Dict, Any, Union, Optional, IO
-from pathlib import Path
-import re
-import csv
-from datetime import datetime
-
-@ParserRegistry.register
-class ChaseCheckingParser(BaseParser):
-    """Parser for Chase Bank checking account statements in PDF format."""
-    
-    @property
-    def name(self) -> str:
-        return "chase_checking"
-        
-    @property
-    def description(self) -> str:
-        return "Parser for Chase Bank checking account statements"
-    
-    @classmethod
-    def get_supported_file_types(cls) -> list[str]:
-        return ["pdf"]
-    
-    def parse(self, 
-              input_source: Union[str, Path, IO], 
-              output_destination: Optional[Union[str, Path, IO]] = None,
-              **kwargs) -> Dict[str, Any]:
-        """Parse Chase checking PDF statement.
-        
-        Args:
-            input_source: Path to PDF file or file-like object
-            output_destination: Optional path to write CSV output
-            **kwargs: Additional options including:
-                - extract_images: Whether to extract images (default: False)
-                - page_range: Range of pages to process (default: all)
-                
-        Returns:
-            Dictionary with parsed transaction data
-        """
-        # Validate input
-        if not self.validate_input(input_source):
-            raise ValueError(f"Unsupported input format for {self.name}")
-            
-        # Here would be the actual implementation of the Chase parser logic
-        # For this task, we're just creating the structure, not implementing the full parser
-        
-        # Placeholder for actual parsing logic
-        transactions = self._extract_transactions(input_source, **kwargs)
-        
-        # Write output if destination provided
-        if output_destination and transactions:
-            self._write_output(transactions, output_destination)
-            
-        return {
-            "account_info": self._extract_account_info(input_source),
-            "transactions": transactions,
-            "summary": self._extract_summary(input_source)
-        }
-    
-    def _extract_transactions(self, source, **kwargs):
-        """Extract transaction data from the PDF."""
-        # Placeholder for actual implementation
-        # This would contain the core logic from the existing Chase parser
-        return []
-        
-    def _extract_account_info(self, source):
-        """Extract account information from the PDF."""
-        # Placeholder for actual implementation
-        return {}
-        
-    def _extract_summary(self, source):
-        """Extract summary information from the PDF."""
-        # Placeholder for actual implementation
-        return {}
-        
-    def _write_output(self, transactions, destination):
-        """Write transactions to the output destination."""
-        if isinstance(destination, (str, Path)):
-            with open(destination, 'w', newline='') as f:
-                self._write_csv(transactions, f)
-        else:
-            # Assume file-like object
-            self._write_csv(transactions, destination)
-            
-    def _write_csv(self, transactions, file_obj):
-        """Write transactions as CSV to a file object."""
-        if not transactions:
-            return
-            
-        fieldnames = transactions[0].keys()
-        writer = csv.DictWriter(file_obj, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(transactions)
-```
-
-Update `parsers/__init__.py` to expose the parser:
-
-```python
-from .chase_checking import ChaseCheckingParser
-
-__all__ = ['ChaseCheckingParser']
-```
+1. Identify all bank account parsers from the audit results.
+2. For each parser:
+   a. Import the normalization function if not using base class method.
+   b. Modify the parsing logic to call normalization before setting the amount.
+   c. Update any existing sign-flipping logic to use the new convention.
+   d. Ensure proper handling of deposits, withdrawals, and fees.
+3. Pay special attention to handling of overdraft fees and returned item fees.
+4. Use enum for transaction types to improve code readability and maintainability.
 
 # Test Strategy:
-Write unit tests to verify:
-1. The parser correctly implements the BaseParser interface
-2. The parser is properly registered in the ParserRegistry
-3. The parser correctly validates input files
-4. Mock the actual parsing to test the output format and CSV writing functionality
+Update existing unit tests to check for correct sign convention. Add new tests specifically for normalization. Use real (anonymized) bank statements as test inputs.

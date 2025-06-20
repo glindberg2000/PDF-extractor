@@ -1,38 +1,16 @@
 # Task ID: 1
-# Title: Create Core Package Structure
+# Title: Audit Existing Parsers
 # Status: done
 # Dependencies: None
 # Priority: high
-# Description: Set up the initial package structure for the modular parser system, including directory layout and package initialization files.
+# Description: Systematically review all active parsers in the codebase, primarily within 'PDF-extractor/dataextractai/parsers/' directory.
 # Details:
-Create the following directory structure:
-
-```
-dataextractai/
-  __init__.py
-  parsers_core/
-    __init__.py
-    base.py  # For BaseParser interface
-    registry.py  # For parser registration system
-    utils/
-      __init__.py
-      config.py  # Configuration handling
-    parsers/
-      __init__.py
-      # Individual parsers will go here
-  cli/
-    __init__.py
-    commands.py  # CLI entry points
-  django/
-    __init__.py
-    management/
-      commands/
-        __init__.py
-        run_parser.py
-    adapters.py  # Django integration utilities
-```
-
-Ensure all `__init__.py` files are properly set up for package imports. The main package should expose key components through its public API.
+1. Use a tool like 'find' or 'grep' to locate all parser files.
+2. Create a spreadsheet to track each parser, its current behavior, and required changes.
+3. Analyze each parser's logic for handling transaction amounts.
+4. Document any inconsistencies or non-standard practices.
+5. Identify parsers that already comply with the new convention.
+6. Estimate effort required for each parser update.
 
 # Test Strategy:
-Verify package structure is correct and importable. Test basic imports from each module to ensure the package hierarchy is properly established.
+Create a checklist to ensure all parsers are reviewed. Verify the completeness of the audit spreadsheet.

@@ -1,128 +1,16 @@
 # Task ID: 7
-# Title: Implement Django Management Command
+# Title: Update Downstream Analytics Logic
 # Status: pending
-# Dependencies: 3, 4, 5
-# Priority: medium
-# Description: Create a Django management command that integrates the parser system into Django projects.
+# Dependencies: 4, 5, 6
+# Priority: low
+# Description: Simplify reporting and analytics logic to leverage the new normalized data format.
 # Details:
-Create `django/management/commands/run_parser.py` with the following implementation:
-
-```python
-from django.core.management.base import BaseCommand, CommandError
-from django.conf import settings
-from ....parsers_core import ParserRegistry
-from ....parsers_core.utils.config import ConfigLoader
-
-class Command(BaseCommand):
-    help = 'Run a parser on input files'
-    
-    def add_arguments(self, parser):
-        parser.add_argument('input', help='Input file or directory to parse')
-        parser.add_argument('-o', '--output', help='Output file or directory')
-        parser.add_argument('-p', '--parser', help='Specific parser to use (will auto-detect if not specified)')
-        parser.add_argument('-c', '--config', help='Path to config file')
-    
-    def handle(self, *args, **options):
-        # Load configuration
-        config = ConfigLoader.load_config(
-            cli_args={
-                'input_path': options['input'],
-                'output_path': options['output'],
-                'parser_name': options['parser'],
-            },
-            config_path=options['config']
-        )
-        
-        # Check for Django-specific settings
-        django_config = getattr(settings, 'DATAEXTRACTAI_CONFIG', {})
-        if django_config and isinstance(django_config, dict):
-            # Apply Django settings but don't override CLI args
-            for key, value in django_config.items():
-                if key not in config.__dict__ or config.__dict__[key] is None:
-                    setattr(config, key, value)
-        
-        # Determine which parser to use
-        parser_class = None
-        if config.parser_name:
-            parser_class = ParserRegistry.get_parser_class(config.parser_name)
-            if not parser_class:
-                raise CommandError(f"Parser '{config.parser_name}' not found")
-        else:
-            # Auto-detect parser based on file extension
-            parser_class = ParserRegistry.get_parser_for_file(config.input_path)
-            if not parser_class:
-                raise CommandError(
-                    f"Could not determine parser for '{config.input_path}'. "
-                    "Specify a parser with --parser."
-                )
-        
-        # Create parser instance and run
-        parser_instance = parser_class()
-        try:
-            result = parser_instance.parse(
-                input_source=config.input_path,
-                output_destination=config.output_path,
-                **(config.parser_options or {})
-            )
-            self.stdout.write(self.style.SUCCESS(f"Successfully parsed {config.input_path}"))
-            if config.output_path:
-                self.stdout.write(f"Results written to {config.output_path}")
-            return result
-        except Exception as e:
-            raise CommandError(f"Error parsing {config.input_path}: {str(e)}")
-```
-
-Create `django/adapters.py` for direct use in views and tasks:
-
-```python
-from typing import Dict, Any, Optional, Union
-from pathlib import Path
-from ..parsers_core import ParserRegistry
-from ..parsers_core.utils.config import ParserConfig
-
-def run_parser(input_path: Union[str, Path], 
-               parser_name: Optional[str] = None,
-               output_path: Optional[Union[str, Path]] = None,
-               **parser_options) -> Dict[str, Any]:
-    """Run a parser from Django views or tasks.
-    
-    Args:
-        input_path: Path to the input file to parse
-        parser_name: Name of the parser to use (will auto-detect if not specified)
-        output_path: Optional path to write results
-        **parser_options: Additional options to pass to the parser
-        
-    Returns:
-        Dictionary with parsed data
-        
-    Raises:
-        ValueError: If parser cannot be determined or input is invalid
-    """
-    # Determine which parser to use
-    parser_class = None
-    if parser_name:
-        parser_class = ParserRegistry.get_parser_class(parser_name)
-        if not parser_class:
-            raise ValueError(f"Parser '{parser_name}' not found")
-    else:
-        # Auto-detect parser based on file extension
-        parser_class = ParserRegistry.get_parser_for_file(str(input_path))
-        if not parser_class:
-            raise ValueError(f"Could not determine parser for '{input_path}'")
-    
-    # Create parser instance and run
-    parser_instance = parser_class()
-    return parser_instance.parse(
-        input_source=input_path,
-        output_destination=output_path,
-        **parser_options
-    )
-```
+1. Identify all scripts and modules that perform calculations on transaction amounts.
+2. Update summing logic to use simple addition instead of checking transaction context.
+3. Modify expense calculations to use abs(amount) for correct totals.
+4. Update income calculations to sum positive amounts directly.
+5. Refactor any logic that relied on the old sign conventions.
+6. Consider using pandas for efficient data manipulation in analytics scripts.
 
 # Test Strategy:
-Write unit tests to verify:
-1. The Django management command correctly handles arguments
-2. The command integrates with Django settings
-3. The adapter function can be called from views and tasks
-4. Test error handling and output formatting
-5. Mock the parser to test the full workflow in a Django context
+Create a test suite with sample normalized data. Verify that all reports and analytics produce correct results with the new data format.

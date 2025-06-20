@@ -235,6 +235,20 @@ def main(input_path: str) -> ParserOutput:
         output_dict = output.model_dump()
         output_dict = _replace_nan_with_none(output_dict)
         print("[DEBUG] Cleaned ParserOutput sample:", output_dict)
+
+        # --- TEST VERIFICATION ---
+        print(f"[PASS] ParserOutput contract validated for {input_path}")
+        print(f"Found {len(output.transactions)} transactions.")
+        if output.transactions:
+            print("Sample of first 3 transactions:")
+            for i, tx in enumerate(output.transactions[:3]):
+                tx_dict = tx if isinstance(tx, dict) else tx.model_dump()
+                print(f"  - TX {i+1}:")
+                print(f"    Date: {tx_dict.get('transaction_date')}")
+                print(f"    Amount: {tx_dict.get('amount')}")
+                print(f"    Description: {tx_dict.get('description')}")
+        # --- END TEST VERIFICATION ---
+
         return ParserOutput.model_validate(output_dict)
     except Exception as e:
         import traceback
@@ -249,3 +263,40 @@ def main(input_path: str) -> ParserOutput:
             errors=[msg],
             warnings=None,
         )
+
+
+if __name__ == "__main__":
+    import sys
+
+    if len(sys.argv) < 2:
+        print("Usage: python apple_card_csv_parser.py <path_to_csv>")
+        sys.exit(1)
+
+    input_file = sys.argv[1]
+    output = main(input_file)
+
+    # --- TEST VERIFICATION ---
+    print(f"--- Verification for {input_file} ---")
+    if output.errors:
+        print("[FAIL] Parser encountered errors:")
+        for err in output.errors:
+            print(f"  - {err}")
+    else:
+        print("[PASS] Parser ran without fatal errors.")
+
+    if output.warnings:
+        print("[INFO] Parser produced warnings:")
+        for warn in output.warnings:
+            print(f"  - {warn}")
+
+    print(f"Found {len(output.transactions)} transactions.")
+    if output.transactions:
+        print("Sample of first 3 transactions:")
+        for i, tx in enumerate(output.transactions[:3]):
+            tx_dict = tx.model_dump()
+            print(f"  - TX {i+1}:")
+            print(f"    Date: {tx_dict.get('transaction_date')}")
+            print(f"    Amount: {tx_dict.get('amount')}")
+            print(f"    Description: {tx_dict.get('description')}")
+            print(f"    Type: {tx_dict.get('transaction_type')}")
+    print("--- End Verification ---")

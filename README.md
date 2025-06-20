@@ -496,3 +496,48 @@ The `client_config.yaml` file controls:
 
 See the example configurations in `data/clients/_examples/` for reference implementations.
 
+## Amazon Invoice Downloader (Submodule)
+
+This project includes the [amazon-invoice-downloader](https://github.com/dcwangmit01/amazon-invoice-downloader) as a git submodule in `amazon-invoice-downloader/`.
+
+- **Purpose:** Automates downloading detailed Amazon order invoices as PDFs using Playwright.
+- **Usage:**
+  1. Activate the Python 3.11+ venv: `source venv-py311/bin/activate`
+  2. Install Playwright browsers: `playwright install`
+  3. Set your Amazon credentials as environment variables:
+     - `export AMAZON_EMAIL="your_email@example.com"`
+     - `export AMAZON_PASSWORD="your_password"`
+  4. Run the downloader in your desired directory:
+     - `amazon-invoice-downloader --year=2024`
+  5. PDFs are saved in a `downloads/` folder, named with date, amount, and order ID.
+- **Integration:**
+  - We will build a new parser to extract structured data from these detailed invoice PDFs (separate from the main Amazon parser, as the format is different).
+
+## Parser Development
+
+To add a new parser, create a new file in `dataextractai/parsers/` and implement a class that inherits from `dataextractai.parsers_core.base.BaseParser`.
+
+### Amount Normalization Convention (MANDATORY)
+
+To ensure data consistency across the entire platform, all parsers **must** adhere to the following convention for transaction amounts:
+
+-   **Expenses, Debits, and Charges:** Must be stored as **NEGATIVE** floating-point numbers (e.g., `-50.25`).
+-   **Income, Credits, and Payments:** Must be stored as **POSITIVE** floating-point numbers (e.g., `1000.00`).
+
+The `BaseParser` class provides a helper method to enforce this:
+`self._normalize_amount(amount: float, transaction_type: str, is_charge_positive: bool = False) -> float`
+
+**Usage:**
+
+```python
+# For a standard debit
+normalized_debit = self._normalize_amount(100.0, 'debit')  # Returns -100.0
+
+# For a standard credit
+normalized_credit = self._normalize_amount(500.0, 'credit') # Returns 500.0
+
+# For sources where charges are positive (e.g., Apple Card)
+# The original amount is 25.50
+normalized_charge = self._normalize_amount(25.50, 'charge', is_charge_positive=True) # Returns -25.50
+```
+

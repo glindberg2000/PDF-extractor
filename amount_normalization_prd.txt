@@ -1,0 +1,27 @@
+**PRD: Parser Refactor for Transaction Amount Normalization**
+
+**To:** @extractor_dev
+**From:** @cline
+
+**1. Problem Statement**
+Our application currently has data inconsistency in how transaction amounts are stored. Different financial institutions use different conventions for debits and credits (e.g., charges on a credit card statement can be positive, while debits from a bank account are often negative). This forces our reporting and analytics logic to be overly complex and error-prone, as it must constantly check the context of a transaction before summing amounts.
+
+**2. Proposed Solution**
+We will implement a mandatory data convention for all parsers to normalize transaction amounts at the point of ingestion. This will create a single source of truth in the database and simplify all downstream logic.
+
+**3. The Convention**
+- **Expenses/Debits/Charges:** Must always be stored as **negative** numbers (e.g., `-50.25`).
+- **Income/Credits/Payments:** Must always be stored as **positive** numbers (e.g., `1000.00`).
+
+**4. Scope of Work**
+- **Audit & Update Parsers:** Systematically review every active parser in the codebase (primarily within `PDF-extractor/dataextractai/parsers/`).
+- **Implement Normalization Logic:** For each parser, add logic to inspect the raw data and apply the correct sign to the `amount` field before it is saved. This may involve checking for keywords like 'credit', 'debit', 'payment', or analyzing the structure of the source file.
+- **Unit Testing:** Each parser must be updated with unit tests that explicitly verify the correct sign handling for both expense and income transaction types.
+
+**5. Acceptance Criteria**
+- All parsers correctly enforce the negative/positive sign convention.
+- All relevant parser unit tests pass and cover normalization scenarios.
+- Downstream reports (Donations, Interest Income, etc.) can be simplified to use `abs(amount)` for expense totals without needing to know the source of the transaction.
+
+**6. Next Steps**
+Please review this PRD and begin the audit. A follow-up task will be created to write a one-time data migration script to normalize historical transaction data after the parsers have been updated. 

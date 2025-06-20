@@ -1,78 +1,16 @@
 # Task ID: 3
-# Title: Implement Parser Registry System
-# Status: pending
+# Title: Update Parser Base Class
+# Status: done
 # Dependencies: 2
 # Priority: high
-# Description: Create a registry system that allows parsers to be dynamically registered and retrieved by name or file type.
+# Description: Modify the base parser class to incorporate the normalization function.
 # Details:
-Create `registry.py` with the following implementation:
-
-```python
-from typing import Dict, Type, List, Optional
-from .base import BaseParser
-
-class ParserRegistry:
-    """Registry for parser classes that allows lookup by name or file type."""
-    
-    _parsers: Dict[str, Type[BaseParser]] = {}
-    
-    @classmethod
-    def register(cls, parser_class: Type[BaseParser]) -> Type[BaseParser]:
-        """Register a parser class in the registry.
-        
-        Can be used as a decorator:
-        @ParserRegistry.register
-        class MyParser(BaseParser):
-            ...
-        """
-        # Create an instance to get the name
-        parser_instance = parser_class()
-        cls._parsers[parser_instance.name] = parser_class
-        return parser_class
-    
-    @classmethod
-    def get_parser_class(cls, name: str) -> Optional[Type[BaseParser]]:
-        """Get a parser class by its name."""
-        return cls._parsers.get(name)
-    
-    @classmethod
-    def get_parser_for_file(cls, filename: str) -> Optional[Type[BaseParser]]:
-        """Find an appropriate parser for the given filename based on extension."""
-        import os
-        ext = os.path.splitext(filename)[1].lower()[1:]  # Get extension without dot
-        
-        for parser_class in cls._parsers.values():
-            parser = parser_class()
-            if ext in parser.get_supported_file_types():
-                return parser_class
-        return None
-    
-    @classmethod
-    def list_parsers(cls) -> List[Dict[str, str]]:
-        """Return a list of all registered parsers with their details."""
-        result = []
-        for name, parser_class in cls._parsers.items():
-            parser = parser_class()
-            result.append({
-                'name': name,
-                'description': parser.description,
-                'supported_types': parser.get_supported_file_types()
-            })
-        return result
-```
-
-Also update the `__init__.py` in the parsers_core package to expose the registry:
-
-```python
-from .base import BaseParser
-from .registry import ParserRegistry
-
-__all__ = ['BaseParser', 'ParserRegistry']
-```
+1. Locate the base parser class (likely in 'PDF-extractor/dataextractai/parsers/base.py').
+2. Import the normalization function.
+3. Add a method 'normalize_transaction_amount' that calls the normalization function.
+4. Update the 'parse' method to use the new normalization method before returning results.
+5. Add type hints and docstrings for the new method.
+6. Consider using the @abstractmethod decorator if normalization should be customizable per parser.
 
 # Test Strategy:
-Write unit tests to verify:
-1. Parsers can be registered both directly and as decorators
-2. Parsers can be retrieved by name
-3. Appropriate parsers can be found for different file types
-4. The list_parsers method returns correct information
+Write unit tests for the base parser class to ensure the normalization method is called correctly. Mock the normalization function to isolate testing.

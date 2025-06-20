@@ -383,4 +383,10 @@ This is the current active context for the next session.
     - Migration to this contract is now the top priority for all parser and ingestion work
     - All future parser migrations depend on this foundation
 
+## 2024-06-16: Amazon Invoice Downloader Integration
+- Added [amazon-invoice-downloader](https://github.com/dcwangmit01/amazon-invoice-downloader) as a git submodule.
+- Set up a Python 3.11 venv and installed Playwright and the downloader.
+- Downloaded all 2024 Amazon detailed invoices as PDFs to `data/clients/Greg/AmazonInvoices/downloads/`.
+- Next: Build a new parser specifically for these detailed invoice PDFs (different format from main Amazon parser).
+
 --- 

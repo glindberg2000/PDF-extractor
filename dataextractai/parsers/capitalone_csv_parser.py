@@ -90,41 +90,20 @@ class CapitalOneCSVParser(BaseParser):
 
     def parse_file(
         self, file_path: str, config: dict = None, original_filename: str = None
-    ) -> list[dict]:
+    ) -> ParserOutput:
         """
-        Parses the CapitalOne CSV file and returns a normalized DataFrame.
+        Parses the CapitalOne CSV file and returns a ParserOutput object.
         """
         df = pd.read_csv(file_path)
+        warnings = []
         logger.info(f"[DEBUG] Read CSV: {file_path}, rows={len(df)}")
-        logger.info(
-            f"[DEBUG] First 3 rows after read:\n{df.head(3).to_dict(orient='records')}"
-        )
         df.columns = [c.strip() for c in df.columns]
-        # Map columns to normalized names
-        colmap = {
-            "Transaction Date": "transaction_date",
-            "Posted Date": "posted_date",
-            "Card No.": "card_no",
-            "Description": "description",
-            "Category": "category",
-            "Debit": "debit",
-            "Credit": "credit",
-        }
-        for k in colmap:
-            if k not in df.columns:
-                df[k] = None
+
         # Normalize dates
-        for date_col, norm_col in [
-            ("Transaction Date", "transaction_date"),
-            ("Posted Date", "posted_date"),
-        ]:
-            df[norm_col] = pd.to_datetime(df[date_col], errors="coerce").dt.strftime(
+        for date_col in ["Transaction Date", "Posted Date"]:
+            df[date_col] = pd.to_datetime(df[date_col], errors="coerce").dt.strftime(
                 "%Y-%m-%d"
             )
-        logger.info(f"[DEBUG] After date normalization, rows={len(df)}")
-        logger.info(
-            f"[DEBUG] First 3 rows after date normalization:\n{df.head(3).to_dict(orient='records')}"
-        )
 
         # Combine Debit and Credit into a single, normalized amount column
         df["amount"] = df.apply(
@@ -136,103 +115,45 @@ class CapitalOneCSVParser(BaseParser):
             axis=1,
         )
 
-        logger.info(f"[DEBUG] After amount calculation, rows={len(df)}")
-        logger.info(
-            f"[DEBUG] First 3 rows after amount calculation:\n{df.head(3).to_dict(orient='records')}"
+        # Map to TransactionRecord fields
+        df = df.rename(
+            columns={
+                "Transaction Date": "transaction_date",
+                "Posted Date": "posted_date",
+                "Description": "description",
+            }
         )
-        # Drop rows with no amount or transaction_date
-        before_drop = len(df)
-        df = df.dropna(subset=["amount", "transaction_date"])
-        after_drop = len(df)
-        logger.info(
-            f"[DEBUG] After dropna, rows before={before_drop}, after={after_drop}"
+
+        # Add missing required fields
+        df["transaction_type"] = df.apply(
+            lambda row: "debit" if pd.notnull(row.get("Debit")) else "credit", axis=1
         )
-        logger.info(
-            f"[DEBUG] First 3 rows after dropna:\n{df.head(3).to_dict(orient='records')}"
+
+        transactions = [
+            TransactionRecord(**row) for row in df.to_dict(orient="records")
+        ]
+
+        metadata = StatementMetadata(
+            statement_date=transactions[-1].transaction_date if transactions else None,
+            statement_period_start=(
+                transactions[0].transaction_date if transactions else None
+            ),
+            statement_period_end=(
+                transactions[-1].transaction_date if transactions else None
+            ),
+            original_filename=os.path.basename(file_path),
+            bank_name="Capital One",
+            account_type="Credit Card",
+            parser_name=self.name,
         )
-        # --- Robust statement_date extraction ---
-        statement_date = None
-        statement_date_source = None
-        # 1. Try original_filename
-        if original_filename:
-            statement_date = extract_date_from_filename(original_filename)
-            if statement_date:
-                statement_date_source = "original_filename"
-                print(
-                    f"[DEBUG] statement_date from original_filename: {statement_date}"
-                )
-        # 2. Try input filename
-        if not statement_date:
-            statement_date = extract_date_from_filename(file_path)
-            if statement_date:
-                statement_date_source = "filename"
-                print(f"[DEBUG] statement_date from filename: {statement_date}")
-        # 3. Try last row's transaction_date
-        if not statement_date and not df.empty:
-            last_row_date = df.iloc[-1]["transaction_date"]
-            if last_row_date:
-                statement_date = last_row_date
-                statement_date_source = "last_row"
-                print(f"[DEBUG] statement_date from last_row: {statement_date}")
-        # 4. If still not found, None
-        if not statement_date:
-            print("[DEBUG] statement_date could not be determined; set to None")
-        # Also get period start from first row if available
-        statement_period_start = (
-            df.iloc[0]["transaction_date"] if not df.empty else None
+
+        return ParserOutput(
+            transactions=transactions, metadata=metadata, warnings=warnings
         )
-        statement_period_end = statement_date
-        # Build output dicts with normalized keys
-        records = []
-        for _, row in df.iterrows():
-            records.append(
-                {
-                    "transaction_date": row["transaction_date"],
-                    "posted_date": row["posted_date"],
-                    "card_no": row["Card No."],
-                    "description": row["Description"],
-                    "category": row["Category"],
-                    "amount": row["amount"],
-                    "source_file": os.path.basename(file_path),
-                    "file_path": file_path,
-                    "debit": row["Debit"],
-                    "credit": row["Credit"],
-                    "statement_date": statement_date,
-                    "statement_date_source": statement_date_source,
-                    "statement_period_start": statement_period_start,
-                    "statement_period_end": statement_period_end,
-                    "account_number": None,
-                }
-            )
-        return records
 
     def normalize_data(self, raw_data: list[dict]) -> pd.DataFrame:
-        normalized = []
-        for row in raw_data:
-            norm = {
-                "transaction_date": row.get("transaction_date"),
-                "posted_date": row.get("posted_date"),
-                "card_no": row.get("card_no"),
-                "description": row.get("description"),
-                "category": row.get("category"),
-                "amount": row.get("amount"),
-                "source_file": row.get("source_file", ""),
-                "file_path": row.get("file_path", ""),
-                "source": self.name,
-                "transaction_type": (
-                    "credit"
-                    if str(row.get("category", "")).lower().startswith("payment")
-                    or str(row.get("category", "")).lower().startswith("credit")
-                    else "debit"
-                ),
-                "statement_date": row.get("statement_date"),
-                "statement_period_start": row.get("statement_period_start"),
-                "statement_period_end": row.get("statement_period_end"),
-                "statement_date_source": row.get("statement_date_source"),
-                "account_number": row.get("account_number"),
-            }
-            normalized.append(norm)
-        return pd.DataFrame(normalized)
+        """No-op for this parser."""
+        pass
 
 
 # Register the parser
@@ -241,72 +162,45 @@ ParserRegistry.register_parser(CapitalOneCSVParser.name, CapitalOneCSVParser)
 
 def main(input_path: str) -> ParserOutput:
     """
-    Canonical entrypoint for contract-based integration. Parses a single Capital One CSV and returns a ParserOutput.
+    Canonical entrypoint for contract-based integration.
     """
     parser = CapitalOneCSVParser()
-    # Parse the file and get raw records
-    raw_data = parser.parse_file(
-        input_path, original_filename=os.path.basename(input_path)
-    )
-    df = parser.normalize_data(raw_data)
-    transactions = []
-    errors = []
-    warnings = []
-    for idx, row in df.iterrows():
-        try:
-            tr = TransactionRecord(
-                transaction_date=row["transaction_date"],
-                amount=row["amount"],
-                description=row["description"],
-                posted_date=row.get("posted_date"),
-                transaction_type=row.get("transaction_type"),
-                extra={
-                    "card_no": row.get("card_no"),
-                    "category": row.get("category"),
-                    "source_file": row.get("source_file"),
-                    "file_path": row.get("file_path"),
-                    "debit": row.get("debit"),
-                    "credit": row.get("credit"),
-                },
-            )
-            transactions.append(tr)
-        except Exception as e:
-            tb = traceback.format_exc()
-            msg = f"TransactionRecord validation error at row {idx} in {input_path}: {e}\n{tb}"
-            logger.error(msg)
-            errors.append(msg)
-    metadata = None
-    if not df.empty:
-        metadata = StatementMetadata(
-            statement_date=df.iloc[0].get("statement_date"),
-            statement_period_start=df.iloc[0].get("statement_period_start"),
-            statement_period_end=df.iloc[0].get("statement_period_end"),
-            statement_date_source=df.iloc[0].get("statement_date_source"),
-            original_filename=df.iloc[0].get("source_file"),
-            account_number=df.iloc[0].get("account_number"),
-            bank_name="Capital One",
-            account_type="Credit Card",
-            parser_name=CapitalOneCSVParser.name,
-            parser_version=None,
-            currency="USD",
-            extra=None,
-        )
-    output = ParserOutput(
-        transactions=transactions,
-        metadata=metadata,
-        schema_version="1.0",
-        errors=errors if errors else None,
-        warnings=warnings if warnings else None,
-    )
-    # Final Pydantic validation
-    try:
-        ParserOutput.model_validate(output.model_dump())
-    except Exception as e:
-        tb = traceback.format_exc()
-        msg = f"Final ParserOutput validation error: {e}\n{tb}"
-        logger.error(msg)
-        raise
-    logger.info(
-        f"SUMMARY for {input_path}: created={len(transactions)}, errors={len(errors)}, warnings={len(warnings)}"
-    )
-    return output
+    return parser.parse_file(input_path)
+
+
+if __name__ == "__main__":
+    import sys
+
+    if len(sys.argv) < 2:
+        print("Usage: python capitalone_csv_parser.py <path_to_csv>")
+        sys.exit(1)
+
+    input_file = sys.argv[1]
+    # Use the main entrypoint for testing
+    output = main(input_file)
+
+    # --- TEST VERIFICATION ---
+    print(f"--- Verification for {input_file} ---")
+    if output.errors:
+        print("[FAIL] Parser encountered errors:")
+        for err in output.errors:
+            print(f"  - {err}")
+    else:
+        print("[PASS] Parser ran without fatal errors.")
+
+    if output.warnings:
+        print("[INFO] Parser produced warnings:")
+        for warn in output.warnings:
+            print(f"  - {warn}")
+
+    print(f"Found {len(output.transactions)} transactions.")
+    if output.transactions:
+        print("Sample of first 3 transactions:")
+        for i, tx in enumerate(output.transactions[:3]):
+            tx_dict = tx.model_dump()
+            print(f"  - TX {i+1}:")
+            print(f"    Date: {tx_dict.get('transaction_date')}")
+            print(f"    Amount: {tx_dict.get('amount')}")
+            print(f"    Description: {tx_dict.get('description')}")
+            print(f"    Type: {tx_dict.get('transaction_type')}")
+    print("--- End Verification ---")
