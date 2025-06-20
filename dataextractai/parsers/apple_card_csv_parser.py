@@ -12,6 +12,19 @@ import math
 import numpy as np
 
 
+def _replace_nan_with_none(obj):
+    """Recursively replace NaN/np.nan/float('nan') with None in dicts/lists/values."""
+    if isinstance(obj, float) and (
+        math.isnan(obj) or (np is not None and obj == np.nan)
+    ):
+        return None
+    if isinstance(obj, dict):
+        return {k: _replace_nan_with_none(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_replace_nan_with_none(v) for v in obj]
+    return obj
+
+
 class AppleCardCSVParser(BaseParser):
     """
     Parser for Apple Card CSV exports.
@@ -39,31 +52,52 @@ class AppleCardCSVParser(BaseParser):
 
     def parse_file(
         self, input_path: str, config: dict = None, original_filename: str = None
-    ) -> list[dict]:
+    ) -> ParserOutput:
         df = pd.read_csv(input_path)
-        df["transaction_date"] = df["Transaction Date"].apply(self.parse_date)
-        df["post_date"] = df["Clearing Date"].apply(self.parse_date)
-        df["amount"] = df["Amount (USD)"].apply(self.parse_amount)
-        df["description"] = df["Description"].fillna("")
-        records = []
-        for _, row in df.iterrows():
-            records.append(
-                {
-                    "transaction_date": row["transaction_date"],
-                    "post_date": row["post_date"],
-                    "amount": row["amount"],
-                    "description": row["description"],
-                    "merchant": row.get("Merchant", None),
-                    "category": row.get("Category", None),
-                    "type": row.get("Type", None),
-                    "purchased_by": row.get("Purchased By", None),
-                    "source_file": os.path.basename(input_path),
-                    "file_path": input_path,
-                    "file_name": os.path.basename(input_path),
-                    "source": self.name,
-                }
-            )
-        return records
+        df.columns = [c.strip() for c in df.columns]
+
+        # Normalize dates
+        df["transaction_date"] = pd.to_datetime(
+            df["Transaction Date"], errors="coerce"
+        ).dt.strftime("%Y-%m-%d")
+        df["posted_date"] = pd.to_datetime(
+            df["Clearing Date"], errors="coerce"
+        ).dt.strftime("%Y-%m-%d")
+
+        # Use the 'Type' column to determine transaction type
+        df["transaction_type"] = df["Type"].apply(
+            lambda x: "credit" if "payment" in str(x).lower() else "debit"
+        )
+
+        # Normalize amounts
+        df["amount"] = df.apply(
+            lambda row: self._normalize_amount(
+                amount=row["Amount (USD)"],
+                transaction_type=row["transaction_type"],
+                is_charge_positive=True,  # In Apple Card CSVs, charges are positive
+            ),
+            axis=1,
+        )
+
+        df = df.rename(columns={"Description": "description"})
+
+        transactions = [
+            TransactionRecord(**_replace_nan_with_none(row))
+            for row in df.to_dict(orient="records")
+        ]
+
+        metadata = StatementMetadata(
+            statement_date=transactions[-1].transaction_date if transactions else None,
+            original_filename=os.path.basename(input_path),
+            bank_name="Apple Card",
+            account_type="Credit Card",
+            parser_name=self.name,
+        )
+
+        return ParserOutput(
+            transactions=transactions,
+            metadata=metadata,
+        )
 
     def normalize_data(self, raw_data: list[dict]) -> pd.DataFrame:
         normalized = []
@@ -93,8 +127,8 @@ class AppleCardCSVParser(BaseParser):
             required_headers = {
                 "Transaction Date",
                 "Clearing Date",
-                "Amount (USD)",
                 "Description",
+                "Amount (USD)",
             }
             return required_headers.issubset(headers)
         except Exception:
@@ -102,17 +136,6 @@ class AppleCardCSVParser(BaseParser):
 
 
 ParserRegistry.register_parser(AppleCardCSVParser.name, AppleCardCSVParser)
-
-
-def _replace_nan_with_none(obj):
-    """Recursively replace NaN/np.nan/float('nan') with None in dicts/lists/values."""
-    if isinstance(obj, float) and (math.isnan(obj) or obj == np.nan):
-        return None
-    if isinstance(obj, dict):
-        return {k: _replace_nan_with_none(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [_replace_nan_with_none(v) for v in obj]
-    return obj
 
 
 def main(input_path: str) -> ParserOutput:

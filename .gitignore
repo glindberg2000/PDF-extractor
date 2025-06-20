@@ -149,6 +149,12 @@ backups/*
 
 # Operating system files
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Icon?
+ehthumbs.db
 Thumbs.db
 Desktop.ini
 
@@ -531,4 +537,7 @@ tasks/ chase_visa_full_raw.txt
 chase_visa_raw_extracted.txt
 
 # Added by Task Master AI
-tasks/ 
+tasks/
+
+# Test files
+tests/samples/ 

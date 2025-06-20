@@ -224,6 +224,7 @@ class AmazonInvoicePDFParser(BaseParser):
             transactions.append(_replace_nan_with_none(transaction.model_dump()))
         # Use metadata from the top-level
         metadata = StatementMetadata(
+            bank_name="Amazon Invoice",
             parser_name=cls.parser_name,
             parser_version=cls.parser_version,
             original_filename=Path(file_path).name,

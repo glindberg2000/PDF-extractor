@@ -29,28 +29,28 @@ def _validate_parser_output(output: ParserOutput, expected_bank_name: str):
 
 def test_apple_card_parser():
     """Tests the Apple Card CSV parser for contract adherence and sign normalization."""
-    test_file = "data/clients/Greg/Apple Card/Apple Card Transactions - April 2024.csv"
+    test_file = "tests/samples/apple_card.csv"
     output = apple_main(test_file)
     _validate_parser_output(output, "Apple Card")
 
     # Verify sign normalization
     payment = next(
-        (t for t in output.transactions if "PAYMENT" in t.description.upper()), None
+        (t for t in output.transactions if t.transaction_type == "credit"), None
     )
     charge = next(
-        (t for t in output.transactions if "UBER" in t.description.upper()), None
+        (t for t in output.transactions if t.transaction_type == "debit"), None
     )
 
     assert payment is not None, "Could not find a payment transaction to test."
     assert payment.amount > 0, "Payment amount should be positive."
 
-    if charge:
-        assert charge.amount < 0, "Charge amount should be negative."
+    assert charge is not None, "Could not find a charge transaction to test."
+    assert charge.amount < 0, "Charge amount should be negative."
 
 
 def test_capital_one_parser():
     """Tests the Capital One CSV parser."""
-    test_file = "data/clients/chase_test/input/capitalone_csv/2024_Capital_one_transaction_download.csv"
+    test_file = "tests/samples/capital_one.csv"
     output = capitalone_main(test_file)
     _validate_parser_output(output, "Capital One")
 
@@ -69,7 +69,7 @@ def test_capital_one_parser():
 
 def test_amazon_invoice_parser():
     """Tests the Amazon Invoice PDF parser."""
-    test_file = "data/clients/Greg/AmazonInvoices/downloads/20240102_20.33_amazon_.pdf"
+    test_file = "tests/samples/amazon_invoice.pdf"
     output = amazon_invoice_main(test_file)
     _validate_parser_output(output, "Amazon Invoice")
 
@@ -80,9 +80,7 @@ def test_amazon_invoice_parser():
 
 def test_chase_visa_parser():
     """Tests the Chase Visa CSV parser."""
-    test_file = (
-        "data/clients/Greg/Chase Visa/Chase8939_Activity20240101_20241231_20250616.CSV"
-    )
+    test_file = "tests/samples/chase_visa.csv"
     output = chase_visa_main(test_file)
     _validate_parser_output(output, "Chase Visa")
 
@@ -100,9 +98,7 @@ def test_chase_visa_parser():
 
 def test_first_republic_parser():
     """Tests the First Republic Bank PDF parser."""
-    test_file = (
-        "data/clients/chase_test/input/first_republic/20240110-statements-7429-.pdf"
-    )
+    test_file = "tests/samples/first_republic.pdf"
     output = frb_main(test_file)
     _validate_parser_output(output, "First Republic Bank")
 
@@ -121,9 +117,7 @@ def test_first_republic_parser():
 
 def test_wellsfargo_bank_csv_parser():
     """Tests the Wells Fargo Bank CSV parser."""
-    test_file = (
-        "data/clients/chase_test/input/wellsfargo_checking_csv/wellsfargo_checking.csv"
-    )
+    test_file = "tests/samples/wellsfargo_checking.csv"
     output = wf_bank_main(test_file)
     _validate_parser_output(output, "Wells Fargo")
 
@@ -137,9 +131,7 @@ def test_wellsfargo_bank_csv_parser():
 
 def test_wellsfargo_visa_parser():
     """Tests the Wells Fargo Visa PDF parser."""
-    test_file = (
-        "data/clients/chase_test/input/wellsfargo_visa/20240125-statements-5555-.pdf"
-    )
+    test_file = "tests/samples/wellsfargo_visa.pdf"
     output = wf_visa_main(test_file)
     _validate_parser_output(output, "Wells Fargo")
 

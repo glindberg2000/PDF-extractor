@@ -13,6 +13,7 @@ import re
 import pandas as pd
 from PyPDF2 import PdfReader
 from datetime import datetime
+import logging
 from ..utils.config import PARSER_INPUT_DIRS, PARSER_OUTPUT_PATHS
 from ..utils.utils import standardize_column_names, get_parent_dir_and_file
 from ..utils.logger import get_logger

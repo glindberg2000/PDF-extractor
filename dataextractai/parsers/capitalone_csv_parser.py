@@ -18,6 +18,7 @@ Requirements:
 
 import os
 import pandas as pd
+import numpy as np
 from typing import Any
 from datetime import datetime
 from dataextractai.parsers_core.base import BaseParser
@@ -30,6 +31,21 @@ from dataextractai.parsers_core.models import (
 )
 import logging
 import traceback
+import math
+
+
+def _replace_nan_with_none(obj):
+    """Recursively replace NaN/np.nan/float('nan') with None in dicts/lists/values."""
+    if isinstance(obj, float) and (
+        math.isnan(obj) or (np is not None and obj == np.nan)
+    ):
+        return None
+    if isinstance(obj, dict):
+        return {k: _replace_nan_with_none(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_replace_nan_with_none(v) for v in obj]
+    return obj
+
 
 # Setup persistent logging
 log_dir = os.path.join(os.path.abspath(os.path.dirname(__file__)), "../../../logs")
@@ -99,6 +115,10 @@ class CapitalOneCSVParser(BaseParser):
         logger.info(f"[DEBUG] Read CSV: {file_path}, rows={len(df)}")
         df.columns = [c.strip() for c in df.columns]
 
+        # Fill NaN to prevent errors, but use a more robust selection method
+        df["Debit"] = pd.to_numeric(df["Debit"], errors="coerce").fillna(0)
+        df["Credit"] = pd.to_numeric(df["Credit"], errors="coerce").fillna(0)
+
         # Normalize dates
         for date_col in ["Transaction Date", "Posted Date"]:
             df[date_col] = pd.to_datetime(df[date_col], errors="coerce").dt.strftime(
@@ -106,14 +126,12 @@ class CapitalOneCSVParser(BaseParser):
             )
 
         # Combine Debit and Credit into a single, normalized amount column
-        df["amount"] = df.apply(
-            lambda row: self._normalize_amount(
-                amount=row.get("Debit") or row.get("Credit"),
-                transaction_type="debit" if pd.notnull(row.get("Debit")) else "credit",
-                is_charge_positive=True,  # Capital One has inverted signs
-            ),
-            axis=1,
-        )
+        # Use np.where for a robust selection between the two columns
+        df["amount"] = np.where(df["Debit"] != 0, df["Debit"], df["Credit"])
+        df["transaction_type"] = np.where(df["Debit"] != 0, "debit", "credit")
+
+        # Invert the sign for debits only. Credits are already positive.
+        df.loc[df["transaction_type"] == "debit", "amount"] = -df["amount"]
 
         # Map to TransactionRecord fields
         df = df.rename(
@@ -124,13 +142,9 @@ class CapitalOneCSVParser(BaseParser):
             }
         )
 
-        # Add missing required fields
-        df["transaction_type"] = df.apply(
-            lambda row: "debit" if pd.notnull(row.get("Debit")) else "credit", axis=1
-        )
-
         transactions = [
-            TransactionRecord(**row) for row in df.to_dict(orient="records")
+            TransactionRecord(**_replace_nan_with_none(row))
+            for row in df.to_dict(orient="records")
         ]
 
         metadata = StatementMetadata(

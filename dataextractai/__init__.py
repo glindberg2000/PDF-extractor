@@ -1,0 +1,1 @@
+from .parsers_core.autodiscover import autodiscover_parsers
