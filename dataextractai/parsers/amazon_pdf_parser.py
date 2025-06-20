@@ -60,7 +60,7 @@ class AmazonPDFParser(BaseParser):
                 date_match = re.search(r"([A-Za-z]+ \d{1,2}, \d{4})", block[:40])
             order_date = self.parse_date(date_match.group(1)) if date_match else None
             # Extract total
-            total_match = re.search(r"TOTAL\n\$([\d\.,]+)", block)
+            total_match = re.search(r"TOTAL\s*\$([\d\.,]+)", block)
             amount = self.parse_amount(total_match.group(1)) if total_match else 0.0
             # Extract order number
             ordernum_match = re.search(r"ORDER # ([\d\-]+)", block)

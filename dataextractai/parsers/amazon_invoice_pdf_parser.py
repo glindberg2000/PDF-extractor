@@ -199,9 +199,16 @@ class AmazonInvoicePDFParser(BaseParser):
             transaction_date = order_placed
             if not transaction_date:
                 continue  # skip if no valid date
+
+            # Normalize the amount
+            final_amount = total_amount if total_amount > 0 else order_total
+            normalized_amount = cls()._normalize_amount(
+                amount=final_amount, transaction_type="debit"
+            )
+
             transaction = TransactionRecord(
                 transaction_date=transaction_date,
-                amount=total_amount if total_amount > 0 else order_total,
+                amount=normalized_amount,
                 description=description,
                 transaction_type="Amazon Invoice",
                 extra={

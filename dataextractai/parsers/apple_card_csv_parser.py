@@ -154,9 +154,17 @@ def main(input_path: str) -> ParserOutput:
                             f"[WARN] Could not normalize post_date '{p_date}' at row {idx} in {input_path}"
                         )
                         p_date = None
+
+                # Normalize the amount using the base class helper method
+                normalized_amount = parser._normalize_amount(
+                    amount=row.get("amount"),
+                    transaction_type=row.get("type", ""),
+                    is_charge_positive=True,  # Apple Card CSV has inverted signs
+                )
+
                 tr = TransactionRecord(
                     transaction_date=t_date,
-                    amount=row.get("amount"),
+                    amount=normalized_amount,
                     description=row.get("description"),
                     posted_date=p_date,
                     transaction_type=row.get("type"),

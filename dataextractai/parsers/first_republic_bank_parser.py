@@ -975,36 +975,55 @@ class FirstRepublicBankParser(BaseParser):
         Returns:
             pd.DataFrame: Normalized DataFrame with standardized columns.
         """
-        import re
-
         df = pd.DataFrame(raw_data)
-        if not df.empty:
-            # Standardize column names and types
-            df = standardize_column_names(df)
-            if "amount" in df.columns:
-                df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
-            if "file_path" in df.columns:
-                df["file_path"] = df["file_path"].apply(get_parent_dir_and_file)
+        transactions = []
+        for idx, row in df.iterrows():
+            # Determine amount and transaction type
+            amount = None
+            transaction_type = "Unknown"
+            if pd.notnull(row.get("withdrawals_debits")):
+                amount = row.get("withdrawals_debits")
+                transaction_type = "debit"
+            elif pd.notnull(row.get("deposits_credits")):
+                amount = row.get("deposits_credits")
+                transaction_type = "credit"
 
-            # Exclude rows with invalid transaction_date
+            if amount is None:
+                continue
+
+            # Normalize the amount using the base class helper
+            normalized_amount = self._normalize_amount(
+                amount=amount, transaction_type=transaction_type
+            )
+
+            # Date validation
+            date_str = row.get("transaction_date")
+
             def is_valid_date(date_str):
-                return bool(re.match(r"^\d{4}-\d{2}-\d{2}$", str(date_str)))
+                if not date_str or not isinstance(date_str, str):
+                    return False
+                try:
+                    datetime.strptime(date_str, "%Y-%m-%d")
+                    return True
+                except ValueError:
+                    return False
 
-            if "transaction_date" in df.columns:
-                invalid_rows = df[~df["transaction_date"].apply(is_valid_date)]
-                if not invalid_rows.empty:
-                    logger.warning(
-                        f"Excluding {len(invalid_rows)} rows with invalid dates:\n{invalid_rows}"
-                    )
-                    # Optionally, save to CSV for audit
-                    try:
-                        invalid_rows.to_csv(
-                            "first_republic_invalid_dates.csv", index=False
-                        )
-                    except Exception as e:
-                        logger.error(f"Failed to write invalid rows to CSV: {e}")
-                df = df[df["transaction_date"].apply(is_valid_date)]
-        return df
+            if not is_valid_date(date_str):
+                continue
+
+            tr = TransactionRecord(
+                transaction_date=date_str,
+                amount=normalized_amount,
+                description=row.get("description"),
+                posted_date=row.get("posted_date"),
+                transaction_type=transaction_type,
+                extra={
+                    "check_no": row.get("check_no"),
+                    "balance": row.get("balance"),
+                },
+            )
+            transactions.append(tr)
+        return transactions
 
     @classmethod
     def can_parse(cls, file_path: str, **kwargs) -> bool:

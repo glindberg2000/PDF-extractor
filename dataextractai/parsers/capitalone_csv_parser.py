@@ -126,20 +126,16 @@ class CapitalOneCSVParser(BaseParser):
             f"[DEBUG] First 3 rows after date normalization:\n{df.head(3).to_dict(orient='records')}"
         )
 
-        # Combine Debit and Credit into amount
-        def compute_amount(row):
-            debit = row.get("Debit")
-            credit = row.get("Credit")
-            try:
-                if pd.notnull(debit) and debit != "":
-                    return float(debit)
-                elif pd.notnull(credit) and credit != "":
-                    return -float(credit)
-            except Exception:
-                return None
-            return None
+        # Combine Debit and Credit into a single, normalized amount column
+        df["amount"] = df.apply(
+            lambda row: self._normalize_amount(
+                amount=row.get("Debit") or row.get("Credit"),
+                transaction_type="debit" if pd.notnull(row.get("Debit")) else "credit",
+                is_charge_positive=True,  # Capital One has inverted signs
+            ),
+            axis=1,
+        )
 
-        df["amount"] = df.apply(compute_amount, axis=1)
         logger.info(f"[DEBUG] After amount calculation, rows={len(df)}")
         logger.info(
             f"[DEBUG] First 3 rows after amount calculation:\n{df.head(3).to_dict(orient='records')}"
