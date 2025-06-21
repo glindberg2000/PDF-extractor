@@ -107,22 +107,43 @@ class AmazonInvoicePDFParser(BaseParser):
         if m:
             items_block = m.group(1).strip()
             result["items_ordered_block"] = items_block
-            # Find all items: look for patterns like 'n of: ... $amount'
-            item_pattern = re.compile(r"(\d+) of:([\s\S]+?)(?=\d+ of:|$)")
+            # A more robust pattern: find 'n of:', then find the last price before the next 'n of:'
+            # This avoids grabbing unrelated numbers from payment details etc.
+            item_sections = re.split(r"(?=\d+ of:)", items_block)
             items = []
             descriptions = []
-            for match in item_pattern.finditer(items_block):
-                qty = match.group(1).strip()
-                item_text = match.group(2).strip()
-                # Find the last $amount in the item_text
+            for section in item_sections:
+                if not section.strip():
+                    continue
+
+                # Extract quantity from the start of the section
+                qty_match = re.match(r"(\d+) of:", section)
+                if not qty_match:
+                    continue
+                qty = qty_match.group(1).strip()
+
+                # The rest is the item text
+                item_text = section[qty_match.end() :].strip()
+
+                # Find the last price in the item_text. This is more reliable.
                 price_match = re.findall(r"\$([\d\.,]+)", item_text)
-                price = float(price_match[-1].replace(",", "")) if price_match else None
-                # Remove price from description
-                desc = re.sub(r"\$[\d\.,]+", "", item_text).strip()
+                if not price_match:
+                    continue  # Skip if no price found
+                price = float(price_match[-1].replace(",", ""))
+
+                # Description is everything before the last price
+                last_price_str = f"${price_match[-1]}"
+                desc_end_index = item_text.rfind(last_price_str)
+                desc = item_text[:desc_end_index].strip()
+
                 # Remove trailing seller/supplied/condition lines if present
                 desc = re.sub(
-                    r"(Sold by:.*|Supplied by:.*|Condition:.*)", "", desc
+                    r"\n?(Sold by:.*|Supplied by:.*|Condition:.*)$",
+                    "",
+                    desc,
+                    flags=re.MULTILINE | re.DOTALL,
                 ).strip()
+
                 items.append({"quantity": qty, "description": desc, "price": price})
                 descriptions.append(desc)
             if items:
@@ -169,22 +190,41 @@ class AmazonInvoicePDFParser(BaseParser):
             descriptions = []
             total_amount = 0.0
             if items_block:
-                # Find all items: look for patterns like 'n of: ... $amount'
-                item_pattern = re.compile(r"(\d+) of:([\s\S]+?)(?=\d+ of:|$)")
-                for match in item_pattern.finditer(items_block):
-                    qty = match.group(1).strip()
-                    item_text = match.group(2).strip()
-                    # Find the last $amount in the item_text
+                # A more robust pattern: find 'n of:', then find the last price before the next 'n of:'
+                # This avoids grabbing unrelated numbers from payment details etc.
+                item_sections = re.split(r"(?=\d+ of:)", items_block)
+                for section in item_sections:
+                    if not section.strip():
+                        continue
+
+                    # Extract quantity from the start of the section
+                    qty_match = re.match(r"(\d+) of:", section)
+                    if not qty_match:
+                        continue
+                    qty = qty_match.group(1).strip()
+
+                    # The rest is the item text
+                    item_text = section[qty_match.end() :].strip()
+
+                    # Find the last price in the item_text. This is more reliable.
                     price_match = re.findall(r"\$([\d\.,]+)", item_text)
-                    price = (
-                        float(price_match[-1].replace(",", "")) if price_match else None
-                    )
-                    # Remove price from description
-                    desc = re.sub(r"\$[\d\.,]+", "", item_text).strip()
+                    if not price_match:
+                        continue  # Skip if no price found
+                    price = float(price_match[-1].replace(",", ""))
+
+                    # Description is everything before the last price
+                    last_price_str = f"${price_match[-1]}"
+                    desc_end_index = item_text.rfind(last_price_str)
+                    desc = item_text[:desc_end_index].strip()
+
                     # Remove trailing seller/supplied/condition lines if present
                     desc = re.sub(
-                        r"(Sold by:.*|Supplied by:.*|Condition:.*)", "", desc
+                        r"\n?(Sold by:.*|Supplied by:.*|Condition:.*)$",
+                        "",
+                        desc,
+                        flags=re.MULTILINE | re.DOTALL,
                     ).strip()
+
                     items.append({"quantity": qty, "description": desc, "price": price})
                     descriptions.append(desc)
                     if price is not None:

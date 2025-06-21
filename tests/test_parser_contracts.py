@@ -1,6 +1,7 @@
 import os
 import pytest
 from dataextractai.parsers_core.models import ParserOutput, TransactionRecord
+from pprint import pprint
 
 # Import the main entrypoints for each modular parser
 from dataextractai.parsers.amazon_invoice_pdf_parser import main as amazon_invoice_main

@@ -22,6 +22,11 @@ from dataextractai.parsers_core.base import BaseParser
 from dataextractai.parsers_core.registry import ParserRegistry
 from dataextractai.utils.logger import get_logger
 from dataextractai.utils.utils import standardize_column_names, get_parent_dir_and_file
+from dataextractai.parsers_core.models import (
+    ParserOutput,
+    TransactionRecord,
+    StatementMetadata,
+)
 
 logger = get_logger("capitalone_visa_print_parser_modular")
 
@@ -182,3 +187,31 @@ class CapitalOneVisaPrintParser(BaseParser):
             if "file_path" in df.columns:
                 df["file_path"] = df["file_path"].apply(get_parent_dir_and_file)
         return df
+
+
+def main(input_path: str) -> ParserOutput:
+    """
+    Canonical entrypoint for contract-based integration.
+    """
+    parser = CapitalOneVisaPrintParser()
+    raw_data = parser.parse_file(input_path)
+    transactions = []
+    for record in raw_data:
+        transactions.append(
+            TransactionRecord(
+                transaction_date=record.get("transaction_date"),
+                amount=record.get("amount"),
+                description=record.get("description"),
+            )
+        )
+
+    metadata = StatementMetadata(
+        bank_name="Capital One",
+        parser_name="capitalone_visa_print",
+        original_filename=os.path.basename(input_path),
+    )
+
+    return ParserOutput(
+        transactions=transactions,
+        metadata=metadata,
+    )
