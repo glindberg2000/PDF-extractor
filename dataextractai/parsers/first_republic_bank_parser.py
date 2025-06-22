@@ -722,12 +722,30 @@ class FirstRepublicBankParser(BaseParser):
         except Exception as e:
             return ParserOutput(errors=[f"Failed to read PDF {input_path}: {e}"])
 
-        transactions = self._extract_transactions_from_text(full_text)
         metadata = self._extract_metadata(full_text, input_path)
+
+        statement_year = None
+        if metadata.statement_period_end:
+            try:
+                # Use dateutil.parser for robust date parsing
+                statement_year = dateutil_parser.parse(
+                    metadata.statement_period_end
+                ).year
+            except (ValueError, TypeError):
+                logger.warning(
+                    f"Could not parse year from statement_period_end: '{metadata.statement_period_end}'. "
+                    "Transaction dates might be incorrect."
+                )
+
+        transactions = self._extract_transactions_from_text(
+            full_text, statement_year=statement_year
+        )
 
         return ParserOutput(transactions=transactions, metadata=metadata)
 
-    def _extract_transactions_from_text(self, text: str) -> List[TransactionRecord]:
+    def _extract_transactions_from_text(
+        self, text: str, statement_year: int = None
+    ) -> List[TransactionRecord]:
         """Extracts and normalizes all transaction types from the text."""
         all_tx = []
         # Simplified extraction logic. In a real scenario, this would be more robust.
@@ -739,9 +757,16 @@ class FirstRepublicBankParser(BaseParser):
             date_str, desc, amount_str = match.groups()
             amount = float(amount_str.replace(",", ""))
             normalized_amount = self._normalize_amount(amount, "debit")
+            formatted_date = self._format_date(date_str, statement_year=statement_year)
+            if not formatted_date:
+                logger.warning(
+                    "Could not parse date for a debit transaction. Skipping record. "
+                    f"Content: '{match.group(0).strip()}'"
+                )
+                continue
             all_tx.append(
                 TransactionRecord(
-                    transaction_date=self._format_date(date_str),
+                    transaction_date=formatted_date,
                     amount=normalized_amount,
                     description=desc.strip(),
                     transaction_type="debit",
@@ -754,9 +779,16 @@ class FirstRepublicBankParser(BaseParser):
             date_str, desc, amount_str = match.groups()
             amount = float(amount_str.replace(",", ""))
             normalized_amount = self._normalize_amount(amount, "credit")
+            formatted_date = self._format_date(date_str, statement_year=statement_year)
+            if not formatted_date:
+                logger.warning(
+                    "Could not parse date for a credit transaction. Skipping record. "
+                    f"Content: '{match.group(0).strip()}'"
+                )
+                continue
             all_tx.append(
                 TransactionRecord(
-                    transaction_date=self._format_date(date_str),
+                    transaction_date=formatted_date,
                     amount=normalized_amount,
                     description=desc.strip(),
                     transaction_type="credit",
@@ -768,37 +800,89 @@ class FirstRepublicBankParser(BaseParser):
     def _extract_metadata(self, text: str, file_path: str) -> StatementMetadata:
         """Extracts statement metadata."""
         start_date, end_date = None, None
+        account_number = None
+
+        # Pattern 1: "Statement Period: May 11, 2024 - May 24, 2024"
         match = re.search(
-            r"Statement Period:\s*([,\w\s,]+,\d{4})\s*-\s*([,\w\s,]+,\d{4})", text
+            r"Statement Period:\s*([,\w\s]+,\s*\d{4})\s*-\s*([,\w\s]+,\s*\d{4})", text
         )
         if match:
-            start_date = self._format_date(match.group(1), year_needed=False)
-            end_date = self._format_date(match.group(2), year_needed=False)
+            start_date_str, end_date_str = (
+                match.group(1).strip(),
+                match.group(2).strip(),
+            )
+            start_date = self._format_date(start_date_str, year_needed=False)
+            end_date = self._format_date(end_date_str, year_needed=False)
 
+        # Pattern 2: "May 11, 2024 - May 24, 2024" (without "Statement Period:")
+        if not start_date:
+            match = re.search(
+                r"([A-Z][a-z]{2,}\s+\d{1,2},\s+\d{4})\s*-\s*([A-Z][a-z]{2,}\s+\d{1,2},\s+\d{4})",
+                text,
+            )
+            if match:
+                start_date_str, end_date_str = (
+                    match.group(1).strip(),
+                    match.group(2).strip(),
+                )
+                start_date = self._format_date(start_date_str, year_needed=False)
+                end_date = self._format_date(end_date_str, year_needed=False)
+
+        # Pattern 3: Numeric date range "MM/DD/YYYY - MM/DD/YYYY"
+        if not start_date:
+            match = re.search(r"(\d{2}/\d{2}/\d{4})\s*-\s*(\d{2}/\d{2}/\d{4})", text)
+            if match:
+                # This pattern doesn't use the regular _format_date helper
+                try:
+                    start_date = datetime.strptime(match.group(1), "%m/%d/%Y").strftime(
+                        "%Y-%m-%d"
+                    )
+                    end_date = datetime.strptime(match.group(2), "%m/%d/%Y").strftime(
+                        "%Y-%m-%d"
+                    )
+                except ValueError:
+                    logger.warning(
+                        f"Could not parse numeric date range: {match.group(0)}"
+                    )
+
+        # Account Number Extraction
         account_number_match = re.search(r"Account Number:\s*([0-9-]+)", text)
-        account_number = account_number_match.group(1) if account_number_match else None
+        if account_number_match:
+            account_number = account_number_match.group(1)
 
         return StatementMetadata(
             statement_period_start=start_date,
             statement_period_end=end_date,
-            statement_date=end_date,
+            statement_date=end_date,  # Often the same as the period end
             account_number=account_number,
             original_filename=os.path.basename(file_path),
             bank_name="First Republic Bank",
         )
 
-    def _format_date(self, date_str: str, year_needed: bool = True) -> str:
+    def _format_date(
+        self, date_str: str, year_needed: bool = True, statement_year: int = None
+    ) -> str:
         """Helper to format dates into YYYY-MM-DD."""
         try:
             if year_needed:
-                # Assumes current year if not specified
-                date_obj = datetime.strptime(
-                    f"{date_str}/{datetime.now().year}", "%m/%d/%Y"
-                )
+                # Assumes current year if not specified, but warns if statement_year is missing
+                year_to_use = statement_year or datetime.now().year
+                if not statement_year:
+                    logger.warning(
+                        "Statement year not available. Falling back to current year for transaction date. "
+                        f"This may be incorrect. Date string: '{date_str}'"
+                    )
+
+                date_obj = datetime.strptime(f"{date_str}/{year_to_use}", "%m/%d/%Y")
             else:
                 date_obj = datetime.strptime(date_str, "%B %d, %Y")
             return date_obj.strftime("%Y-%m-%d")
         except ValueError:
+            year_to_use = statement_year or datetime.now().year
+            logger.warning(
+                f"Could not parse date string '{date_str}' with year {year_to_use}. "
+                "It might be an invalid date (e.g., Feb 29 in a non-leap year)."
+            )
             return None
 
     @classmethod
