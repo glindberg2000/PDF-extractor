@@ -48,11 +48,23 @@ class WellsFargoMastercardParser(BaseParser):
     """
 
     def can_parse(self, file_path: str) -> bool:
-        return (
-            "wellsfargo" in file_path.lower()
-            and "mastercard" in file_path.lower()
-            and file_path.endswith(".pdf")
-        )
+        print(f"[DEBUG] can_parse called with file_path: {file_path}")
+        try:
+            reader = PdfReader(file_path)
+            text = ""
+            for page in reader.pages[:2]:
+                text += page.extract_text() or ""
+            text = text.lower()
+            result = (
+                "wells fargo" in text
+                and "account number" in text
+                and ("business card" in text or "credit line" in text)
+            )
+            print(f"[DEBUG] can_parse result for {file_path}: {result}")
+            return result
+        except Exception as e:
+            print(f"[DEBUG] can_parse error for {file_path}: {e}")
+            return False
 
     def parse_file(self, input_path: str, config: Dict[str, Any] = None) -> List[Dict]:
         pdf_reader = PdfReader(input_path)
