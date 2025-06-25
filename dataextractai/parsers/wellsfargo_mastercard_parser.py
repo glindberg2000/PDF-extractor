@@ -318,7 +318,6 @@ def analyze_line_for_transaction_type_all(line):
 
 
 def add_statement_date_and_file_path(transaction, pdf_path):
-    logger = logging.getLogger("wellsfargo_mastercard_parser")
     # Try to extract statement date from PDF content
     try:
         reader = PdfReader(pdf_path)
@@ -343,18 +342,9 @@ def add_statement_date_and_file_path(transaction, pdf_path):
                 statement_date = datetime.strptime(date_str, "%m%d%y").strftime(
                     "%Y-%m-%d"
                 )
-                logger.warning(
-                    f"Statement date not found in content, using filename: {statement_date}"
-                )
             except Exception:
-                logger.warning(
-                    "Could not extract statement date from content or filename. Setting to None."
-                )
                 statement_date = None
     except Exception:
-        logger.warning(
-            "Could not extract statement date from content or filename. Setting to None."
-        )
         statement_date = None
 
     transaction["statement_date"] = statement_date
@@ -416,7 +406,6 @@ def parse_transactions(text):
 
 
 def process_transaction_block(lines):
-    logger = logging.getLogger("wellsfargo_mastercard_parser")
     transaction_text = " ".join(lines)
     transaction_analysis = analyze_line_for_transaction_type_all(transaction_text)
     monetary_values = re.findall(r"-?\d{1,3}(?:,\d{3})*\.\d{2}", transaction_text)
@@ -656,7 +645,6 @@ def main(input_path: str) -> ParserOutput:
     Accepts a single file path and returns a ParserOutput object. No directory or batch logic.
     All transaction_date and metadata date fields are normalized to YYYY-MM-DD format.
     """
-    logger = logging.getLogger("wellsfargo_mastercard_parser")
     errors = []
     warnings = []
     skipped_rows = 0
