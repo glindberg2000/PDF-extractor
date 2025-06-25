@@ -100,6 +100,9 @@ class WellsFargoMastercardParser(BaseParser):
             posted_date = record.get("post_date")
             if posted_date and isinstance(posted_date, datetime):
                 posted_date = posted_date.strftime("%Y-%m-%d")
+            # Credits/Charges robust handling
+            credits = record.get("credits", 0.0)
+            charges = record.get("charges", 0.0)
             # Build TransactionRecord
             normalized.append(
                 {
@@ -108,6 +111,8 @@ class WellsFargoMastercardParser(BaseParser):
                     "description": description,
                     "posted_date": posted_date,
                     "transaction_type": transaction_type,
+                    "credits": credits,
+                    "charges": charges,
                     "extra": {
                         k: v
                         for k, v in record.items()
