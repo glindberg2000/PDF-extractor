@@ -29,6 +29,10 @@ from ..utils.config import PARSER_INPUT_DIRS, PARSER_OUTPUT_PATHS
 from ..utils.utils import standardize_column_names, get_parent_dir_and_file
 from PyPDF2 import PdfReader
 import logging
+from typing import List, Dict, Any
+from ..parsers_core.base import BaseParser
+from ..parsers_core.registry import ParserRegistry
+from ..parsers_core.models import ParserOutput, TransactionRecord, StatementMetadata
 
 SOURCE_DIR = PARSER_INPUT_DIRS["wellsfargo_mastercard"]
 OUTPUT_PATH_CSV = PARSER_OUTPUT_PATHS["wellsfargo_mastercard"]["csv"]
@@ -36,6 +40,248 @@ OUTPUT_PATH_XLSX = PARSER_OUTPUT_PATHS["wellsfargo_mastercard"]["xlsx"]
 FILTERED_PATH_CSV = PARSER_OUTPUT_PATHS["wellsfargo_mastercard"]["filtered"]
 
 logger = logging.getLogger("wellsfargo_mastercard_parser")
+
+
+class WellsFargoMastercardParser(BaseParser):
+    """
+    Modular parser for Wells Fargo Mastercard PDF statements.
+    """
+
+    def can_parse(self, file_path: str) -> bool:
+        return (
+            "wellsfargo" in file_path.lower()
+            and "mastercard" in file_path.lower()
+            and file_path.endswith(".pdf")
+        )
+
+    def parse_file(self, input_path: str, config: Dict[str, Any] = None) -> List[Dict]:
+        pdf_reader = PdfReader(input_path)
+        text = "\n".join([page.extract_text() or "" for page in pdf_reader.pages])
+        raw_transactions = self._parse_transactions(text)
+        # Attach file path for metadata extraction
+        for t in raw_transactions:
+            t["file_path"] = input_path
+        return raw_transactions
+
+    def normalize_data(self, raw_data: List[Dict]) -> List[Dict]:
+        normalized = []
+        for record in raw_data:
+            # Date normalization
+            date_str = record.get("transaction_date")
+            if date_str and isinstance(date_str, datetime):
+                date_str = date_str.strftime("%Y-%m-%d")
+            elif date_str and re.match(r"\d{2}/\d{2}/\d{4}", date_str):
+                date_str = datetime.strptime(date_str, "%m/%d/%Y").strftime("%Y-%m-%d")
+            elif date_str and re.match(r"\d{2}/\d{2}/\d{2}", date_str):
+                date_str = datetime.strptime(date_str, "%m/%d/%y").strftime("%Y-%m-%d")
+            # Amount normalization
+            amount = record.get("amount")
+            transaction_type = record.get("classification") or record.get(
+                "transaction_type"
+            )
+            amount = self._normalize_amount(amount, transaction_type)
+            # Description
+            description = (
+                record.get("description") or record.get("transaction_text") or ""
+            )
+            # Posted date
+            posted_date = record.get("post_date")
+            if posted_date and isinstance(posted_date, datetime):
+                posted_date = posted_date.strftime("%Y-%m-%d")
+            # Build TransactionRecord
+            normalized.append(
+                {
+                    "transaction_date": date_str,
+                    "amount": amount,
+                    "description": description,
+                    "posted_date": posted_date,
+                    "transaction_type": transaction_type,
+                    "extra": {
+                        k: v
+                        for k, v in record.items()
+                        if k
+                        not in [
+                            "transaction_date",
+                            "amount",
+                            "charges",
+                            "credits",
+                            "description",
+                            "transaction_text",
+                            "post_date",
+                            "transaction_type",
+                            "classification",
+                        ]
+                    },
+                }
+            )
+        return normalized
+
+    def extract_metadata(
+        self, raw_data: List[Dict], input_path: str
+    ) -> StatementMetadata:
+        # Extract statement dates from PDF content
+        statement_date = None
+        statement_period_start = None
+        statement_period_end = None
+        statement_date_source = None
+        try:
+            reader = PdfReader(input_path)
+            text = "\n".join([page.extract_text() or "" for page in reader.pages])
+            # Try to find 'Statement Period MM/DD/YY to MM/DD/YY'
+            match_period = re.search(
+                r"Statement Period\s+(\d{2}/\d{2}/\d{2,4})\s+to\s+(\d{2}/\d{2}/\d{2,4})",
+                text,
+            )
+            if match_period:
+                statement_period_start = match_period.group(1)
+                statement_period_end = match_period.group(2)
+                # Format as YYYY-MM-DD
+                for var, val in [
+                    ("statement_period_start", statement_period_start),
+                    ("statement_period_end", statement_period_end),
+                ]:
+                    if val:
+                        try:
+                            if len(val.split("/")) == 3:
+                                m, d, y = val.split("/")
+                                y = int(y)
+                                if y < 100:
+                                    y += 2000
+                                val_fmt = f"{y:04d}-{int(m):02d}-{int(d):02d}"
+                                if var == "statement_period_start":
+                                    statement_period_start = val_fmt
+                                else:
+                                    statement_period_end = val_fmt
+                        except Exception:
+                            pass
+                statement_date_source = "content"
+            # Try to find 'Statement Closing Date MM/DD/YY'
+            match_close = re.search(
+                r"Statement Closing Date\s+(\d{2}/\d{2}/\d{2,4})", text
+            )
+            if match_close:
+                val = match_close.group(1)
+                try:
+                    if len(val.split("/")) == 3:
+                        m, d, y = val.split("/")
+                        y = int(y)
+                        if y < 100:
+                            y += 2000
+                        statement_date = f"{y:04d}-{int(m):02d}-{int(d):02d}"
+                        statement_date_source = "content"
+                except Exception:
+                    pass
+            # Fallback: if no closing date, use period end
+            if not statement_date and statement_period_end:
+                statement_date = statement_period_end
+                statement_date_source = "period_end"
+        except Exception:
+            pass
+        # Fallback: try to infer from filename
+        if not statement_date:
+            base_name = os.path.basename(input_path).split(".")[0].strip()
+            date_str = base_name[:6]
+            try:
+                statement_date = datetime.strptime(date_str, "%m%d%y").strftime(
+                    "%Y-%m-%d"
+                )
+                statement_date_source = "filename"
+            except Exception:
+                statement_date = None
+                statement_date_source = None
+        # Account number extraction (as before)
+        account_number = None
+        try:
+            reader = PdfReader(input_path)
+            for page in reader.pages:
+                text = page.extract_text() or ""
+                match = re.search(r"Account Number:?\s*([\d\s]+)", text)
+                if match:
+                    account_number = match.group(1).replace(" ", "").strip()
+                    break
+        except Exception:
+            pass
+        return StatementMetadata(
+            statement_date=statement_date,
+            statement_period_start=statement_period_start,
+            statement_period_end=statement_period_end,
+            statement_date_source=statement_date_source,
+            original_filename=os.path.basename(input_path),
+            account_number=account_number,
+            bank_name="Wells Fargo",
+            account_type="mastercard",
+            parser_name="wellsfargo_mastercard_parser",
+        )
+
+    def _parse_transactions(self, text: str) -> List[Dict]:
+        # New logic: match lines like 01/1201/12F1821000C00CHGDDA AUTOMATIC PAYMENT - THANK YOU 46.00
+        transactions = []
+        # Only look for transactions after the header
+        in_transactions = False
+        for line in text.split("\n"):
+            line = line.strip()
+            if not in_transactions:
+                if line.startswith(
+                    "TransPostReference Number Description Credits Charges"
+                ):
+                    in_transactions = True
+                continue
+            # Regex for transaction lines
+            m = re.match(
+                r"(\d{2}/\d{2})(\d{2}/\d{2})([A-Z0-9]+)\s+(.+?)\s+(\d+\.\d{2})$", line
+            )
+            if m:
+                trans_date, post_date, ref_num, desc, amount = m.groups()
+                # Use statement year for full date
+                year = datetime.now().year
+                # Try to infer year from statement metadata if available
+                try:
+                    # If statement date is in the file, use that year
+                    year_match = re.search(
+                        r"Statement Closing Date (\d{2}/\d{2}/(\d{2,4}))", text
+                    )
+                    if year_match:
+                        year_str = year_match.group(1)
+                        if len(year_str.split("/")) == 3:
+                            year = int(year_str.split("/")[-1])
+                        elif len(year_str.split("/")) == 2:
+                            year = 2000 + int(year_str.split("/")[-1])
+                except Exception:
+                    pass
+                # Format dates
+                trans_date_full = (
+                    f"{year}-{int(trans_date[:2]):02d}-{int(trans_date[3:]):02d}"
+                )
+                post_date_full = (
+                    f"{year}-{int(post_date[:2]):02d}-{int(post_date[3:]):02d}"
+                )
+                # Classification
+                classification = (
+                    "credit"
+                    if ("AUTOMATIC PAYMENT" in desc or "ONLINE PAYMENT" in desc)
+                    else "charge"
+                )
+                transactions.append(
+                    {
+                        "transaction_date": trans_date_full,
+                        "post_date": post_date_full,
+                        "reference_number": ref_num,
+                        "description": desc,
+                        "amount": float(amount),
+                        "classification": classification,
+                    }
+                )
+        return transactions
+
+    def _process_transaction_block(self, lines: List[str]) -> Dict:
+        # No longer used with new _parse_transactions logic, but kept for compatibility
+        return {}
+
+
+# Register the parser
+ParserRegistry.register_parser(
+    name="wellsfargo_mastercard", parser_cls=WellsFargoMastercardParser
+)
 
 
 def analyze_line_for_transaction_type_all(line):
