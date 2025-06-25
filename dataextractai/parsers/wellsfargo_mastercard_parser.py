@@ -76,46 +76,40 @@ class WellsFargoMastercardParser(BaseParser):
         return raw_transactions
 
     def normalize_data(self, raw_data: List[Dict]) -> List[Dict]:
+        if not raw_data:
+            return []
+        df = pd.DataFrame(raw_data)
+        df = handle_credits_charges(df)
         normalized = []
-        for record in raw_data:
+        for _, row in df.iterrows():
             # Date normalization
-            date_str = record.get("transaction_date")
+            date_str = row.get("transaction_date")
             if date_str and isinstance(date_str, datetime):
                 date_str = date_str.strftime("%Y-%m-%d")
-            elif date_str and re.match(r"\d{2}/\d{2}/\d{4}", date_str):
+            elif date_str and re.match(r"\d{2}/\d{2}/\d{4}", str(date_str)):
                 date_str = datetime.strptime(date_str, "%m/%d/%Y").strftime("%Y-%m-%d")
-            elif date_str and re.match(r"\d{2}/\d{2}/\d{2}", date_str):
+            elif date_str and re.match(r"\d{2}/\d{2}/\d{2}", str(date_str)):
                 date_str = datetime.strptime(date_str, "%m/%d/%y").strftime("%Y-%m-%d")
-            # Amount normalization
-            amount = record.get("amount")
-            transaction_type = record.get("classification") or record.get(
-                "transaction_type"
-            )
-            amount = self._normalize_amount(amount, transaction_type)
             # Description
-            description = (
-                record.get("description") or record.get("transaction_text") or ""
-            )
+            description = row.get("description") or row.get("transaction_text") or ""
             # Posted date
-            posted_date = record.get("post_date")
+            posted_date = row.get("post_date")
             if posted_date and isinstance(posted_date, datetime):
                 posted_date = posted_date.strftime("%Y-%m-%d")
-            # Credits/Charges robust handling
-            credits = record.get("credits", 0.0)
-            charges = record.get("charges", 0.0)
             # Build TransactionRecord
             normalized.append(
                 {
                     "transaction_date": date_str,
-                    "amount": amount,
+                    "amount": row.get("amount"),
                     "description": description,
                     "posted_date": posted_date,
-                    "transaction_type": transaction_type,
-                    "credits": credits,
-                    "charges": charges,
+                    "transaction_type": row.get("classification")
+                    or row.get("transaction_type"),
+                    "credits": row.get("credits", 0.0),
+                    "charges": row.get("charges", 0.0),
                     "extra": {
                         k: v
-                        for k, v in record.items()
+                        for k, v in row.items()
                         if k
                         not in [
                             "transaction_date",
@@ -678,15 +672,15 @@ def process_all_pdfs(source_dir):
 
 
 def handle_credits_charges(df):
-    # Convert 'credits' and 'charges' from string to float, handling commas and converting to float
+    # Ensure 'credits' and 'charges' columns exist
+    if "credits" not in df.columns:
+        df["credits"] = 0.0
+    if "charges" not in df.columns:
+        df["charges"] = 0.0
+    # Now safely process
     df["credits"] = df["credits"].replace("[\$,]", "", regex=True).astype(float)
     df["charges"] = df["charges"].replace("[\$,]", "", regex=True).astype(float)
-
-    # Since both are positive, decide on a rule how to differentiate them
-    # This example assumes 'credits' will be made negative for the 'Amount'
-    # Adjust the logic here if the assumption is incorrect
     df["amount"] = df["charges"] - df["credits"]
-
     return df
 
 
