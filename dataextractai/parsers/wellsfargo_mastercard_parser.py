@@ -318,11 +318,7 @@ def analyze_line_for_transaction_type_all(line):
 
 
 def add_statement_date_and_file_path(transaction, pdf_path):
-    """
-    Enhance a transaction dictionary with the statement date and file path information.
-
-    Statement date extraction prioritizes PDF content (statement period or explicit date fields). Only falls back to filename if content-based extraction fails. If both fail, logs a warning and sets statement_date to None.
-    """
+    logger = logging.getLogger("wellsfargo_mastercard_parser")
     # Try to extract statement date from PDF content
     try:
         reader = PdfReader(pdf_path)
@@ -420,40 +416,7 @@ def parse_transactions(text):
 
 
 def process_transaction_block(lines):
-    """
-    Process a block of text representing a single transaction and structure the data.
-
-    This function joins a list of lines representing a transaction into a single string and analyzes it to identify
-    monetary values and classify the transaction type. It then extracts the date, description, and amounts for deposits
-    or withdrawals, and formats this information into a dictionary. If a transaction spans multiple lines, it is
-    handled accordingly. The balance is extracted if present.
-
-    Parameters
-    ----------
-    lines : list of str
-        The list of lines from a bank statement that together represent a single transaction.
-
-    Returns
-    -------
-    dict
-        A dictionary with structured transaction data, including date, description, deposits, withdrawals,
-        and ending daily balance.
-
-    Examples
-    --------
-    >>> lines = ["1/4 Some Description - 50.00", " Ending Daily Balance 1,500.00"]
-    >>> process_transaction_block(lines)
-    {
-        'transaction_date': '2023-01-04',
-        'post_date': '2023-01-04',
-        'reference_number': 'REF123455',
-        'credits': 0,
-        'charges': 200.00,
-        'statement_date': '2023-01-04',
-        'file_path' '/path/to/statement010423.pdf'
-    }
-    """
-
+    logger = logging.getLogger("wellsfargo_mastercard_parser")
     transaction_text = " ".join(lines)
     transaction_analysis = analyze_line_for_transaction_type_all(transaction_text)
     monetary_values = re.findall(r"-?\d{1,3}(?:,\d{3})*\.\d{2}", transaction_text)
