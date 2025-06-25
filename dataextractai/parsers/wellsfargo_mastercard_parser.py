@@ -714,13 +714,6 @@ def main(write_to_file=True):
         df["file_path"] = ""
     df["file_path"] = df["file_path"].apply(get_parent_dir_and_file)
 
-    # Customer Filter Step 1: Read the filtered CSV
-    filtered_df = pd.read_csv(FILTERED_PATH_CSV)
-    # Step 2: Filter the output DataFrame
-    # Keep only rows where 'reference_number' is in the filtered_df
-    filtered_reference_numbers = filtered_df["reference_number"].unique()
-    df = df[df["reference_number"].isin(filtered_reference_numbers)]
-
     # Save to CSV and Excel
     if write_to_file:
         df.to_csv(OUTPUT_PATH_CSV, index=False)
