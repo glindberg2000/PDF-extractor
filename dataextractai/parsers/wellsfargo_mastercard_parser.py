@@ -656,27 +656,34 @@ def main(input_path: str) -> ParserOutput:
     Accepts a single file path and returns a ParserOutput object. No directory or batch logic.
     All transaction_date and metadata date fields are normalized to YYYY-MM-DD format.
     """
+    logger = logging.getLogger("wellsfargo_mastercard_parser")
     errors = []
     warnings = []
+    skipped_rows = 0
     try:
         parser = WellsFargoMastercardParser()
         raw_data = parser.parse_file(input_path)
         norm = parser.normalize_data(raw_data, file_path=input_path)
         transactions = []
         for idx, row in enumerate(norm):
+            t_date = row.get("transaction_date")
+            p_date = row.get("posted_date")
+            # Robust required field check
+            if not t_date:
+                msg = f"[SKIP] File: {input_path}, Index: {idx}, Reason: missing transaction_date, Data: {row}"
+                logger.warning(msg)
+                warnings.append(msg)
+                skipped_rows += 1
+                continue
             try:
-                t_date = row.get("transaction_date")
-                p_date = row.get("posted_date")
-                if t_date:
-                    try:
-                        t_date = datetime.strptime(t_date, "%Y-%m-%d").strftime(
-                            "%Y-%m-%d"
-                        )
-                    except Exception:
-                        warnings.append(
-                            f"[WARN] Could not normalize transaction_date '{t_date}' at row {idx} in {input_path}"
-                        )
-                        t_date = None
+                # Normalize dates
+                try:
+                    t_date = datetime.strptime(t_date, "%Y-%m-%d").strftime("%Y-%m-%d")
+                except Exception:
+                    warnings.append(
+                        f"[WARN] Could not normalize transaction_date '{t_date}' at row {idx} in {input_path}"
+                    )
+                    t_date = None
                 if p_date:
                     try:
                         p_date = datetime.strptime(p_date, "%Y-%m-%d").strftime(
@@ -687,6 +694,13 @@ def main(input_path: str) -> ParserOutput:
                             f"[WARN] Could not normalize posted_date '{p_date}' at row {idx} in {input_path}"
                         )
                         p_date = None
+                # Only create TransactionRecord if t_date is still valid
+                if not t_date:
+                    msg = f"[SKIP] File: {input_path}, Index: {idx}, Reason: transaction_date normalization failed, Data: {row}"
+                    logger.warning(msg)
+                    warnings.append(msg)
+                    skipped_rows += 1
+                    continue
                 tr = TransactionRecord(
                     transaction_date=t_date,
                     amount=row.get("amount"),
@@ -703,6 +717,7 @@ def main(input_path: str) -> ParserOutput:
 
                 tb = traceback.format_exc()
                 msg = f"TransactionRecord validation error at row {idx} in {input_path}: {e}\n{tb}"
+                logger.error(msg)
                 errors.append(msg)
         # Metadata extraction (minimal, can be expanded)
         meta = raw_data[0] if raw_data else {}
@@ -747,12 +762,16 @@ def main(input_path: str) -> ParserOutput:
 
             tb = traceback.format_exc()
             msg = f"Final ParserOutput validation error: {e}\n{tb}"
+            logger.error(msg)
             errors.append(msg)
             output.errors = errors
             raise
         # Clean up NaN values in the output dict
         output_dict = output.model_dump()
         print("[DEBUG] Cleaned ParserOutput sample:", output_dict)
+        print(
+            f"[DEBUG] Skipped {skipped_rows} rows due to missing or invalid transaction_date."
+        )
         return ParserOutput.model_validate(output_dict)
     except Exception as e:
         import traceback
