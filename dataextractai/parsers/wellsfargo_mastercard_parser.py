@@ -709,6 +709,9 @@ def main(write_to_file=True):
     # Add Amount column for post processing
     df = handle_credits_charges(df)
 
+    # Robust file_path handling
+    if "file_path" not in df.columns:
+        df["file_path"] = ""
     df["file_path"] = df["file_path"].apply(get_parent_dir_and_file)
 
     # Customer Filter Step 1: Read the filtered CSV
