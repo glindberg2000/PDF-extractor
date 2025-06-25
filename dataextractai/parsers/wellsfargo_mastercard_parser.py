@@ -41,6 +41,12 @@ FILTERED_PATH_CSV = PARSER_OUTPUT_PATHS["wellsfargo_mastercard"]["filtered"]
 
 logger = logging.getLogger("wellsfargo_mastercard_parser")
 
+# Suppress pdfminer and related debug logging
+logging.getLogger("pdfminer").setLevel(logging.WARNING)
+logging.getLogger("pdfminer.pdfinterp").setLevel(logging.WARNING)
+logging.getLogger("pdfminer.layout").setLevel(logging.WARNING)
+logging.getLogger("pdfminer.converter").setLevel(logging.WARNING)
+
 
 class WellsFargoMastercardParser(BaseParser):
     """
