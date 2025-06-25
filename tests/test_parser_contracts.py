@@ -11,6 +11,9 @@ from dataextractai.parsers.chase_visa_csv_parser import main as chase_visa_main
 from dataextractai.parsers.first_republic_bank_parser import main as frb_main
 from dataextractai.parsers.wellsfargo_bank_csv_parser import main as wf_bank_main
 from dataextractai.parsers.wellsfargo_visa_parser import main as wf_visa_main
+from dataextractai.parsers.wellsfargo_mastercard_parser import (
+    WellsFargoMastercardParser,
+)
 
 
 def _validate_parser_output(output: ParserOutput, expected_bank_name: str):
@@ -142,3 +145,42 @@ def test_wellsfargo_visa_parser():
 
     assert debit is not None, "Could not find a debit transaction."
     assert credit is not None, "Could not find a credit transaction."
+
+
+def test_wellsfargo_mastercard_parser_contract():
+    """Tests the Wells Fargo Mastercard PDF parser for full contract compliance on all fields."""
+    test_folder = "tests/samples/Wells Fargo Mastercard"
+    parser = WellsFargoMastercardParser()
+    for fname in os.listdir(test_folder):
+        if fname.endswith(".pdf"):
+            fpath = os.path.join(test_folder, fname)
+            raw = parser.parse_file(fpath)
+            norm = parser.normalize_data(raw, file_path=fpath)
+            for t in norm:
+                # Check all required fields exist
+                assert "transaction_date" in t
+                assert "amount" in t
+                assert "description" in t
+                assert "posted_date" in t
+                assert "transaction_type" in t
+                assert "credits" in t
+                assert "charges" in t
+                assert "extra" in t
+                # Type checks
+                assert isinstance(t["transaction_date"], str)
+                assert isinstance(t["amount"], float)
+                assert isinstance(t["description"], str)
+                # posted_date can be None or str
+                assert t["posted_date"] is None or isinstance(t["posted_date"], str)
+                assert isinstance(t["transaction_type"], (str, type(None)))
+                assert isinstance(t["credits"], float)
+                assert isinstance(t["charges"], float)
+                assert isinstance(t["extra"], dict)
+                # file_path must be present in extra and match fpath
+                assert "file_path" in t["extra"]
+                assert t["extra"]["file_path"] == fpath
+                # Sign convention: credits positive, charges negative or zero
+                if t["credits"] > 0:
+                    assert t["amount"] > 0
+                if t["charges"] > 0:
+                    assert t["amount"] < 0

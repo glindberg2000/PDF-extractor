@@ -75,10 +75,13 @@ class WellsFargoMastercardParser(BaseParser):
             t["file_path"] = input_path
         return raw_transactions
 
-    def normalize_data(self, raw_data: List[Dict]) -> List[Dict]:
+    def normalize_data(self, raw_data: List[Dict], file_path: str = None) -> List[Dict]:
         if not raw_data:
             return []
         df = pd.DataFrame(raw_data)
+        # Ensure required columns exist
+        if "file_path" not in df.columns:
+            df["file_path"] = file_path or ""
         df = handle_credits_charges(df)
         normalized = []
         for _, row in df.iterrows():
