@@ -687,39 +687,123 @@ def handle_credits_charges(df):
     return df
 
 
-def main(write_to_file=True):
-    """Process all PDF bank statements and export transactions to CSV and Excel.
-
-    Parameters:
-    source_dir (str): The directory where PDF bank statements are located.
-    csv_output_path (str): The file path for the output CSV file.
-    xlsx_output_path (str): The file path for the output Excel file.
+def main(input_path: str) -> ParserOutput:
     """
-    # Process all PDFs and extract transactions
-    all_transactions = process_all_pdfs(SOURCE_DIR)
+    Canonical entrypoint for contract-based integration. Parses a single Wells Fargo Mastercard PDF and returns a ParserOutput.
+    Accepts a single file path and returns a ParserOutput object. No directory or batch logic.
+    All transaction_date and metadata date fields are normalized to YYYY-MM-DD format.
+    """
+    errors = []
+    warnings = []
+    try:
+        parser = WellsFargoMastercardParser()
+        raw_data = parser.parse_file(input_path)
+        norm = parser.normalize_data(raw_data, file_path=input_path)
+        transactions = []
+        for idx, row in enumerate(norm):
+            try:
+                t_date = row.get("transaction_date")
+                p_date = row.get("posted_date")
+                if t_date:
+                    try:
+                        t_date = datetime.strptime(t_date, "%Y-%m-%d").strftime(
+                            "%Y-%m-%d"
+                        )
+                    except Exception:
+                        warnings.append(
+                            f"[WARN] Could not normalize transaction_date '{t_date}' at row {idx} in {input_path}"
+                        )
+                        t_date = None
+                if p_date:
+                    try:
+                        p_date = datetime.strptime(p_date, "%Y-%m-%d").strftime(
+                            "%Y-%m-%d"
+                        )
+                    except Exception:
+                        warnings.append(
+                            f"[WARN] Could not normalize posted_date '{p_date}' at row {idx} in {input_path}"
+                        )
+                        p_date = None
+                tr = TransactionRecord(
+                    transaction_date=t_date,
+                    amount=row.get("amount"),
+                    description=row.get("description"),
+                    posted_date=p_date,
+                    transaction_type=row.get("transaction_type"),
+                    credits=row.get("credits", 0.0),
+                    charges=row.get("charges", 0.0),
+                    extra=row.get("extra", {}),
+                )
+                transactions.append(tr)
+            except Exception as e:
+                import traceback
 
-    print(f"Total Transactions: {len(all_transactions)}")
+                tb = traceback.format_exc()
+                msg = f"TransactionRecord validation error at row {idx} in {input_path}: {e}\n{tb}"
+                errors.append(msg)
+        # Metadata extraction (minimal, can be expanded)
+        meta = raw_data[0] if raw_data else {}
 
-    # Convert the list of transaction dictionaries into a DataFrame
-    df = pd.DataFrame(all_transactions)
+        def norm_date(val):
+            if not val:
+                return None
+            try:
+                return datetime.strptime(val, "%Y-%m-%d").strftime("%Y-%m-%d")
+            except Exception:
+                warnings.append(
+                    f"[WARN] Could not normalize metadata date '{val}' in {input_path}"
+                )
+                return None
 
-    # Standardize the Column Names
-    df = standardize_column_names(df)
+        metadata = StatementMetadata(
+            statement_date=norm_date(meta.get("statement_date")),
+            statement_period_start=None,
+            statement_period_end=None,
+            statement_date_source=None,
+            original_filename=os.path.basename(input_path),
+            account_number=meta.get("account_number"),
+            bank_name="Wells Fargo",
+            account_type="Credit Card",
+            parser_name="wellsfargo_mastercard",
+            parser_version=None,
+            currency="USD",
+            extra=None,
+        )
+        output = ParserOutput(
+            transactions=transactions,
+            metadata=metadata,
+            schema_version="1.0",
+            errors=errors if errors else None,
+            warnings=warnings if warnings else None,
+        )
+        # Final Pydantic validation
+        try:
+            ParserOutput.model_validate(output.model_dump())
+        except Exception as e:
+            import traceback
 
-    # Add Amount column for post processing
-    df = handle_credits_charges(df)
+            tb = traceback.format_exc()
+            msg = f"Final ParserOutput validation error: {e}\n{tb}"
+            errors.append(msg)
+            output.errors = errors
+            raise
+        # Clean up NaN values in the output dict
+        output_dict = output.model_dump()
+        print("[DEBUG] Cleaned ParserOutput sample:", output_dict)
+        return ParserOutput.model_validate(output_dict)
+    except Exception as e:
+        import traceback
 
-    # Robust file_path handling
-    if "file_path" not in df.columns:
-        df["file_path"] = ""
-    df["file_path"] = df["file_path"].apply(get_parent_dir_and_file)
-
-    # Save to CSV and Excel
-    if write_to_file:
-        df.to_csv(OUTPUT_PATH_CSV, index=False)
-        df.to_excel(OUTPUT_PATH_XLSX, index=False)
-
-    return df
+        tb = traceback.format_exc()
+        msg = f"[FATAL] Error in main() for {input_path}: {e}\n{tb}"
+        print(msg)
+        return ParserOutput(
+            transactions=[],
+            metadata=None,
+            schema_version="1.0",
+            errors=[msg],
+            warnings=None,
+        )
 
 
 def run(write_to_file=True):
