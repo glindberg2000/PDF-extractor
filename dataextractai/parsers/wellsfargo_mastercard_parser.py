@@ -54,7 +54,8 @@ class WellsFargoMastercardParser(BaseParser):
     """
 
     def can_parse(self, file_path: str) -> bool:
-        print(f"[DEBUG] can_parse called with file_path: {file_path}")
+        print("Entering can_parse")
+        print(f"locals in can_parse: {locals()}")
         try:
             reader = PdfReader(file_path)
             text = ""
@@ -73,6 +74,8 @@ class WellsFargoMastercardParser(BaseParser):
             return False
 
     def parse_file(self, input_path: str, config: Dict[str, Any] = None) -> List[Dict]:
+        print("Entering parse_file")
+        print(f"locals in parse_file: {locals()}")
         pdf_reader = PdfReader(input_path)
         text = "\n".join([page.extract_text() or "" for page in pdf_reader.pages])
         raw_transactions = self._parse_transactions(text)
@@ -82,6 +85,8 @@ class WellsFargoMastercardParser(BaseParser):
         return raw_transactions
 
     def normalize_data(self, raw_data: List[Dict], file_path: str = None) -> List[Dict]:
+        print("Entering normalize_data")
+        print(f"locals in normalize_data: {locals()}")
         if not raw_data:
             return []
         df = pd.DataFrame(raw_data)
@@ -139,6 +144,8 @@ class WellsFargoMastercardParser(BaseParser):
     def extract_metadata(
         self, raw_data: List[Dict], input_path: str
     ) -> StatementMetadata:
+        print("Entering extract_metadata")
+        print(f"locals in extract_metadata: {locals()}")
         # Extract statement dates from PDF content
         statement_date = None
         statement_period_start = None
@@ -234,6 +241,8 @@ class WellsFargoMastercardParser(BaseParser):
         )
 
     def _parse_transactions(self, text: str) -> List[Dict]:
+        print("Entering _parse_transactions")
+        print(f"locals in _parse_transactions: {locals()}")
         # New logic: match lines like 01/1201/12F1821000C00CHGDDA AUTOMATIC PAYMENT - THANK YOU 46.00
         transactions = []
         # Only look for transactions after the header
@@ -294,6 +303,8 @@ class WellsFargoMastercardParser(BaseParser):
         return transactions
 
     def _process_transaction_block(self, lines: List[str]) -> Dict:
+        print("Entering _process_transaction_block")
+        print(f"locals in _process_transaction_block: {locals()}")
         # No longer used with new _parse_transactions logic, but kept for compatibility
         return {}
 
@@ -305,15 +316,8 @@ ParserRegistry.register_parser(
 
 
 def analyze_line_for_transaction_type_all(line):
-    """
-    Analyze a line of text and determine the transaction type based on keyword search.
-
-    Parameters:
-    line : str, the line of text to analyze
-
-    Returns:
-    str, the determined transaction type ('deposit', 'withdrawal', or 'unknown')
-    """
+    print("Entering analyze_line_for_transaction_type_all")
+    print(f"locals in analyze_line_for_transaction_type_all: {locals()}")
     result = {}
 
     if "AUTOMATIC PAYMENT" in line or "ONLINE PAYMENT" in line:
@@ -325,6 +329,7 @@ def analyze_line_for_transaction_type_all(line):
 
 def add_statement_date_and_file_path(transaction, pdf_path):
     print("Entering add_statement_date_and_file_path")
+    print(f"locals in add_statement_date_and_file_path: {locals()}")
     # Try to extract statement date from PDF content
     try:
         reader = PdfReader(pdf_path)
@@ -584,6 +589,8 @@ def process_all_pdfs(source_dir):
 
 
 def handle_credits_charges(df):
+    print("Entering handle_credits_charges")
+    print(f"locals in handle_credits_charges: {locals()}")
     # Ensure 'credits' and 'charges' columns exist
     if "credits" not in df.columns:
         df["credits"] = 0.0
@@ -598,6 +605,7 @@ def handle_credits_charges(df):
 
 def main(input_path: str) -> ParserOutput:
     print("Entering main")
+    print(f"locals in main: {locals()}")
     errors = []
     warnings = []
     skipped_rows = 0
@@ -612,6 +620,7 @@ def main(input_path: str) -> ParserOutput:
             # Robust required field check
             if not t_date:
                 msg = f"[SKIP] File: {input_path}, Index: {idx}, Reason: missing transaction_date, Data: {row}"
+                print("About to log warning/error")
                 logger.warning(msg)
                 warnings.append(msg)
                 skipped_rows += 1
@@ -638,6 +647,7 @@ def main(input_path: str) -> ParserOutput:
                 # Only create TransactionRecord if t_date is still valid
                 if not t_date:
                     msg = f"[SKIP] File: {input_path}, Index: {idx}, Reason: transaction_date normalization failed, Data: {row}"
+                    print("About to log warning/error")
                     logger.warning(msg)
                     warnings.append(msg)
                     skipped_rows += 1
@@ -658,6 +668,7 @@ def main(input_path: str) -> ParserOutput:
 
                 tb = traceback.format_exc()
                 msg = f"TransactionRecord validation error at row {idx} in {input_path}: {e}\n{tb}"
+                print("About to log warning/error")
                 logger.error(msg)
                 errors.append(msg)
         # Metadata extraction (minimal, can be expanded)
@@ -703,6 +714,7 @@ def main(input_path: str) -> ParserOutput:
 
             tb = traceback.format_exc()
             msg = f"Final ParserOutput validation error: {e}\n{tb}"
+            print("About to log warning/error")
             logger.error(msg)
             errors.append(msg)
             output.errors = errors
