@@ -324,6 +324,7 @@ def analyze_line_for_transaction_type_all(line):
 
 
 def add_statement_date_and_file_path(transaction, pdf_path):
+    print("Entering add_statement_date_and_file_path")
     # Try to extract statement date from PDF content
     try:
         reader = PdfReader(pdf_path)
@@ -360,58 +361,8 @@ def add_statement_date_and_file_path(transaction, pdf_path):
     return transaction
 
 
-def parse_transactions(text):
-    """
-    Parse the provided text from a mastercard statement and extract transactions.
-
-    This function splits the input text into lines and uses a regular expression to identify the start of a transaction by a date pattern. Each transaction is gathered into a block, which is then processed to extract detailed transaction data.
-
-    Parameters
-    ----------
-    text : str
-        The complete text from a bank statement where transactions are separated by newline characters.
-
-    Returns
-    -------
-    list of dicts
-        A list of dictionaries, each representing a transaction with its extracted data.
-
-    Examples
-    --------
-    >>> text = "1/4 1/4 RefNo111111 Grocery Store 50.00\n1/5 Online Payment Received 100.00\nPERIODIC*FINANCE"
-    >>> parse_transactions(text)
-    [    {
-        'transaction_date': '2023-01-04',
-        'post_date': '2023-01-04',
-        'reference_number': 'REF123455',
-        'credits': 0,
-        'charges': 200.00,
-        'statement_date': '2023-01-04',
-        'file_path' '/path/to/statement010423.pdf'
-    }]
-    """
-
-    lines = text.split("\n")
-    transactions = []
-    current_transaction = []
-    date_pattern = re.compile(
-        r"^\s*\d{1,2}/\d{1,2}\s+\d{1,2}/\d{1,2}"  # Matches two dates at the start of the line
-    )
-    # Matches a date at the start of the line
-    for line in lines:
-        if date_pattern.match(line) or "PERIODIC*FINANCE" in line:
-            if current_transaction:  # If we've gathered a transaction, process it
-                transactions.append(process_transaction_block(current_transaction))
-                current_transaction = []  # Reset for the next transaction
-            if "PERIODIC*FINANCE" not in line:  # Ignore the "PERIODIC*FINANCE" line
-                current_transaction.append(line)
-        elif current_transaction:  # If we're currently gathering a transaction
-            current_transaction.append(line)
-
-    return transactions
-
-
 def process_transaction_block(lines):
+    print("Entering process_transaction_block")
     transaction_text = " ".join(lines)
     transaction_analysis = analyze_line_for_transaction_type_all(transaction_text)
     monetary_values = re.findall(r"-?\d{1,3}(?:,\d{3})*\.\d{2}", transaction_text)
@@ -646,11 +597,7 @@ def handle_credits_charges(df):
 
 
 def main(input_path: str) -> ParserOutput:
-    """
-    Canonical entrypoint for contract-based integration. Parses a single Wells Fargo Mastercard PDF and returns a ParserOutput.
-    Accepts a single file path and returns a ParserOutput object. No directory or batch logic.
-    All transaction_date and metadata date fields are normalized to YYYY-MM-DD format.
-    """
+    print("Entering main")
     errors = []
     warnings = []
     skipped_rows = 0
@@ -770,16 +717,8 @@ def main(input_path: str) -> ParserOutput:
     except Exception as e:
         import traceback
 
-        tb = traceback.format_exc()
-        msg = f"[FATAL] Error in main() for {input_path}: {e}\n{tb}"
-        print(msg)
-        return ParserOutput(
-            transactions=[],
-            metadata=None,
-            schema_version="1.0",
-            errors=[msg],
-            warnings=None,
-        )
+        logger.error(f"Exception in main: {e}\n{traceback.format_exc()}")
+        raise
 
 
 def run(write_to_file=True):
