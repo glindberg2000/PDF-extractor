@@ -39,7 +39,7 @@ OUTPUT_PATH_CSV = PARSER_OUTPUT_PATHS["wellsfargo_mastercard"]["csv"]
 OUTPUT_PATH_XLSX = PARSER_OUTPUT_PATHS["wellsfargo_mastercard"]["xlsx"]
 FILTERED_PATH_CSV = PARSER_OUTPUT_PATHS["wellsfargo_mastercard"]["filtered"]
 
-wellsfargo_logger = logging.getLogger("wellsfargo_mastercard_parser")
+wellsFargo_logger = logging.getLogger("wellsfargo_mastercard_parser")
 
 # Suppress pdfminer and related debug logging
 logging.getLogger("pdfminer").setLevel(logging.WARNING)
