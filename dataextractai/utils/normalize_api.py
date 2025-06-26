@@ -13,7 +13,7 @@ from dataextractai.parsers.chase_checking import (
 # Register all available parsers at import time
 autodiscover_parsers()
 
-logger = logging.getLogger(__name__)
+normalize_api_logger = logging.getLogger("normalize_api")
 
 REQUIRED_FIELDS = ["transaction_date", "description", "amount"]
 
@@ -111,7 +111,7 @@ def normalize_parsed_data(file_path, parser_name, client_name=None, config=None)
         if is_valid:
             valid_transactions.append(tx)
         else:
-            logger.warning(f"Skipping transaction: {reason} | Data: {tx}")
+            normalize_api_logger.warning(f"Skipping transaction: {reason} | Data: {tx}")
 
     # After all other normalization steps, ensure required fields are present
     if "source" not in df.columns:

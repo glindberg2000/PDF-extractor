@@ -9,7 +9,7 @@ import re
 from .data_transformation import apply_transformation_map
 from .config import TRANSFORMATION_MAPS
 
-logger = logging.getLogger(__name__)
+transaction_normalizer_logger = logging.getLogger("transaction_normalizer")
 
 
 class TransactionNormalizer:
@@ -127,8 +127,12 @@ class TransactionNormalizer:
                 try:
                     # Read CSV with all columns as strings initially
                     df = pd.read_csv(file_path, dtype=str)
-                    logger.info(f"Loaded {len(df)} rows from {file}")
-                    logger.info(f"Columns in {file}: {df.columns.tolist()}")
+                    transaction_normalizer_logger.info(
+                        f"Loaded {len(df)} rows from {file}"
+                    )
+                    transaction_normalizer_logger.info(
+                        f"Columns in {file}: {df.columns.tolist()}"
+                    )
 
                     # Get source name from file
                     source = file.replace("_output.csv", "")
@@ -142,11 +146,13 @@ class TransactionNormalizer:
 
                     # Apply transformation map if available
                     if source in TRANSFORMATION_MAPS:
-                        logger.info(f"Applying transformation map for {source}")
-                        logger.info(
+                        transaction_normalizer_logger.info(
+                            f"Applying transformation map for {source}"
+                        )
+                        transaction_normalizer_logger.info(
                             f"Transformation map: {TRANSFORMATION_MAPS[source]}"
                         )
-                        logger.info(
+                        transaction_normalizer_logger.info(
                             f"Available columns before transform: {df.columns.tolist()}"
                         )
 
@@ -162,12 +168,14 @@ class TransactionNormalizer:
                             elif source_col in df.columns:
                                 transformed_df[target_col] = df[source_col]
                             else:
-                                logger.warning(
+                                transaction_normalizer_logger.warning(
                                     f"Column {source_col} not found in source data for {target_col}"
                                 )
 
                         df = transformed_df
-                        logger.info(f"Columns after transform: {df.columns.tolist()}")
+                        transaction_normalizer_logger.info(
+                            f"Columns after transform: {df.columns.tolist()}"
+                        )
 
                     # Log any rows with missing required columns
                     required_cols = ["transaction_date", "description", "amount"]
@@ -175,22 +183,26 @@ class TransactionNormalizer:
                         col for col in required_cols if col not in df.columns
                     ]
                     if missing_cols:
-                        logger.error(
+                        transaction_normalizer_logger.error(
                             f"Missing required columns in {file}: {missing_cols}"
                         )
-                        logger.error(f"Available columns: {df.columns.tolist()}")
+                        transaction_normalizer_logger.error(
+                            f"Available columns: {df.columns.tolist()}"
+                        )
                         continue
 
                     # Log any rows with missing transaction dates
                     missing_dates = df["transaction_date"].isna().sum()
                     if missing_dates > 0:
-                        logger.warning(
+                        transaction_normalizer_logger.warning(
                             f"Found {missing_dates} rows with missing dates in {file}"
                         )
                         # Log the problematic rows
                         problematic_rows = df[df["transaction_date"].isna()]
                         for _, row in problematic_rows.iterrows():
-                            logger.warning(f"Row with missing date: {row.to_dict()}")
+                            transaction_normalizer_logger.warning(
+                                f"Row with missing date: {row.to_dict()}"
+                            )
                             # For interest credits with missing dates, use the statement end date
                             if (
                                 "description" in row
@@ -217,13 +229,13 @@ class TransactionNormalizer:
                         # Count and log rows with NaT dates
                         nat_count = df["normalized_date"].isna().sum()
                         if nat_count > 0:
-                            logger.warning(
+                            transaction_normalizer_logger.warning(
                                 f"Warning: {nat_count} rows have invalid dates in {file}"
                             )
                             # Log the problematic rows
                             problematic_rows = df[df["normalized_date"].isna()]
                             for _, row in problematic_rows.iterrows():
-                                logger.warning(
+                                transaction_normalizer_logger.warning(
                                     f"Row with missing date: {row.to_dict()}"
                                 )
                                 # For interest credits with missing dates, use the statement end date
@@ -241,10 +253,12 @@ class TransactionNormalizer:
                                         )
                                     )
                     else:
-                        logger.warning(
+                        transaction_normalizer_logger.warning(
                             f"Warning: 'transaction_date' column not found in {file}"
                         )
-                        logger.warning(f"Available columns: {df.columns.tolist()}")
+                        transaction_normalizer_logger.warning(
+                            f"Available columns: {df.columns.tolist()}"
+                        )
 
                     if "amount" in df.columns:
                         df["normalized_amount"] = pd.to_numeric(
@@ -252,7 +266,9 @@ class TransactionNormalizer:
                             errors="coerce",
                         )
                     else:
-                        logger.warning(f"Warning: 'amount' column not found in {file}")
+                        transaction_normalizer_logger.warning(
+                            f"Warning: 'amount' column not found in {file}"
+                        )
 
                     # After transformation, strict validation for this file
                     valid_rows = []
@@ -262,7 +278,7 @@ class TransactionNormalizer:
                             valid_rows.append(row)
                         else:
                             self.problem_rows.append((row, f"{file}: {reason}"))
-                            logger.warning(
+                            transaction_normalizer_logger.warning(
                                 f"Dropping invalid row from {file}: {reason} | Data: {row}"
                             )
                     valid_df = pd.DataFrame(valid_rows)
@@ -273,13 +289,17 @@ class TransactionNormalizer:
                         out_name = os.path.splitext(file)[0] + "_normalized.csv"
                         out_path = os.path.join(self.per_statement_dir, out_name)
                         valid_df.to_csv(out_path, index=False)
-                        logger.info(f"Wrote per-statement normalized file: {out_path}")
+                        transaction_normalizer_logger.info(
+                            f"Wrote per-statement normalized file: {out_path}"
+                        )
 
                 except Exception as e:
-                    logger.error(f"Error loading {file}: {e}")
+                    transaction_normalizer_logger.error(f"Error loading {file}: {e}")
 
         if not all_transactions:
-            logger.warning("No transaction files found to normalize")
+            transaction_normalizer_logger.warning(
+                "No transaction files found to normalize"
+            )
             return pd.DataFrame()
 
         # Combine all valid transactions
@@ -292,7 +312,7 @@ class TransactionNormalizer:
         required_columns = ["transaction_date", "description", "amount", "source"]
         for col in required_columns:
             if col not in combined_df.columns:
-                logger.error(f"Missing required column: {col}")
+                transaction_normalizer_logger.error(f"Missing required column: {col}")
                 return pd.DataFrame()
 
         # Use normalized_date as transaction_date if available
@@ -306,7 +326,7 @@ class TransactionNormalizer:
                     interest_credits, "statement_end_date"
                 ]
             else:
-                logger.warning(
+                transaction_normalizer_logger.warning(
                     "'statement_end_date' column not found; skipping interest credit date logic."
                 )
             # For other transactions, use normalized date
@@ -325,9 +345,11 @@ class TransactionNormalizer:
             ).apply(lambda x: x.strftime("%Y-%m-%d") if pd.notnull(x) else None)
 
         # Log the final DataFrame shape and source counts
-        logger.info(f"Final DataFrame shape: {combined_df.shape}")
+        transaction_normalizer_logger.info(
+            f"Final DataFrame shape: {combined_df.shape}"
+        )
         source_counts = combined_df["source"].value_counts()
-        logger.info(f"Transactions per source:\n{source_counts}")
+        transaction_normalizer_logger.info(f"Transactions per source:\n{source_counts}")
 
         # Final strict validation: filter out invalid/problem rows
         valid_rows = []
@@ -337,9 +359,11 @@ class TransactionNormalizer:
                 valid_rows.append(row)
             else:
                 self.problem_rows.append((row, reason))
-                logger.warning(f"Dropping invalid row: {reason} | Data: {row}")
+                transaction_normalizer_logger.warning(
+                    f"Dropping invalid row: {reason} | Data: {row}"
+                )
         valid_df = pd.DataFrame(valid_rows)
-        logger.info(
+        transaction_normalizer_logger.info(
             f"Valid rows: {len(valid_df)} | Problem rows: {len(self.problem_rows)}"
         )
 
@@ -348,7 +372,9 @@ class TransactionNormalizer:
             self.output_dir, f"{self.client_name}_normalized_transactions.csv"
         )
         valid_df.to_csv(output_file, index=False)
-        logger.info(f"Saved normalized transactions to {output_file}")
+        transaction_normalizer_logger.info(
+            f"Saved normalized transactions to {output_file}"
+        )
 
         return valid_df
 

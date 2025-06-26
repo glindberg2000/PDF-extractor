@@ -58,7 +58,7 @@ FILENAME_KEYWORD_MAP = {
 
 
 def find_parser(filename, parser_map):
-    """Finds the appropriate parser for a given filename."""
+    """Finds the appropriate parser for a given filename. Tries keyword match, then content-based detection."""
     normalized_filename = filename.lower().replace("-", "_").replace(" ", "_")
     sorted_keywords = sorted(FILENAME_KEYWORD_MAP.keys(), key=len, reverse=True)
 
@@ -68,6 +68,31 @@ def find_parser(filename, parser_map):
             if parser_name in parser_map:
                 return parser_map[parser_name], parser_name
 
+    # Fallback: try content-based detection (call can_parse on each parser)
+    for parser_name, parser_func in parser_map.items():
+        try:
+            # Import the parser class to call can_parse
+            module = importlib.import_module(f"dataextractai.parsers.{parser_name}")
+            parser_cls = None
+            if hasattr(module, parser_name[0].upper() + parser_name[1:]):
+                parser_cls = getattr(module, parser_name[0].upper() + parser_name[1:])
+            elif hasattr(module, "WellsFargoMastercardParser"):
+                parser_cls = getattr(module, "WellsFargoMastercardParser")
+            elif hasattr(module, "Parser"):
+                parser_cls = getattr(module, "Parser")
+            if parser_cls and hasattr(parser_cls, "can_parse"):
+                parser = parser_cls()
+                file_path = (
+                    filename
+                    if os.path.exists(filename)
+                    else os.path.join("tests/samples", filename)
+                )
+                if parser.can_parse(file_path):
+                    return parser_func, parser_name
+        except Exception as e:
+            print(
+                f"[DEBUG] Content-based detection failed for {parser_name} on {filename}: {e}"
+            )
     return None, None
 
 

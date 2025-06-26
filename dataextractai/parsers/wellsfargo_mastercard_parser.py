@@ -33,6 +33,7 @@ from typing import List, Dict, Any
 from ..parsers_core.base import BaseParser
 from ..parsers_core.registry import ParserRegistry
 from ..parsers_core.models import ParserOutput, TransactionRecord, StatementMetadata
+from dataextractai.utils.data_transformation import normalize_transaction_amount
 
 SOURCE_DIR = PARSER_INPUT_DIRS["wellsfargo_mastercard"]
 OUTPUT_PATH_CSV = PARSER_OUTPUT_PATHS["wellsfargo_mastercard"]["csv"]
@@ -54,8 +55,6 @@ class WellsFargoMastercardParser(BaseParser):
     """
 
     def can_parse(self, file_path: str) -> bool:
-        print("Entering can_parse")
-        print(f"locals in can_parse: {locals()}")
         try:
             reader = PdfReader(file_path)
             text = ""
@@ -67,26 +66,28 @@ class WellsFargoMastercardParser(BaseParser):
                 and "account number" in text
                 and ("business card" in text or "credit line" in text)
             )
-            print(f"[DEBUG] can_parse result for {file_path}: {result}")
             return result
         except Exception as e:
-            print(f"[DEBUG] can_parse error for {file_path}: {e}")
             return False
 
     def parse_file(self, input_path: str, config: Dict[str, Any] = None) -> List[Dict]:
-        print("Entering parse_file")
-        print(f"locals in parse_file: {locals()}")
         pdf_reader = PdfReader(input_path)
         text = "\n".join([page.extract_text() or "" for page in pdf_reader.pages])
-        raw_transactions = self._parse_transactions(text)
+        # Extract statement year from metadata
+        metadata = self.extract_metadata([], input_path)
+        statement_year = None
+        if metadata and metadata.statement_date:
+            try:
+                statement_year = int(metadata.statement_date[:4])
+            except Exception:
+                statement_year = None
+        raw_transactions = self._parse_transactions(text, statement_year)
         # Attach file path for metadata extraction
         for t in raw_transactions:
             t["file_path"] = input_path
         return raw_transactions
 
     def normalize_data(self, raw_data: List[Dict], file_path: str = None) -> List[Dict]:
-        print("Entering normalize_data")
-        print(f"locals in normalize_data: {locals()}")
         if not raw_data:
             return []
         df = pd.DataFrame(raw_data)
@@ -144,8 +145,6 @@ class WellsFargoMastercardParser(BaseParser):
     def extract_metadata(
         self, raw_data: List[Dict], input_path: str
     ) -> StatementMetadata:
-        print("Entering extract_metadata")
-        print(f"locals in extract_metadata: {locals()}")
         # Extract statement dates from PDF content
         statement_date = None
         statement_period_start = None
@@ -240,12 +239,8 @@ class WellsFargoMastercardParser(BaseParser):
             parser_name="wellsfargo_mastercard_parser",
         )
 
-    def _parse_transactions(self, text: str) -> List[Dict]:
-        print("Entering _parse_transactions")
-        print(f"locals in _parse_transactions: {locals()}")
-        # New logic: match lines like 01/1201/12F1821000C00CHGDDA AUTOMATIC PAYMENT - THANK YOU 46.00
+    def _parse_transactions(self, text: str, statement_year: int = None) -> List[Dict]:
         transactions = []
-        # Only look for transactions after the header
         in_transactions = False
         for line in text.split("\n"):
             line = line.strip()
@@ -255,36 +250,39 @@ class WellsFargoMastercardParser(BaseParser):
                 ):
                     in_transactions = True
                 continue
-            # Regex for transaction lines
             m = re.match(
                 r"(\d{2}/\d{2})(\d{2}/\d{2})([A-Z0-9]+)\s+(.+?)\s+(\d+\.\d{2})$", line
             )
             if m:
                 trans_date, post_date, ref_num, desc, amount = m.groups()
                 # Use statement year for full date
-                year = datetime.now().year
-                # Try to infer year from statement metadata if available
-                try:
-                    # If statement date is in the file, use that year
-                    year_match = re.search(
-                        r"Statement Closing Date (\d{2}/\d{2}/(\d{2,4}))", text
-                    )
-                    if year_match:
-                        year_str = year_match.group(1)
-                        if len(year_str.split("/")) == 3:
-                            year = int(year_str.split("/")[-1])
-                        elif len(year_str.split("/")) == 2:
-                            year = 2000 + int(year_str.split("/")[-1])
-                except Exception:
-                    pass
+                year = statement_year or datetime.now().year
                 # Format dates
-                trans_date_full = (
-                    f"{year}-{int(trans_date[:2]):02d}-{int(trans_date[3:]):02d}"
-                )
-                post_date_full = (
-                    f"{year}-{int(post_date[:2]):02d}-{int(post_date[3:]):02d}"
-                )
-                # Classification
+                trans_month, trans_day = int(trans_date[:2]), int(trans_date[3:])
+                post_month, post_day = int(post_date[:2]), int(post_date[3:])
+                # Handle year boundary: if statement is Jan and transaction is Dec, use previous year
+                if statement_year:
+                    if (
+                        int(str(statement_year)[-2:])
+                        and trans_month == 12
+                        and int(str(statement_year)[-2:]) == 1
+                    ):
+                        trans_year = statement_year - 1
+                    else:
+                        trans_year = statement_year
+                    if (
+                        int(str(statement_year)[-2:])
+                        and post_month == 12
+                        and int(str(statement_year)[-2:]) == 1
+                    ):
+                        post_year = statement_year - 1
+                    else:
+                        post_year = statement_year
+                else:
+                    trans_year = year
+                    post_year = year
+                trans_date_full = f"{trans_year:04d}-{trans_month:02d}-{trans_day:02d}"
+                post_date_full = f"{post_year:04d}-{post_month:02d}-{post_day:02d}"
                 classification = (
                     "credit"
                     if ("AUTOMATIC PAYMENT" in desc or "ONLINE PAYMENT" in desc)
@@ -303,8 +301,6 @@ class WellsFargoMastercardParser(BaseParser):
         return transactions
 
     def _process_transaction_block(self, lines: List[str]) -> Dict:
-        print("Entering _process_transaction_block")
-        print(f"locals in _process_transaction_block: {locals()}")
         # No longer used with new _parse_transactions logic, but kept for compatibility
         return {}
 
@@ -316,8 +312,6 @@ ParserRegistry.register_parser(
 
 
 def analyze_line_for_transaction_type_all(line):
-    print("Entering analyze_line_for_transaction_type_all")
-    print(f"locals in analyze_line_for_transaction_type_all: {locals()}")
     result = {}
 
     if "AUTOMATIC PAYMENT" in line or "ONLINE PAYMENT" in line:
@@ -328,8 +322,6 @@ def analyze_line_for_transaction_type_all(line):
 
 
 def add_statement_date_and_file_path(transaction, pdf_path):
-    print("Entering add_statement_date_and_file_path")
-    print(f"locals in add_statement_date_and_file_path: {locals()}")
     # Try to extract statement date from PDF content
     try:
         reader = PdfReader(pdf_path)
@@ -367,7 +359,6 @@ def add_statement_date_and_file_path(transaction, pdf_path):
 
 
 def process_transaction_block(lines):
-    print("Entering process_transaction_block")
     transaction_text = " ".join(lines)
     transaction_analysis = analyze_line_for_transaction_type_all(transaction_text)
     monetary_values = re.findall(r"-?\d{1,3}(?:,\d{3})*\.\d{2}", transaction_text)
@@ -474,7 +465,6 @@ def extract_transactions_from_page(pdf_path):
 
     # Open the PDF file
     with pdfplumber.open(pdf_path) as pdf:
-        print(f"processing file: {pdf_path}")
         # Extract the text of the third page
         page_text = pdf.pages[2].extract_text()  # pages[2] is the third page
 
@@ -589,23 +579,28 @@ def process_all_pdfs(source_dir):
 
 
 def handle_credits_charges(df):
-    print("Entering handle_credits_charges")
-    print(f"locals in handle_credits_charges: {locals()}")
     # Ensure 'credits' and 'charges' columns exist
     if "credits" not in df.columns:
         df["credits"] = 0.0
     if "charges" not in df.columns:
         df["charges"] = 0.0
-    # Now safely process
-    df["credits"] = df["credits"].replace("[\$,]", "", regex=True).astype(float)
-    df["charges"] = df["charges"].replace("[\$,]", "", regex=True).astype(float)
-    df["amount"] = df["charges"] - df["credits"]
+    # Clean up credits/charges columns
+    df["credits"] = df["credits"].replace("[\\$,]", "", regex=True).astype(float)
+    df["charges"] = df["charges"].replace("[\\$,]", "", regex=True).astype(float)
+
+    # Use normalize_transaction_amount for each row
+    def norm_amount(row):
+        return normalize_transaction_amount(
+            row.get("amount"),
+            row.get("classification", "charge"),
+            is_charge_positive=False,
+        )
+
+    df["amount"] = df.apply(norm_amount, axis=1)
     return df
 
 
 def main(input_path: str) -> ParserOutput:
-    print("Entering main")
-    print(f"locals in main: {locals()}")
     errors = []
     warnings = []
     skipped_rows = 0
@@ -620,7 +615,6 @@ def main(input_path: str) -> ParserOutput:
             # Robust required field check
             if not t_date:
                 msg = f"[SKIP] File: {input_path}, Index: {idx}, Reason: missing transaction_date, Data: {row}"
-                print("About to log warning/error")
                 wellsFargo_logger.warning(msg)
                 warnings.append(msg)
                 skipped_rows += 1
@@ -647,7 +641,6 @@ def main(input_path: str) -> ParserOutput:
                 # Only create TransactionRecord if t_date is still valid
                 if not t_date:
                     msg = f"[SKIP] File: {input_path}, Index: {idx}, Reason: transaction_date normalization failed, Data: {row}"
-                    print("About to log warning/error")
                     wellsFargo_logger.warning(msg)
                     warnings.append(msg)
                     skipped_rows += 1
@@ -668,7 +661,6 @@ def main(input_path: str) -> ParserOutput:
 
                 tb = traceback.format_exc()
                 msg = f"TransactionRecord validation error at row {idx} in {input_path}: {e}\n{tb}"
-                print("About to log warning/error")
                 wellsFargo_logger.error(msg)
                 errors.append(msg)
         # Metadata extraction (minimal, can be expanded)
@@ -714,21 +706,17 @@ def main(input_path: str) -> ParserOutput:
 
             tb = traceback.format_exc()
             msg = f"Final ParserOutput validation error: {e}\n{tb}"
-            print("About to log warning/error")
             wellsFargo_logger.error(msg)
             errors.append(msg)
             output.errors = errors
             raise
         # Clean up NaN values in the output dict
         output_dict = output.model_dump()
-        print("[DEBUG] Cleaned ParserOutput sample:", output_dict)
         print(
             f"[DEBUG] Skipped {skipped_rows} rows due to missing or invalid transaction_date."
         )
         return ParserOutput.model_validate(output_dict)
     except Exception as e:
-        import traceback
-
         wellsFargo_logger.error(f"Exception in main: {e}\n{traceback.format_exc()}")
         raise
 

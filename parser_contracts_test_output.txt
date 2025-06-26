@@ -1,0 +1,32 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.13.2, pytest-8.4.0, pluggy-1.6.0 -- /Users/greg/repos/PDF-extractor/venv/bin/python3.13
+cachedir: .pytest_cache
+rootdir: /Users/greg/repos/PDF-extractor
+configfile: pyproject.toml
+plugins: anyio-4.9.0
+collecting ... collected 8 items
+
+tests/test_parser_contracts.py::test_apple_card_parser PASSED            [ 12%]
+tests/test_parser_contracts.py::test_capital_one_parser PASSED           [ 25%]
+tests/test_parser_contracts.py::test_amazon_invoice_parser PASSED        [ 37%]
+tests/test_parser_contracts.py::test_chase_visa_parser PASSED            [ 50%]
+tests/test_parser_contracts.py::test_first_republic_parser PASSED        [ 62%]
+tests/test_parser_contracts.py::test_wellsfargo_bank_csv_parser PASSED   [ 75%]
+tests/test_parser_contracts.py::test_wellsfargo_visa_parser PASSED       [ 87%]
+tests/test_parser_contracts.py::test_wellsfargo_mastercard_parser_contract PASSED [100%]
+
+=============================== warnings summary ===============================
+venv/lib/python3.13/site-packages/PyPDF2/__init__.py:21
+  /Users/greg/repos/PDF-extractor/venv/lib/python3.13/site-packages/PyPDF2/__init__.py:21: DeprecationWarning: PyPDF2 is deprecated. Please move to the pypdf library instead.
+    warnings.warn(
+
+dataextractai/parsers/wellsfargo_mastercard_parser.py:593
+  /Users/greg/repos/PDF-extractor/dataextractai/parsers/wellsfargo_mastercard_parser.py:593: SyntaxWarning: invalid escape sequence '\$'
+    df["credits"] = df["credits"].replace("[\$,]", "", regex=True).astype(float)
+
+dataextractai/parsers/wellsfargo_mastercard_parser.py:594
+  /Users/greg/repos/PDF-extractor/dataextractai/parsers/wellsfargo_mastercard_parser.py:594: SyntaxWarning: invalid escape sequence '\$'
+    df["charges"] = df["charges"].replace("[\$,]", "", regex=True).astype(float)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================== 8 passed, 3 warnings in 2.02s =========================

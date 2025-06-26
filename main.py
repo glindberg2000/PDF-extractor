@@ -74,11 +74,6 @@ def process_transactions(
 
 def main():
     """Main entry point."""
-    # Discover and register all available parsers
-    from dataextractai.parsers_core.autodiscover import autodiscover_parsers
-
-    autodiscover_parsers()
-
     # Display startup banner
     display_banner()
 
