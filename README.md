@@ -509,3 +509,63 @@ All parsers are now detected by file content using each parser's `can_parse` met
 
 The test harness now uses content-based detection for all parsers, ensuring that files are matched to the correct parser by their contents, not their filenames. This improves reliability and maintainability.
 
+# Parser Development & Debugging Guide
+
+## 1. Adding or Upgrading a Parser
+- Use the modular, contract-based pattern (see existing parsers for reference).
+- Implement a `can_parse` method for robust, content-based detection (do not rely on filename except as a last resort).
+- Use a module-level logger (never assign `logger` inside functions).
+- Ensure all required fields (dates, amounts, file_path, etc.) are always present in the output.
+- Use the provided normalization helpers (e.g., `normalize_transaction_amount`) for sign conventions and field consistency.
+
+## 2. Common Pitfalls & Gotchas
+- **Logger Scoping:** Only use module-level loggers. Never assign `logger` inside a function. Name your logger uniquely (e.g., `wellsFargo_logger`).
+- **Date Normalization:** Always extract the statement year/date from the PDF content (or filename as a fallback) and use it for all transaction/post dates. Do not guess or default to the current year.
+- **Amount Sign Convention:**
+  - Charges/Expenses/Debits: **Negative** (e.g., purchases, fees: `-149.88`)
+  - Credits/Payments/Income: **Positive** (e.g., payments, refunds: `+46.00`)
+  - Use `normalize_transaction_amount` for all credit card parsers.
+- **Contract Compliance:** Output must be a valid `ParserOutput` (Pydantic) object. All fields must be present and correctly typed. No `None` for required fields.
+- **Parser Detection:** Always implement and test `can_parse` for content-based detection. The test harness will use this to match files to parsers.
+- **Debug Prints:** Remove all debug prints and extra logging before finalizing your PR.
+
+## 3. Required Output Format
+- Output must be a `ParserOutput` (Pydantic) object.
+- Each transaction must be a `TransactionRecord` with all required fields.
+- No missing or `None` values for required fields.
+- The output must pass all contract tests.
+
+## 4. Tests to Run
+- **Contract Compliance:**
+  - `pytest -v tests/test_parser_contracts.py` (ensures output matches required schema and conventions)
+- **Integration/Batch:**
+  - `pytest -v tests/test_all_parsers_on_folder.py` (runs all parsers on all sample files, checks detection and output)
+- **Spot-Check Output:**
+  - Use `scripts/dump_wfmc_csv.py` (or similar) to dump parser output to CSV for manual review.
+
+## 5. Debugging & Spot-Checking
+- If a parser is not detected, check its `can_parse` method and ensure it works on real file content.
+- If all amounts are zero or have the wrong sign, check normalization logic and use the helpers.
+- If dates are missing or wrong, ensure the statement year is extracted and used everywhere.
+- If contract tests fail, check for missing fields, wrong types, or sign convention errors.
+- Use CSV dumps to quickly review output for a sample file.
+
+## 6. Final Checklist Before PR/Merge
+- [ ] All debug prints/logs removed
+- [ ] Output is contract-compliant (passes contract tests)
+- [ ] Content-based detection works (passes integration tests)
+- [ ] Amount sign convention is correct
+- [ ] Dates are correct and use statement year
+- [ ] README and any relevant docs/scripts are updated
+- [ ] Team notified of any changes to conventions or detection logic
+
+## 7. References & Scripts
+- See `scripts/dump_wfmc_csv.py` for CSV spot-checking
+- See `tests/test_parser_contracts.py` for contract tests
+- See `tests/test_all_parsers_on_folder.py` for integration/batch tests
+- See this README for sign conventions, detection logic, and best practices
+
+---
+
+*Keep this section up to date as new patterns, pitfalls, or best practices emerge!*
+
