@@ -39,7 +39,7 @@ OUTPUT_PATH_CSV = PARSER_OUTPUT_PATHS["wellsfargo_mastercard"]["csv"]
 OUTPUT_PATH_XLSX = PARSER_OUTPUT_PATHS["wellsfargo_mastercard"]["xlsx"]
 FILTERED_PATH_CSV = PARSER_OUTPUT_PATHS["wellsfargo_mastercard"]["filtered"]
 
-logger = logging.getLogger("wellsfargo_mastercard_parser")
+wellsfargo_logger = logging.getLogger("wellsfargo_mastercard_parser")
 
 # Suppress pdfminer and related debug logging
 logging.getLogger("pdfminer").setLevel(logging.WARNING)
@@ -621,7 +621,7 @@ def main(input_path: str) -> ParserOutput:
             if not t_date:
                 msg = f"[SKIP] File: {input_path}, Index: {idx}, Reason: missing transaction_date, Data: {row}"
                 print("About to log warning/error")
-                logger.warning(msg)
+                wellsFargo_logger.warning(msg)
                 warnings.append(msg)
                 skipped_rows += 1
                 continue
@@ -648,7 +648,7 @@ def main(input_path: str) -> ParserOutput:
                 if not t_date:
                     msg = f"[SKIP] File: {input_path}, Index: {idx}, Reason: transaction_date normalization failed, Data: {row}"
                     print("About to log warning/error")
-                    logger.warning(msg)
+                    wellsFargo_logger.warning(msg)
                     warnings.append(msg)
                     skipped_rows += 1
                     continue
@@ -669,7 +669,7 @@ def main(input_path: str) -> ParserOutput:
                 tb = traceback.format_exc()
                 msg = f"TransactionRecord validation error at row {idx} in {input_path}: {e}\n{tb}"
                 print("About to log warning/error")
-                logger.error(msg)
+                wellsFargo_logger.error(msg)
                 errors.append(msg)
         # Metadata extraction (minimal, can be expanded)
         meta = raw_data[0] if raw_data else {}
@@ -715,7 +715,7 @@ def main(input_path: str) -> ParserOutput:
             tb = traceback.format_exc()
             msg = f"Final ParserOutput validation error: {e}\n{tb}"
             print("About to log warning/error")
-            logger.error(msg)
+            wellsFargo_logger.error(msg)
             errors.append(msg)
             output.errors = errors
             raise
@@ -729,7 +729,7 @@ def main(input_path: str) -> ParserOutput:
     except Exception as e:
         import traceback
 
-        logger.error(f"Exception in main: {e}\n{traceback.format_exc()}")
+        wellsFargo_logger.error(f"Exception in main: {e}\n{traceback.format_exc()}")
         raise
 
 
