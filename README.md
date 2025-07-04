@@ -572,57 +572,81 @@ The test harness now uses content-based detection for all parsers, ensuring that
 # OrganizerExtractor: Professional Tax Organizer PDF Pipeline
 
 **What is it?**
-- A modular pipeline for extracting Table of Contents (TOC), Topic Index, page thumbnails, and metadata from professional tax organizer PDFs (e.g., UltraTax, Lacerte, Drake).
+- Modular pipeline for extracting Table of Contents (TOC), Topic Index, page thumbnails, raw text, and metadata from professional tax organizer PDFs (e.g., UltraTax, Lacerte, Drake).
 - Not for standard bank/credit card statements.
 
-**How to Use (Standalone):**
+### Usage (CLI)
+
+#### Full Pipeline (with prefilled data detection by default)
 ```bash
-python3 -m dataextractai.parsers.organizer_extractor --pdf_path <input.pdf> [--output_dir <output_dir>] [--test_mode]
-```
-- By default, creates a timestamped output directory with all extracted files and a manifest.
-- Use `--test_mode` to run only the merge logic using cached JSONs (for fast dev/testing).
-
-**How to Use (as a Module):**
-```python
-from dataextractai.parsers.organizer_extractor import OrganizerExtractor
-extractor = OrganizerExtractor(pdf_path, output_dir)
-extractor.extract()  # Extracts TOC, splits pages, generates thumbnails
-extractor.extract_topic_index_pairs_vision()  # Extracts Topic Index pairs using Vision LLM
-output = extractor.merge_llm_toc_driven()  # Main output: list of dicts (see schema below)
+python3 -m dataextractai.parsers.organizer_extractor --pdf_path <input.pdf>
 ```
 
-**Auto-Detection (can_parse):**
-```python
-if OrganizerExtractor.can_parse(file_path):
-    # Safe to use OrganizerExtractor on this file
-```
-- Returns True if the filename or first page contains 'Organizer' or 'Tax Organizer'.
-
-**Registry Integration:**
-If using a parser registry (see `parsers_core/registry.py`):
-```python
-from dataextractai.parsers.organizer_extractor import OrganizerExtractor
-from dataextractai.parsers_core.registry import ParserRegistry
-ParserRegistry.register_parser('organizer', OrganizerExtractor)
-parser_name = ParserRegistry.detect_parser_for_file(file_path)
-if parser_name == 'organizer':
-    # Use OrganizerExtractor
+#### Test Mode (use cached JSONs, no PDF/Vision extraction)
+```bash
+python3 -m dataextractai.parsers.organizer_extractor --pdf_path <input.pdf> --test_mode
 ```
 
-**Output Schema:**
-- The output is NOT the standard `ParserOutput` model. Instead, expect:
-```json
-{
-  "page_number": 1,
-  "toc_title": "Personal Information",
-  "topic_index_match": {"form_code": "3", "description": "Personal Information"},
-  "pdf_page_file": "page_1.pdf",
-  "thumbnail_file": "thumb_1.png",
-  "raw_text_file": "page_1.txt",
-  "matching_method": "llm"
-}
+#### Prefilled Data Detection Only (on existing manifest/raw text)
+```bash
+python3 -m dataextractai.parsers.organizer_extractor --pdf_path <input.pdf> --detect_prefilled
 ```
-- Upstream consumers should handle this schema directly.
 
-**For more details, see the docstring in `organizer_extractor.py`.**
+#### Skip Prefilled Detection
+```bash
+python3 -m dataextractai.parsers.organizer_extractor --pdf_path <input.pdf> --skip_prefilled
+```
+
+#### Custom Output Directory
+```bash
+python3 -m dataextractai.parsers.organizer_extractor --pdf_path <input.pdf> --output_dir <output_dir>
+```
+
+### Output Directory Structure
+- Each run creates a timestamped output directory (unless --output_dir is set):
+  - `toc_llm_merged.json`: Main manifest (one entry per TOC page)
+  - `toc_llm_merged_prefilled.json`: Manifest with prefilled data fields
+  - `page_{n}.pdf`, `page_{n}.png`, `page_{n}.txt`: Per-page PDF, thumbnail, and raw text
+
+### Manifest Schema
+Each entry includes:
+- `page_number`: int
+- `toc_title`: str (from TOC)
+- `topic_index_match`: {"form_code": str, "description": str} or null
+- `pdf_page_file`: str (filename)
+- `thumbnail_file`: str (filename)
+- `raw_text_file`: str (filename)
+- `matching_method`: str ("llm" or "none")
+- `has_prefilled_data`: bool
+- `prefilled_fields`: dict or null
+- `prefilled_model`: str (LLM model used)
+
+### Logging
+- Logs all file paths, output directories, and LLM model usage.
+- At the end, logs the location of the final output manifest (e.g., `toc_llm_merged_prefilled.json`).
+
+### Example Workflow
+1. Run the full pipeline:
+   ```bash
+   python3 -m dataextractai.parsers.organizer_extractor --pdf_path data/_examples/workbooks/22I_VALENTI_T_Organizer_V1_13710.PDF
+   ```
+2. Find the output in `debug_outputs/organizer_test/<timestamp>/toc_llm_merged_prefilled.json`.
+3. To re-run prefilled detection on cached outputs:
+   ```bash
+   python3 -m dataextractai.parsers.organizer_extractor --pdf_path data/_examples/workbooks/22I_VALENTI_T_Organizer_V1_13710.PDF --detect_prefilled --output_dir debug_outputs/organizer_test/<timestamp>
+   ```
+
+### LLM Model Selection
+- The LLM model is chosen from your `.env` file (`OPENAI_MODEL_FAST`, `OPENAI_MODEL_PRECISE`, etc.).
+- Logs which model is used for each page.
+
+### Troubleshooting
+- If you see OpenAI API errors, check your `.env` and model settings.
+- If files are missing, check the output directory and logs for details.
+- For debugging, use `--test_mode` to skip PDF/Vision extraction and use cached JSONs.
+
+### Integration Notes
+- `can_parse` static method allows auto-detection in a parser registry.
+- Output is a custom schema (not the standard ParserOutput model).
+- See docstrings in `organizer_extractor.py` for more details.
 

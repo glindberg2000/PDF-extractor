@@ -93,7 +93,50 @@ class MergedList(BaseModel):
 
 class OrganizerExtractor:
     """
-    OrganizerExtractor: Modular pipeline for extracting and linking Table of Contents (TOC), Topic Index, page thumbnails, and metadata from professional tax organizer PDFs (e.g., UltraTax, Lacerte, Drake).
+    OrganizerExtractor: Modular pipeline for extracting and linking Table of Contents (TOC), Topic Index, page thumbnails, raw text, and metadata from professional tax organizer PDFs (e.g., UltraTax, Lacerte, Drake).
+
+    Usage (CLI):
+        python3 -m dataextractai.parsers.organizer_extractor --pdf_path <input.pdf>
+        # Test mode (use cached JSONs):
+        python3 -m dataextractai.parsers.organizer_extractor --pdf_path <input.pdf> --test_mode
+        # Prefilled data detection only:
+        python3 -m dataextractai.parsers.organizer_extractor --pdf_path <input.pdf> --detect_prefilled
+        # Skip prefilled detection:
+        python3 -m dataextractai.parsers.organizer_extractor --pdf_path <input.pdf> --skip_prefilled
+        # Custom output directory:
+        python3 -m dataextractai.parsers.organizer_extractor --pdf_path <input.pdf> --output_dir <output_dir>
+
+    Output Directory Structure:
+        - toc_llm_merged.json: Main manifest (one entry per TOC page)
+        - toc_llm_merged_prefilled.json: Manifest with prefilled data fields
+        - page_{n}.pdf, page_{n}.png, page_{n}.txt: Per-page PDF, thumbnail, and raw text
+
+    Manifest Schema:
+        Each entry includes:
+            - page_number: int
+            - toc_title: str (from TOC)
+            - topic_index_match: {"form_code": str, "description": str} or null
+            - pdf_page_file: str (filename)
+            - thumbnail_file: str (filename)
+            - raw_text_file: str (filename)
+            - matching_method: str ("llm" or "none")
+            - has_prefilled_data: bool
+            - prefilled_fields: dict or null
+            - prefilled_model: str (LLM model used)
+
+    Logging:
+        - Logs all file paths, output directories, and LLM model usage.
+        - At the end, logs the location of the final output manifest (e.g., toc_llm_merged_prefilled.json).
+
+    Troubleshooting:
+        - If you see OpenAI API errors, check your .env and model settings.
+        - If files are missing, check the output directory and logs for details.
+        - For debugging, use --test_mode to skip PDF/Vision extraction and use cached JSONs.
+
+    Integration:
+        - can_parse static method allows auto-detection in a parser registry.
+        - Output is a custom schema (not the standard ParserOutput model).
+        - See README.md for more details.
 
     **Integration Notes:**
     - This parser does NOT return the standard `ParserOutput` Pydantic model used by other modular parsers.
@@ -885,44 +928,59 @@ class PrefilledDataDetector:
     def detect(self):
         import openai
 
+        logging.info(f"Starting prefilled data detection.")
+        logging.info(f"Manifest path: {self.manifest_path}")
+        logging.info(f"Raw text directory: {self.raw_text_dir}")
+        logging.info(f"Output path: {self.output_path}")
         with open(self.manifest_path, "r") as f:
             manifest = json.load(f)
         updated = []
+        page_count = 0
         for entry in manifest:
             page_number = entry.get("page_number")
             raw_text_file = entry.get("raw_text_file")
-            raw_text_path = (
-                os.path.join(self.raw_text_dir, raw_text_file)
-                if raw_text_file
-                else None
-            )
-            page_text = None
-            if raw_text_path and os.path.exists(raw_text_path):
-                with open(raw_text_path, "r") as rf:
-                    page_text = rf.read()
-            else:
-                logging.warning(
-                    f"Raw text file missing for page {page_number}: {raw_text_path}"
+            if not raw_text_file:
+                logging.warning(f"No raw_text_file for page {entry.get('page_number')}")
+                continue
+            # Join output_dir and filename
+            raw_text_path = os.path.join(self.raw_text_dir, raw_text_file)
+            logging.info(f"[Page {page_number}] Loading raw text from: {raw_text_path}")
+            try:
+                with open(raw_text_path, "r", encoding="utf-8") as f:
+                    raw_text = f.read()
+            except Exception as e:
+                logging.error(
+                    f"Failed to load raw text for page {entry.get('page_number')}: {e}"
                 )
-                entry["has_prefilled_data"] = False
+                entry["has_prefilled_data"] = None
                 entry["prefilled_fields"] = None
                 entry["prefilled_model"] = None
-                updated.append(entry)
                 continue
-            result, model_used = self._llm_detect_prefilled(page_text)
+            result, model_used = self._llm_detect_prefilled(raw_text)
             entry["has_prefilled_data"] = result.get("has_prefilled_data", False)
             entry["prefilled_fields"] = result.get("prefilled_fields")
             entry["prefilled_model"] = model_used
-            updated.append(entry)
-            logging.info(
-                f"Page {page_number}: has_prefilled_data={entry['has_prefilled_data']} (model={model_used})"
+            n_fields = (
+                len(entry["prefilled_fields"])
+                if entry["prefilled_fields"]
+                and isinstance(entry["prefilled_fields"], dict)
+                else 0
             )
+            logging.info(
+                f"[Page {page_number}] Model: {model_used} | has_prefilled_data: {entry['has_prefilled_data']} | Fields: {n_fields}"
+            )
+            updated.append(entry)
+            page_count += 1
         with open(self.output_path, "w") as f:
             json.dump(updated, f, indent=2)
-        logging.info(f"Prefilled data detection complete. Output: {self.output_path}")
+        logging.info(
+            f"Prefilled data detection complete. Processed {page_count} pages."
+        )
+        logging.info(f"Final output written to: {self.output_path}")
 
     def _llm_detect_prefilled(self, page_text):
         import openai
+        import json
 
         prompt = (
             "You are an expert at reading tax organizer PDFs. Given the following page text, does it contain any user-specific or prefilled data (such as names, SSNs, addresses, or prior year values)? "
@@ -931,20 +989,20 @@ class PrefilledDataDetector:
         )
         for model in self.models:
             try:
-                response = openai.ChatCompletion.create(
+                response = openai.chat.completions.create(
                     model=model,
                     messages=[{"role": "user", "content": prompt}],
+                    response_format={"type": "json_object"},
                     temperature=0.0,
                     max_tokens=512,
                 )
-                content = response["choices"][0]["message"]["content"]
-                # Try to parse as JSON
+                content = response.choices[0].message.content
                 try:
                     result = json.loads(content)
                     if "has_prefilled_data" in result:
                         return result, model
-                except Exception:
-                    pass
+                except Exception as e:
+                    logging.warning(f"Failed to parse LLM JSON for model {model}: {e}")
             except Exception as e:
                 logging.warning(f"LLM model {model} failed: {e}")
         # Fallback: no detection
