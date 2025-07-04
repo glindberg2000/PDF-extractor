@@ -11,6 +11,7 @@ from openai import OpenAI
 import base64
 from rapidfuzz import fuzz, process
 from pydantic import BaseModel, RootModel
+import logging
 
 
 class MergedEntry(BaseModel):
@@ -145,6 +146,9 @@ class OrganizerExtractor:
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.openai_model_ocr = os.getenv("OPENAI_MODEL_OCR", "gpt-4o")
         openai.api_key = self.openai_api_key
+        logging.basicConfig(
+            level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
+        )
 
     def extract_toc(self) -> List[Dict[str, Any]]:
         toc = []
@@ -643,6 +647,133 @@ class OrganizerExtractor:
                 json.dump(output, f, indent=2)
         return output
 
+    def merge_llm_toc_driven(
+        self, topic_index_path=None, toc_path=None, save_json=True
+    ):
+        """
+        For each TOC entry, use LLM to find the best matching Topic Index entry (form_code/description).
+        Output only TOC-present forms, enriched with LLM-matched info if available.
+        """
+        logging.info("Loading TOC inventory...")
+        if toc_path is None:
+            toc_path = os.path.join(self.output_dir, "toc_inventory.json")
+        with open(toc_path, "r") as f:
+            toc = json.load(f)
+        logging.info(f"Loaded {len(toc)} TOC entries.")
+
+        logging.info("Loading Topic Index pairs...")
+        if topic_index_path is None:
+            topic_index_path = os.path.join(
+                self.output_dir, "topic_index_pairs_vision.json"
+            )
+        with open(topic_index_path, "r") as f:
+            topic_index = json.load(f)
+        logging.info(f"Loaded {len(topic_index)} Topic Index pairs.")
+
+        # LLM matching for each TOC entry
+        output = []
+        for i, toc_entry in enumerate(toc):
+            title = toc_entry["title"]
+            logging.info(
+                f"[{i+1}/{len(toc)}] Matching TOC entry: '{title}' (page {toc_entry['page_number']})"
+            )
+            # Use LLM to find best match in topic_index
+            best_match = self.llm_match_topic_index(title, topic_index)
+            if best_match:
+                logging.info(
+                    f"  LLM matched: {best_match['form_code']} - {best_match['description']}"
+                )
+                output.append(
+                    {
+                        "form_code": best_match["form_code"],
+                        "description": best_match["description"],
+                        "page_number": toc_entry["page_number"],
+                        "pdf_path": toc_entry["pdf_path"],
+                        "thumbnail_path": toc_entry["thumbnail_path"],
+                        "matched_title": title,
+                    }
+                )
+            else:
+                logging.info(f"  No LLM match found.")
+                output.append(
+                    {
+                        "form_code": None,
+                        "description": None,
+                        "page_number": toc_entry["page_number"],
+                        "pdf_path": toc_entry["pdf_path"],
+                        "thumbnail_path": toc_entry["thumbnail_path"],
+                        "matched_title": title,
+                    }
+                )
+        if save_json:
+            out_path = os.path.join(self.output_dir, "toc_llm_merged.json")
+            with open(out_path, "w") as f:
+                json.dump(output, f, indent=2)
+            logging.info(f"Saved TOC-driven LLM output to {out_path}")
+        return output
+
+    def llm_match_topic_index(self, toc_title, topic_index):
+        """
+        Use OpenAI LLM to select the best matching Topic Index entry for a given TOC title.
+        Returns a dict with form_code and description, or None if no good match.
+        """
+        import openai
+        import os
+        import json
+        from dotenv import load_dotenv
+
+        load_dotenv()
+        api_key = os.getenv("OPENAI_API_KEY")
+        model = os.getenv("OPENAI_MODEL_OCR", "gpt-4o")
+        prompt = (
+            f"You are a data assistant. Given a TOC entry title and a list of Topic Index entries (each with form_code and description), "
+            f"select the best matching Topic Index entry for the TOC title. "
+            f"If no good match, return null.\n"
+            f"TOC Title: {toc_title}\n"
+            f"Topic Index Entries: {json.dumps(topic_index)}\n"
+            f"Return a JSON object with keys: form_code, description. If no good match, return null."
+        )
+        try:
+            client = openai.OpenAI(api_key=api_key)
+            completion = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=256,
+                temperature=0.0,
+            )
+            import re
+            import ast
+
+            content = completion.choices[0].message.content
+            # Try to extract a JSON object or null
+            match = re.search(r"\{.*?\}|null", content, re.DOTALL)
+            if match:
+                if match.group(0) == "null":
+                    return None
+                try:
+                    result = json.loads(match.group(0))
+                    if (
+                        isinstance(result, dict)
+                        and "form_code" in result
+                        and "description" in result
+                    ):
+                        return result
+                except Exception:
+                    try:
+                        result = ast.literal_eval(match.group(0))
+                        if (
+                            isinstance(result, dict)
+                            and "form_code" in result
+                            and "description" in result
+                        ):
+                            return result
+                    except Exception:
+                        pass
+            return None
+        except Exception as e:
+            logging.warning(f"LLM match failed for '{toc_title}': {e}")
+            return None
+
 
 if __name__ == "__main__":
     # Demo: extract and split Topic Index columns for the sample PDF
@@ -675,7 +806,7 @@ if __name__ == "__main__":
     # Run the full pipeline
     extractor.extract()  # ensures TOC/pages/thumbnails
     pairs = extractor.extract_topic_index_pairs_vision()
-    # Use new TOC-driven merge
-    toc_driven = extractor.toc_driven_merge_with_topic_index()
-    print(f"TOC-driven output: {len(toc_driven)} entries. Example:")
-    print(toc_driven[0] if len(toc_driven) > 0 else "No entries.")
+    # Use LLM-based merge for main output
+    llm_toc_merged = extractor.merge_llm_toc_driven()
+    print(f"TOC-driven LLM output: {len(llm_toc_merged)} entries. Example:")
+    print(llm_toc_merged[0] if len(llm_toc_merged) > 0 else "No entries.")
