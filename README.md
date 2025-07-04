@@ -569,3 +569,60 @@ The test harness now uses content-based detection for all parsers, ensuring that
 
 *Keep this section up to date as new patterns, pitfalls, or best practices emerge!*
 
+# OrganizerExtractor: Professional Tax Organizer PDF Pipeline
+
+**What is it?**
+- A modular pipeline for extracting Table of Contents (TOC), Topic Index, page thumbnails, and metadata from professional tax organizer PDFs (e.g., UltraTax, Lacerte, Drake).
+- Not for standard bank/credit card statements.
+
+**How to Use (Standalone):**
+```bash
+python3 -m dataextractai.parsers.organizer_extractor --pdf_path <input.pdf> [--output_dir <output_dir>] [--test_mode]
+```
+- By default, creates a timestamped output directory with all extracted files and a manifest.
+- Use `--test_mode` to run only the merge logic using cached JSONs (for fast dev/testing).
+
+**How to Use (as a Module):**
+```python
+from dataextractai.parsers.organizer_extractor import OrganizerExtractor
+extractor = OrganizerExtractor(pdf_path, output_dir)
+extractor.extract()  # Extracts TOC, splits pages, generates thumbnails
+extractor.extract_topic_index_pairs_vision()  # Extracts Topic Index pairs using Vision LLM
+output = extractor.merge_llm_toc_driven()  # Main output: list of dicts (see schema below)
+```
+
+**Auto-Detection (can_parse):**
+```python
+if OrganizerExtractor.can_parse(file_path):
+    # Safe to use OrganizerExtractor on this file
+```
+- Returns True if the filename or first page contains 'Organizer' or 'Tax Organizer'.
+
+**Registry Integration:**
+If using a parser registry (see `parsers_core/registry.py`):
+```python
+from dataextractai.parsers.organizer_extractor import OrganizerExtractor
+from dataextractai.parsers_core.registry import ParserRegistry
+ParserRegistry.register_parser('organizer', OrganizerExtractor)
+parser_name = ParserRegistry.detect_parser_for_file(file_path)
+if parser_name == 'organizer':
+    # Use OrganizerExtractor
+```
+
+**Output Schema:**
+- The output is NOT the standard `ParserOutput` model. Instead, expect:
+```json
+{
+  "page_number": 1,
+  "toc_title": "Personal Information",
+  "topic_index_match": {"form_code": "3", "description": "Personal Information"},
+  "pdf_page_file": "page_1.pdf",
+  "thumbnail_file": "thumb_1.png",
+  "raw_text_file": "page_1.txt",
+  "matching_method": "llm"
+}
+```
+- Upstream consumers should handle this schema directly.
+
+**For more details, see the docstring in `organizer_extractor.py`.**
+

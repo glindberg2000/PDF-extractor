@@ -95,6 +95,26 @@ class OrganizerExtractor:
     """
     OrganizerExtractor: Modular pipeline for extracting and linking Table of Contents (TOC), Topic Index, page thumbnails, and metadata from professional tax organizer PDFs (e.g., UltraTax, Lacerte, Drake).
 
+    **Integration Notes:**
+    - This parser does NOT return the standard `ParserOutput` Pydantic model used by other modular parsers.
+    - Instead, the main output is a list of dicts (or a JSON array) with the following schema:
+        {
+            "page_number": int,
+            "toc_title": str,
+            "topic_index_match": {"form_code": str, "description": str} | null,
+            "pdf_page_file": str,  # filename only
+            "thumbnail_file": str, # filename only
+            "raw_text_file": str, # filename only
+            "matching_method": str  # 'llm' or 'none'
+        }
+    - Upstream consumers should expect this schema and handle ingestion accordingly.
+    - This parser is best used for professional tax organizer PDFs, not for standard bank/credit card statements.
+
+    **can_parse method:**
+    - Use `OrganizerExtractor.can_parse(file_path)` to check if a file is likely an organizer PDF.
+    - This is a simple heuristic: returns True if the filename or first page contains 'Organizer' or 'Tax Organizer'.
+    - For registry integration, register this parser with your parser registry and call can_parse for auto-detection.
+
     Workflow Overview:
     ------------------
     1. **TOC Extraction**: Extracts the PDF bookmarks (TOC) and resolves each entry to its page number.
@@ -815,6 +835,28 @@ class OrganizerExtractor:
         except Exception as e:
             logging.warning(f"LLM match failed for '{toc_title}': {e}")
             return None
+
+    @staticmethod
+    def can_parse(file_path: str) -> bool:
+        """
+        Returns True if the file is likely a professional tax organizer PDF (by filename or first page text).
+        """
+        if not file_path.lower().endswith(".pdf"):
+            return False
+        fname = os.path.basename(file_path).lower()
+        if "organizer" in fname:
+            return True
+        try:
+            from PyPDF2 import PdfReader
+
+            reader = PdfReader(file_path)
+            first_page = reader.pages[0]
+            text = first_page.extract_text() or ""
+            if "organizer" in text.lower() or "tax organizer" in text.lower():
+                return True
+        except Exception:
+            pass
+        return False
 
 
 if __name__ == "__main__":
