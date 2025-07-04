@@ -12,6 +12,7 @@ import base64
 from rapidfuzz import fuzz, process
 from pydantic import BaseModel, RootModel
 import logging
+import argparse
 
 
 class MergedEntry(BaseModel):
@@ -648,65 +649,85 @@ class OrganizerExtractor:
         return output
 
     def merge_llm_toc_driven(
-        self, topic_index_path=None, toc_path=None, save_json=True
+        self, topic_index_path=None, toc_path=None, save_json=True, test_mode=False
     ):
         """
         For each TOC entry, use LLM to find the best matching Topic Index entry (form_code/description).
-        Output only TOC-present forms, enriched with LLM-matched info if available.
+        Output is a list of dicts, each with:
+          - toc_title: the TOC entry title
+          - topic_index_match: {form_code, description} or null
+          - page_number, pdf_path, thumbnail_path
+          - matching_method: 'llm' or 'none'
+        If test_mode is True, use pre-generated JSON files for TOC and Topic Index.
         """
-        logging.info("Loading TOC inventory...")
-        if toc_path is None:
-            toc_path = os.path.join(self.output_dir, "toc_inventory.json")
+        # Determine file paths
+        if test_mode:
+            toc_path = toc_path or os.path.abspath(
+                "debug_outputs/organizer_test/toc_inventory.json"
+            )
+            topic_index_path = topic_index_path or os.path.abspath(
+                "debug_outputs/organizer_test/topic_index_pairs_vision.json"
+            )
+            logging.info(f"[TEST MODE] Using pre-generated TOC: {toc_path}")
+            logging.info(
+                f"[TEST MODE] Using pre-generated Topic Index: {topic_index_path}"
+            )
+        else:
+            toc_path = toc_path or os.path.abspath(
+                os.path.join(self.output_dir, "toc_inventory.json")
+            )
+            topic_index_path = topic_index_path or os.path.abspath(
+                os.path.join(self.output_dir, "topic_index_pairs_vision.json")
+            )
+            logging.info(f"[LIVE MODE] Using TOC: {toc_path}")
+            logging.info(f"[LIVE MODE] Using Topic Index: {topic_index_path}")
+        # Load TOC
         with open(toc_path, "r") as f:
             toc = json.load(f)
-        logging.info(f"Loaded {len(toc)} TOC entries.")
-
-        logging.info("Loading Topic Index pairs...")
-        if topic_index_path is None:
-            topic_index_path = os.path.join(
-                self.output_dir, "topic_index_pairs_vision.json"
-            )
+        logging.info(f"Loaded {len(toc)} TOC entries from {toc_path}")
+        # Load Topic Index
         with open(topic_index_path, "r") as f:
             topic_index = json.load(f)
-        logging.info(f"Loaded {len(topic_index)} Topic Index pairs.")
-
-        # LLM matching for each TOC entry
+        logging.info(
+            f"Loaded {len(topic_index)} Topic Index pairs from {topic_index_path}"
+        )
         output = []
         for i, toc_entry in enumerate(toc):
-            title = toc_entry["title"]
+            toc_title = toc_entry.get("title")
+            page_number = toc_entry.get("page_number")
+            pdf_path = toc_entry.get("pdf_path")
+            thumbnail_path = toc_entry.get("thumbnail_path")
             logging.info(
-                f"[{i+1}/{len(toc)}] Matching TOC entry: '{title}' (page {toc_entry['page_number']})"
+                f"[{i+1}/{len(toc)}] Matching TOC entry: '{toc_title}' (page {page_number})"
             )
-            # Use LLM to find best match in topic_index
-            best_match = self.llm_match_topic_index(title, topic_index)
-            if best_match:
+            match = self.llm_match_topic_index(toc_title, topic_index)
+            if match:
                 logging.info(
-                    f"  LLM matched: {best_match['form_code']} - {best_match['description']}"
+                    f"  LLM matched: {match['form_code']} - {match['description']}"
                 )
-                output.append(
-                    {
-                        "form_code": best_match["form_code"],
-                        "description": best_match["description"],
-                        "page_number": toc_entry["page_number"],
-                        "pdf_path": toc_entry["pdf_path"],
-                        "thumbnail_path": toc_entry["thumbnail_path"],
-                        "matched_title": title,
-                    }
-                )
+                topic_index_match = {
+                    "form_code": match["form_code"],
+                    "description": match["description"],
+                }
+                matching_method = "llm"
             else:
-                logging.info(f"  No LLM match found.")
-                output.append(
-                    {
-                        "form_code": None,
-                        "description": None,
-                        "page_number": toc_entry["page_number"],
-                        "pdf_path": toc_entry["pdf_path"],
-                        "thumbnail_path": toc_entry["thumbnail_path"],
-                        "matched_title": title,
-                    }
-                )
+                logging.info("  No LLM match found.")
+                topic_index_match = None
+                matching_method = "none"
+            output.append(
+                {
+                    "toc_title": toc_title,
+                    "topic_index_match": topic_index_match,
+                    "page_number": page_number,
+                    "pdf_path": pdf_path,
+                    "thumbnail_path": thumbnail_path,
+                    "matching_method": matching_method,
+                }
+            )
         if save_json:
-            out_path = os.path.join(self.output_dir, "toc_llm_merged.json")
+            out_path = os.path.abspath(
+                os.path.join(self.output_dir, "toc_llm_merged.json")
+            )
             with open(out_path, "w") as f:
                 json.dump(output, f, indent=2)
             logging.info(f"Saved TOC-driven LLM output to {out_path}")
@@ -776,37 +797,28 @@ class OrganizerExtractor:
 
 
 if __name__ == "__main__":
-    # Demo: extract and split Topic Index columns for the sample PDF
-    extractor = OrganizerExtractor(
-        "data/_examples/workbooks/22I_VALENTI_T_Organizer_V1_13710.PDF",
-        "debug_outputs/organizer_test",
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--test_mode",
+        action="store_true",
+        help="Use pre-generated JSON files for TOC and Topic Index",
     )
-    col_paths = extractor.extract_topic_index_columns()
-    if col_paths:
-        print(f"Extracted Topic Index columns: {col_paths}")
-        pairs = extractor.extract_topic_index_pairs()
-        if pairs:
-            print("Extracted form_code/description pairs:")
-            for pair in pairs:
-                print(pair)
-        else:
-            print("No pairs extracted from columns.")
+    args = parser.parse_args()
+    extractor = OrganizerExtractor(
+        pdf_path="data/_examples/workbooks/22I_VALENTI_T_Organizer_V1_13710.PDF",
+        output_dir="debug_outputs/organizer_test",
+    )
+    if args.test_mode:
+        logging.info(
+            "[TEST MODE] Skipping all PDF/Vision extraction. Using cached JSONs only."
+        )
+        llm_toc_merged = extractor.merge_llm_toc_driven(test_mode=True)
+        print(f"TOC-driven LLM output: {len(llm_toc_merged)} entries. Example:")
+        print(llm_toc_merged[0] if len(llm_toc_merged) > 0 else "No entries.")
     else:
-        print("No Topic Index columns extracted.")
-
-    pairs = extractor.extract_topic_index_pairs_vision()
-    if pairs:
-        print("Extracted form_code/description pairs (Vision API):")
-        for pair in pairs:
-            print(pair)
-        print(f"Saved to: debug_outputs/organizer_test/topic_index_pairs_vision.json")
-    else:
-        print("No pairs extracted from columns (Vision API).")
-
-    # Run the full pipeline
-    extractor.extract()  # ensures TOC/pages/thumbnails
-    pairs = extractor.extract_topic_index_pairs_vision()
-    # Use LLM-based merge for main output
-    llm_toc_merged = extractor.merge_llm_toc_driven()
-    print(f"TOC-driven LLM output: {len(llm_toc_merged)} entries. Example:")
-    print(llm_toc_merged[0] if len(llm_toc_merged) > 0 else "No entries.")
+        logging.info("[LIVE MODE] Running full extraction pipeline.")
+        extractor.extract()
+        pairs = extractor.extract_topic_index_pairs_vision()
+        llm_toc_merged = extractor.merge_llm_toc_driven()
+        print(f"TOC-driven LLM output: {len(llm_toc_merged)} entries. Example:")
+        print(llm_toc_merged[0] if len(llm_toc_merged) > 0 else "No entries.")
