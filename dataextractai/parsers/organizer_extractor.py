@@ -13,6 +13,7 @@ from rapidfuzz import fuzz, process
 from pydantic import BaseModel, RootModel
 import logging
 import argparse
+import datetime
 
 
 class MergedEntry(BaseModel):
@@ -648,6 +649,25 @@ class OrganizerExtractor:
                 json.dump(output, f, indent=2)
         return output
 
+    def extract_raw_text_per_page(self):
+        """
+        Extracts raw text for each page and saves as page_{n}.txt in output_dir.
+        Returns a list of filenames.
+        """
+        from PyPDF2 import PdfReader
+
+        reader = PdfReader(self.pdf_path)
+        raw_text_files = []
+        for i, page in enumerate(reader.pages):
+            text = page.extract_text() or ""
+            fname = f"page_{i+1}.txt"
+            fpath = os.path.join(self.output_dir, fname)
+            with open(fpath, "w") as f:
+                f.write(text)
+            raw_text_files.append(fname)
+        logging.info(f"Extracted raw text for {len(raw_text_files)} pages.")
+        return raw_text_files
+
     def merge_llm_toc_driven(
         self, topic_index_path=None, toc_path=None, save_json=True, test_mode=False
     ):
@@ -691,36 +711,37 @@ class OrganizerExtractor:
         logging.info(
             f"Loaded {len(topic_index)} Topic Index pairs from {topic_index_path}"
         )
+        # Load raw text files (assume page_{n}.txt in output_dir)
+        raw_text_files = [f"page_{i+1}.txt" for i in range(len(toc))]
         output = []
         for i, toc_entry in enumerate(toc):
             toc_title = toc_entry.get("title")
             page_number = toc_entry.get("page_number")
             pdf_path = toc_entry.get("pdf_path")
             thumbnail_path = toc_entry.get("thumbnail_path")
-            logging.info(
-                f"[{i+1}/{len(toc)}] Matching TOC entry: '{toc_title}' (page {page_number})"
-            )
+            raw_text_file = raw_text_files[i] if i < len(raw_text_files) else None
             match = self.llm_match_topic_index(toc_title, topic_index)
             if match:
-                logging.info(
-                    f"  LLM matched: {match['form_code']} - {match['description']}"
-                )
                 topic_index_match = {
                     "form_code": match["form_code"],
                     "description": match["description"],
                 }
                 matching_method = "llm"
             else:
-                logging.info("  No LLM match found.")
                 topic_index_match = None
                 matching_method = "none"
+            pdf_page_file = os.path.basename(pdf_path) if pdf_path else None
+            thumbnail_file = (
+                os.path.basename(thumbnail_path) if thumbnail_path else None
+            )
             output.append(
                 {
+                    "page_number": page_number,
                     "toc_title": toc_title,
                     "topic_index_match": topic_index_match,
-                    "page_number": page_number,
-                    "pdf_path": pdf_path,
-                    "thumbnail_path": thumbnail_path,
+                    "pdf_page_file": pdf_page_file,
+                    "thumbnail_file": thumbnail_file,
+                    "raw_text_file": raw_text_file,
                     "matching_method": matching_method,
                 }
             )
@@ -798,16 +819,27 @@ class OrganizerExtractor:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+    parser.add_argument("--pdf_path", type=str, required=True, help="Path to input PDF")
+    parser.add_argument(
+        "--output_dir",
+        type=str,
+        default=None,
+        help="Directory to save outputs (default: timestamped)",
+    )
     parser.add_argument(
         "--test_mode",
         action="store_true",
         help="Use pre-generated JSON files for TOC and Topic Index",
     )
     args = parser.parse_args()
-    extractor = OrganizerExtractor(
-        pdf_path="data/_examples/workbooks/22I_VALENTI_T_Organizer_V1_13710.PDF",
-        output_dir="debug_outputs/organizer_test",
-    )
+    # Create timestamped output dir if not provided
+    if args.output_dir is None:
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_dir = os.path.join("debug_outputs/organizer_test", timestamp)
+    else:
+        output_dir = args.output_dir
+    logging.info(f"Output directory: {output_dir}")
+    extractor = OrganizerExtractor(pdf_path=args.pdf_path, output_dir=output_dir)
     if args.test_mode:
         logging.info(
             "[TEST MODE] Skipping all PDF/Vision extraction. Using cached JSONs only."
@@ -819,6 +851,7 @@ if __name__ == "__main__":
         logging.info("[LIVE MODE] Running full extraction pipeline.")
         extractor.extract()
         pairs = extractor.extract_topic_index_pairs_vision()
+        extractor.extract_raw_text_per_page()
         llm_toc_merged = extractor.merge_llm_toc_driven()
         print(f"TOC-driven LLM output: {len(llm_toc_merged)} entries. Example:")
         print(llm_toc_merged[0] if len(llm_toc_merged) > 0 else "No entries.")
