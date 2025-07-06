@@ -14,6 +14,8 @@ from pydantic import BaseModel, RootModel
 import logging
 import argparse
 import datetime
+import shutil
+from logging.handlers import RotatingFileHandler
 
 
 class MergedEntry(BaseModel):
@@ -229,18 +231,10 @@ class OrganizerExtractor:
                         else:
                             title = getattr(item, "title", str(item))
                             page_num = None
-                            # Debug: print type and attributes of item
-                            print(
-                                f"DEBUG: TOC item type: {type(item)}, attributes: {dir(item)}"
-                            )
                             # Try to resolve page number
                             try:
                                 # Use get_destination_page_number for Destination objects
                                 page_num = reader.get_destination_page_number(item) + 1
-                                # Debug: print resolved page_num
-                                print(
-                                    f"DEBUG: Resolved page_num for '{title}': {page_num}"
-                                )
                             except Exception as e:
                                 print(
                                     f"DEBUG: Exception resolving page_num for '{title}': {e}"
@@ -252,6 +246,7 @@ class OrganizerExtractor:
                                     "parent": parent,
                                 }
                             )
+                            logging.info(f"TOC: '{title}' resolved to page {page_num}")
 
                 walk(outlines)
         except Exception as e:
@@ -735,7 +730,7 @@ class OrganizerExtractor:
         self, topic_index_path=None, toc_path=None, save_json=True, test_mode=False
     ):
         """
-        For each TOC entry, use LLM to find the best matching Topic Index entry (form_code/description).
+        For each TOC entry, use LLM to find the best matching form_code (using all associated descriptions for each code).
         Output is a list of dicts, each with:
           - toc_title: the TOC entry title
           - topic_index_match: {form_code, description} or null
@@ -774,6 +769,19 @@ class OrganizerExtractor:
         logging.info(
             f"Loaded {len(topic_index)} Topic Index pairs from {topic_index_path}"
         )
+        # Build form_code -> [descriptions] mapping
+        from collections import defaultdict
+
+        form_code_to_desc = defaultdict(list)
+        for entry in topic_index:
+            codes = [c.strip() for c in entry["form_code"].split(",")]
+            for code in codes:
+                form_code_to_desc[code].append(entry["description"])
+        # Build enhanced topic index: [{form_code, descriptions: [..]}]
+        enhanced_topic_index = [
+            {"form_code": code, "descriptions": descs}
+            for code, descs in form_code_to_desc.items()
+        ]
         # Load raw text files (assume page_{n}.txt in output_dir)
         raw_text_files = [f"page_{i+1}.txt" for i in range(len(toc))]
         output = []
@@ -783,7 +791,7 @@ class OrganizerExtractor:
             pdf_path = toc_entry.get("pdf_path")
             thumbnail_path = toc_entry.get("thumbnail_path")
             raw_text_file = raw_text_files[i] if i < len(raw_text_files) else None
-            match = self.llm_match_topic_index(toc_title, topic_index)
+            match = self.llm_match_topic_index_multi(toc_title, enhanced_topic_index)
             if match:
                 topic_index_match = {
                     "form_code": match["form_code"],
@@ -817,10 +825,10 @@ class OrganizerExtractor:
             logging.info(f"Saved TOC-driven LLM output to {out_path}")
         return output
 
-    def llm_match_topic_index(self, toc_title, topic_index):
+    def llm_match_topic_index_multi(self, toc_title, enhanced_topic_index):
         """
-        Use OpenAI LLM to select the best matching Topic Index entry for a given TOC title.
-        Returns a dict with form_code and description, or None if no good match.
+        Use OpenAI LLM to select the best matching form_code (with all associated descriptions) for a given TOC title.
+        Returns a dict with form_code and description (the best-matching description), or None if no good match.
         """
         import openai
         import os
@@ -831,11 +839,12 @@ class OrganizerExtractor:
         api_key = os.getenv("OPENAI_API_KEY")
         model = os.getenv("OPENAI_MODEL_OCR", "gpt-4o")
         prompt = (
-            f"You are a data assistant. Given a TOC entry title and a list of Topic Index entries (each with form_code and description), "
-            f"select the best matching Topic Index entry for the TOC title. "
+            f"You are a data assistant. Given a TOC entry title and a list of form codes, each with all associated descriptions, "
+            f"select the best matching form_code for the TOC title. "
+            f"For the best match, also return the most relevant description. "
             f"If no good match, return null.\n"
             f"TOC Title: {toc_title}\n"
-            f"Topic Index Entries: {json.dumps(topic_index)}\n"
+            f"Form Codes with Descriptions: {json.dumps(enhanced_topic_index)}\n"
             f"Return a JSON object with keys: form_code, description. If no good match, return null."
         )
         try:
@@ -905,10 +914,17 @@ class OrganizerExtractor:
 class PrefilledDataDetector:
     """
     Detects prefilled/user data on each page using LLMs. Can be run as part of the pipeline or standalone.
+    Supports exclusion of false positive terms via a config file (prefilled_exclude_terms.txt) in the project root or config directory.
+    Any field or value matching a term in this file (case-insensitive, one per line) will be ignored as fillable data.
     """
 
     def __init__(
-        self, manifest_path, raw_text_dir, output_path=None, model_env_keys=None
+        self,
+        manifest_path,
+        raw_text_dir,
+        output_path=None,
+        model_env_keys=None,
+        exclude_terms_path=None,
     ):
         self.manifest_path = manifest_path
         self.raw_text_dir = raw_text_dir
@@ -924,6 +940,66 @@ class PrefilledDataDetector:
         self.models = [os.getenv(k) for k in self.model_env_keys if os.getenv(k)]
         if not self.models:
             raise RuntimeError("No LLM models found in .env for prefilled detection.")
+        # Load exclude terms from module-level config
+        self.exclude_terms = set()
+        config_paths = [
+            os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                "../../prefilled_exclude_terms.txt",
+            ),
+            os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                "../prefilled_exclude_terms.txt",
+            ),
+            os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                "prefilled_exclude_terms.txt",
+            ),
+            os.path.abspath("prefilled_exclude_terms.txt"),
+        ]
+        found = False
+        for path in config_paths:
+            if os.path.exists(path):
+                with open(path, "r") as f:
+                    self.exclude_terms = set(
+                        line.strip().lower() for line in f if line.strip()
+                    )
+                found = True
+                break
+        if not found:
+            # Default common false positives
+            self.exclude_terms = {
+                "on file",
+                "on-file",
+                "master",
+                "footer",
+                "does not expire",
+            }
+            logging.warning(
+                "No prefilled_exclude_terms.txt found at module level. Using built-in defaults."
+            )
+
+    def _filter_excluded(self, fields):
+        # Recursively filter out any field/value matching exclude_terms
+        if isinstance(fields, dict):
+            return {
+                k: self._filter_excluded(v)
+                for k, v in fields.items()
+                if k.strip().lower() not in self.exclude_terms
+                and (
+                    isinstance(v, str)
+                    and v.strip().lower() not in self.exclude_terms
+                    or not isinstance(v, str)
+                )
+            }
+        elif isinstance(fields, list):
+            return [
+                self._filter_excluded(v)
+                for v in fields
+                if not (isinstance(v, str) and v.strip().lower() in self.exclude_terms)
+            ]
+        else:
+            return fields
 
     def detect(self):
         import openai
@@ -942,7 +1018,6 @@ class PrefilledDataDetector:
             if not raw_text_file:
                 logging.warning(f"No raw_text_file for page {entry.get('page_number')}")
                 continue
-            # Join output_dir and filename
             raw_text_path = os.path.join(self.raw_text_dir, raw_text_file)
             logging.info(f"[Page {page_number}] Loading raw text from: {raw_text_path}")
             try:
@@ -956,21 +1031,29 @@ class PrefilledDataDetector:
                 entry["prefilled_fields"] = None
                 entry["prefilled_model"] = None
                 continue
+            logging.info(f"[Page {page_number}] Calling LLM for prefilled detection...")
             result, model_used = self._llm_detect_prefilled(raw_text)
-            entry["has_prefilled_data"] = result.get("has_prefilled_data", False)
-            entry["prefilled_fields"] = result.get("prefilled_fields")
+            # Filter out excluded terms from prefilled_fields
+            filtered_fields = (
+                self._filter_excluded(result.get("prefilled_fields"))
+                if result.get("prefilled_fields")
+                else None
+            )
+            has_prefilled = bool(filtered_fields) if filtered_fields else False
+            entry["has_prefilled_data"] = has_prefilled
+            entry["prefilled_fields"] = filtered_fields
             entry["prefilled_model"] = model_used
             n_fields = (
-                len(entry["prefilled_fields"])
-                if entry["prefilled_fields"]
-                and isinstance(entry["prefilled_fields"], dict)
+                len(filtered_fields)
+                if filtered_fields and isinstance(filtered_fields, dict)
                 else 0
             )
             logging.info(
-                f"[Page {page_number}] Model: {model_used} | has_prefilled_data: {entry['has_prefilled_data']} | Fields: {n_fields}"
+                f"[Page {page_number}] Model: {model_used} | has_prefilled_data: {has_prefilled} | Fields: {n_fields}"
             )
             updated.append(entry)
             page_count += 1
+        logging.info(f"Writing manifest with prefilled data to {self.output_path}")
         with open(self.output_path, "w") as f:
             json.dump(updated, f, indent=2)
         logging.info(
@@ -1009,6 +1092,25 @@ class PrefilledDataDetector:
         return {"has_prefilled_data": False, "prefilled_fields": None}, None
 
 
+def setup_logging(output_dir):
+    log_file = os.path.join(output_dir, "organizer_pipeline.log")
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    formatter = logging.Formatter("%(asctime)s %(levelname)s: %(message)s")
+    # Remove all handlers
+    for h in logger.handlers[:]:
+        logger.removeHandler(h)
+    # Console handler
+    ch = logging.StreamHandler()
+    ch.setFormatter(formatter)
+    logger.addHandler(ch)
+    # Rotating file handler
+    fh = RotatingFileHandler(log_file, maxBytes=2 * 1024 * 1024, backupCount=2)
+    fh.setFormatter(formatter)
+    logger.addHandler(fh)
+    logging.info(f"Logging to {log_file}")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--pdf_path", type=str, help="Path to input PDF")
@@ -1031,13 +1133,15 @@ if __name__ == "__main__":
         help="Skip prefilled data detection step",
     )
     args = parser.parse_args()
-    # Create timestamped output dir if not provided
-    if args.output_dir is None:
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_dir = os.path.join("debug_outputs/organizer_test", timestamp)
-    else:
-        output_dir = args.output_dir
-    logging.info(f"Output directory: {output_dir}")
+    output_dir = (
+        args.output_dir
+        or f"debug_outputs/organizer_test/{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    )
+    os.makedirs(output_dir, exist_ok=True)
+    setup_logging(output_dir)
+    logging.info("--- OrganizerExtractor Pipeline Started ---")
+    logging.info(f"PDF: {args.pdf_path}")
+    logging.info(f"Output dir: {output_dir}")
     extractor = OrganizerExtractor(pdf_path=args.pdf_path, output_dir=output_dir)
     if args.test_mode:
         logging.info(
@@ -1049,11 +1153,55 @@ if __name__ == "__main__":
     else:
         logging.info("[LIVE MODE] Running full extraction pipeline.")
         extractor.extract()
+        logging.info("[TOPIC INDEX] Extracting topic index pairs with Vision LLM...")
         pairs = extractor.extract_topic_index_pairs_vision()
+        logging.info("[RAW TEXT] Extracting raw text per page...")
         extractor.extract_raw_text_per_page()
+        logging.info("[LLM MERGE] Merging TOC and Topic Index with LLM...")
         llm_toc_merged = extractor.merge_llm_toc_driven()
-        print(f"TOC-driven LLM output: {len(llm_toc_merged)} entries. Example:")
-        print(llm_toc_merged[0] if len(llm_toc_merged) > 0 else "No entries.")
+        manifest_path = os.path.join(output_dir, "toc_llm_merged.json")
+        raw_text_dir = output_dir
+        detector = PrefilledDataDetector(manifest_path, raw_text_dir)
+        logging.info("[PREFILLED] Running prefilled data detection step...")
+        detector.detect()
+        prefilled_manifest_path = manifest_path.replace(".json", "_with_prefilled.json")
+        from dataextractai.parsers.organizer_vision_enhancer import (
+            enhance_manifest_with_vision,
+        )
+
+        vision_output_path = os.path.join(output_dir, "toc_llm_merged_vision.json")
+        # --- Robust PNG generation before Vision overlay ---
+        with open(prefilled_manifest_path, "r") as f:
+            manifest = json.load(f)
+        missing_pngs = []
+        for entry in manifest:
+            page_num = entry.get("page_number")
+            png_path = os.path.join(output_dir, f"page_{page_num}_full.png")
+            if not os.path.exists(png_path):
+                missing_pngs.append(page_num)
+        if missing_pngs:
+            from pdf2image import convert_from_path
+
+            logging.info(
+                f"[VISION][PNG] Generating {len(missing_pngs)} missing full-page PNGs..."
+            )
+            images = convert_from_path(args.pdf_path, dpi=300)
+            for i, img in enumerate(images):
+                png_path = os.path.join(output_dir, f"page_{i+1}_full.png")
+                if (i + 1) in missing_pngs:
+                    img.save(png_path)
+            logging.info(f"[VISION][PNG] PNG generation complete.")
+        # --- Vision overlay as before ---
+        logging.info(
+            f"[VISION] Enhancing manifest with Vision LLM: {prefilled_manifest_path} -> {vision_output_path}"
+        )
+        enhance_manifest_with_vision(prefilled_manifest_path, vision_output_path)
+        logging.info(
+            f"[VISION] Vision-enhanced manifest written to {vision_output_path}"
+        )
+        # Always use the vision-enhanced manifest as the final output
+        final_manifest_path = vision_output_path
+        logging.info(f"[FINAL] Final manifest for upstream: {final_manifest_path}")
     if args.detect_prefilled:
         # Only run prefilled detection on existing manifest/raw text
         manifest_path = os.path.join(output_dir, "toc_llm_merged.json")
@@ -1066,3 +1214,4 @@ if __name__ == "__main__":
         raw_text_dir = output_dir
         detector = PrefilledDataDetector(manifest_path, raw_text_dir)
         detector.detect()
+    logging.info("--- OrganizerExtractor Pipeline Finished ---")

@@ -6,7 +6,8 @@ import yaml
 from typing import List, Dict, Optional, Tuple
 from openai import OpenAI
 from dotenv import load_dotenv
-from .config import ASSISTANTS_CONFIG, PROMPTS, CATEGORIES, CLASSIFICATIONS
+from .config import ASSISTANTS_CONFIG, PROMPTS, CLASSIFICATIONS
+import base64
 
 load_dotenv()
 
@@ -521,3 +522,41 @@ Consider:
     except Exception as e:
         print(f"Error generating category details: {e}")
         return None
+
+
+def extract_structured_data_from_image(img_path, prompt, model=None):
+    """
+    Given an image path and a prompt, call the OpenAI Vision API to extract structured data.
+    Returns the parsed JSON response. Raises an error if the response is not valid JSON.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    model = model or os.getenv("OPENAI_MODEL_OCR", "gpt-4o")
+    client = OpenAI(api_key=api_key)
+    with open(img_path, "rb") as img_file:
+        img_bytes = img_file.read()
+        img_b64 = base64.b64encode(img_bytes).decode("utf-8")
+        image_content = {
+            "type": "image_url",
+            "image_url": {"url": f"data:image/png;base64,{img_b64}"},
+        }
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant that extracts structured data from images. Return your response as a JSON object only, with no extra text.",
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        image_content,
+                    ],
+                },
+            ],
+            max_tokens=1024,
+            temperature=0.0,
+            response_format={"type": "json_object"},
+        )
+        content = response.choices[0].message.content
+        return json.loads(content)
