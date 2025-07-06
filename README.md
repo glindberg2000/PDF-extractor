@@ -650,3 +650,65 @@ Each entry includes:
 - Output is a custom schema (not the standard ParserOutput model).
 - See docstrings in `organizer_extractor.py` for more details.
 
+## Organizer Parser Output Contract
+
+### Final Output Manifest
+- The canonical output for upstream ingestion is now:
+  
+  `organizer_manifest_final.json`
+  
+  This file is produced in the output directory after running the full pipeline. It contains one entry per TOC page, with all fields (including Vision overlay and prefilled data) and a consistent schema. **All other JSON files are intermediate or debug outputs.**
+
+#### Example Entry Schema
+```
+{
+  "page_number": int,
+  "toc_title": str,
+  "topic_index_match": {"form_code": str, "description": str} | null,
+  "pdf_page_file": str,
+  "thumbnail_file": str,
+  "raw_text_file": str,
+  "matching_method": str,  // 'llm' or 'none'
+  "has_prefilled_data": bool,
+  "prefilled_fields": dict | null,
+  "prefilled_model": str
+}
+```
+
+### Customizing Extraction
+
+#### Adding Custom Bounding Boxes
+- To improve extraction for specialty pages (e.g., noisy or complex layouts), add or update entries in:
+  
+  `dataextractai/parsers/special_page_configs.py`
+  
+  Each entry is keyed by form code (e.g., '6A') and specifies one or more fields with a bounding box (as percent of page) and extraction method (usually 'vision').
+  
+  Example:
+  ```python
+  special_page_configs = {
+      "6A": {
+          "Expenses": {
+              "method": "vision",
+              "crop": {"top": 0.19, "bottom": 0.586, "left": 0.0, "right": 1.0},
+          },
+          "Other_Expenses": {
+              "method": "vision",
+              "crop": {"top": 0.586, "bottom": 0.72, "left": 0.0, "right": 1.0},
+          },
+      },
+      # ...
+  }
+  ```
+
+#### Updating Exclusion Terms
+- To filter out false positives in prefilled data detection, update:
+  
+  `dataextractai/parsers/prefilled_exclude_terms.txt`
+  
+  Add one term per line (case-insensitive). These will be ignored as fillable data during extraction.
+
+### Upstream Integration
+- **Only** use `organizer_manifest_final.json` for ingestion.
+- All other files (e.g., `toc_llm_merged.json`, `toc_llm_merged_with_prefilled.json`, etc.) are for debugging or pipeline steps only.
+

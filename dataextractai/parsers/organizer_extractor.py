@@ -914,8 +914,7 @@ class OrganizerExtractor:
 class PrefilledDataDetector:
     """
     Detects prefilled/user data on each page using LLMs. Can be run as part of the pipeline or standalone.
-    Supports exclusion of false positive terms via a config file (prefilled_exclude_terms.txt) in the project root or config directory.
-    Any field or value matching a term in this file (case-insensitive, one per line) will be ignored as fillable data.
+    Supports exclusion of false positive terms via a config file (dataextractai/parsers/prefilled_exclude_terms.txt).
     """
 
     def __init__(
@@ -931,53 +930,15 @@ class PrefilledDataDetector:
         self.output_path = output_path or manifest_path.replace(
             ".json", "_with_prefilled.json"
         )
-        self.model_env_keys = model_env_keys or [
-            "OPENAI_MODEL_FAST",
-            "OPENAI_MODEL_PRECISE",
-            "OPENAI_MODEL_OCR",
-        ]
+        self.model_env_keys = model_env_keys
+        # Always use the new path
+        self.exclude_terms_path = exclude_terms_path or os.path.join(
+            os.path.dirname(__file__), "prefilled_exclude_terms.txt"
+        )
         load_dotenv()
         self.models = [os.getenv(k) for k in self.model_env_keys if os.getenv(k)]
         if not self.models:
             raise RuntimeError("No LLM models found in .env for prefilled detection.")
-        # Load exclude terms from module-level config
-        self.exclude_terms = set()
-        config_paths = [
-            os.path.join(
-                os.path.dirname(os.path.abspath(__file__)),
-                "../../prefilled_exclude_terms.txt",
-            ),
-            os.path.join(
-                os.path.dirname(os.path.abspath(__file__)),
-                "../prefilled_exclude_terms.txt",
-            ),
-            os.path.join(
-                os.path.dirname(os.path.abspath(__file__)),
-                "prefilled_exclude_terms.txt",
-            ),
-            os.path.abspath("prefilled_exclude_terms.txt"),
-        ]
-        found = False
-        for path in config_paths:
-            if os.path.exists(path):
-                with open(path, "r") as f:
-                    self.exclude_terms = set(
-                        line.strip().lower() for line in f if line.strip()
-                    )
-                found = True
-                break
-        if not found:
-            # Default common false positives
-            self.exclude_terms = {
-                "on file",
-                "on-file",
-                "master",
-                "footer",
-                "does not expire",
-            }
-            logging.warning(
-                "No prefilled_exclude_terms.txt found at module level. Using built-in defaults."
-            )
 
     def _filter_excluded(self, fields):
         # Recursively filter out any field/value matching exclude_terms
@@ -1169,7 +1130,7 @@ if __name__ == "__main__":
             enhance_manifest_with_vision,
         )
 
-        vision_output_path = os.path.join(output_dir, "toc_llm_merged_vision.json")
+        vision_output_path = os.path.join(output_dir, "organizer_manifest_final.json")
         # --- Robust PNG generation before Vision overlay ---
         with open(prefilled_manifest_path, "r") as f:
             manifest = json.load(f)
