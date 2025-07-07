@@ -1059,6 +1059,16 @@ class OrganizerExtractor:
                         result = extract_structured_data_from_image(
                             field_crop_img_path, prompt
                         )
+                        # Save raw LLM response for debugging
+                        llm_response_path = os.path.join(
+                            self.output_dir,
+                            f"field_{field}_page_{page_number}_llm_response.json",
+                        )
+                        with open(llm_response_path, "w") as f:
+                            import json
+
+                            json.dump(result, f, indent=2)
+                        print(f"[LLM RESPONSE] {llm_response_path}: {result}")
                         value = result.get(field) or str(result)
                         extracted_fields[field] = {
                             "value": value,
@@ -1066,30 +1076,49 @@ class OrganizerExtractor:
                             "crop": crop,
                             "crop_img": field_crop_img_path,
                         }
-                        logging.info(
-                            f"[FIELD EXTRACTION] Page {page_number} field={field}: value='{value}' | crop={crop} | img={field_crop_img_path}"
-                        )
                     except Exception as e:
-                        logging.warning(
-                            f"[FIELD EXTRACTION] Vision LLM failed for page {page_number} field={field}: {e}"
-                        )
+                        print(f"[LLM ERROR] {field} page {page_number}: {e}")
+                        extracted_fields[field] = {
+                            "value": None,
+                            "source": "vision_llm_failed",
+                            "crop": crop,
+                            "crop_img": field_crop_img_path,
+                            "error": str(e),
+                        }
             page["extracted_fields"] = extracted_fields
-            manifest.append(page)
+            if not extracted_fields or (
+                isinstance(extracted_fields, dict)
+                and all(not v for v in extracted_fields.values())
+            ):
+                print(
+                    f"[WARN] No extracted fields for page {page_number} (label={label})"
+                )
+            manifest.append(
+                {
+                    "page_number": page_number,
+                    "label": label,
+                    "label_source": label_source,
+                    "label_crop_img": crop_img_path,
+                    "extracted_fields": extracted_fields,
+                }
+            )
         return manifest
 
-    def extract_all_fields_manifest(self, config_path=None):
+    def extract_all_fields_manifest(self, config_path=None, page_numbers=None):
         """
-        For every page, extract the label (with fallback), then extract all fields for that label using the config lookup table.
-        Output a manifest with all extracted fields for every page, skipping TOC/Topic Index/merge.
+        If page_numbers is provided (list of ints), only process those pages. Otherwise, process all.
         """
         import json
         from dataextractai.utils.ai import extract_structured_data_from_image
         from PIL import Image
         import os
+
         # Load config
         if config_path is None:
-            config_path = os.path.join(os.path.dirname(__file__), 'special_page_configs.json')
-        with open(config_path, 'r') as f:
+            config_path = os.path.join(
+                os.path.dirname(__file__), "special_page_configs.json"
+            )
+        with open(config_path, "r") as f:
             config = json.load(f)
         default_fields = config.get("default", {})
         label_crop = default_fields.get("Form_Label", {}).get("crop")
@@ -1106,6 +1135,8 @@ class OrganizerExtractor:
         manifest = []
         for page in pages_info:
             page_number = page["page_number"]
+            if page_numbers and page_number not in page_numbers:
+                continue
             page_image_path = page["thumbnail_path"]
             label = None
             label_source = None
@@ -1120,7 +1151,9 @@ class OrganizerExtractor:
                 top = int(label_crop["top"] * h)
                 bottom = int(label_crop["bottom"] * h)
                 crop_img = img.crop((left, top, right, bottom))
-                crop_img_path = os.path.join(self.output_dir, f"label_narrow_page_{page_number}.png")
+                crop_img_path = os.path.join(
+                    self.output_dir, f"label_narrow_page_{page_number}.png"
+                )
                 crop_img.save(crop_img_path)
                 try:
                     result = extract_structured_data_from_image(
@@ -1144,7 +1177,9 @@ class OrganizerExtractor:
                 top = int(wide_label_crop["top"] * h)
                 bottom = int(wide_label_crop["bottom"] * h)
                 wide_crop_img = img.crop((left, top, right, bottom))
-                wide_crop_img_path = os.path.join(self.output_dir, f"label_wide_page_{page_number}.png")
+                wide_crop_img_path = os.path.join(
+                    self.output_dir, f"label_wide_page_{page_number}.png"
+                )
                 wide_crop_img.save(wide_crop_img_path)
                 try:
                     result = extract_structured_data_from_image(
@@ -1163,50 +1198,135 @@ class OrganizerExtractor:
             # If you want to add raw text fallback, you can extract text from the PDF page here.
             # ---
             # Now extract all fields for this label (form_code)
-            page_config = config.get(label) if label and label in config else default_fields
+            page_config = (
+                config.get(label) if label and label in config else default_fields
+            )
             extracted_fields = {}
             img = Image.open(page_image_path)
             w, h = img.size
-            for field, field_info in page_config.items():
-                if field in ("Form_Label", "Title"):
-                    continue
-                method = field_info.get("method")
-                crop = field_info.get("crop")
-                if not crop or not method:
-                    continue
-                if method == "vision":
-                    left = int(crop["left"] * w)
-                    right = int(crop["right"] * w)
-                    top = int(crop["top"] * h)
-                    bottom = int(crop["bottom"] * h)
-                    field_crop_img = img.crop((left, top, right, bottom))
-                    field_crop_img_path = os.path.join(self.output_dir, f"field_{field}_page_{page_number}.png")
-                    field_crop_img.save(field_crop_img_path)
-                    try:
-                        prompt = f"Extract the {field} from this region."
-                        result = extract_structured_data_from_image(field_crop_img_path, prompt)
-                        value = result.get(field) or str(result)
-                        extracted_fields[field] = {
-                            "value": value,
-                            "source": "vision_llm",
-                            "crop": crop,
-                            "crop_img": field_crop_img_path,
-                        }
-                    except Exception as e:
-                        extracted_fields[field] = {
-                            "value": None,
-                            "source": "vision_llm_failed",
-                            "crop": crop,
-                            "crop_img": field_crop_img_path,
-                            "error": str(e),
-                        }
-            manifest.append({
-                "page_number": page_number,
-                "label": label,
-                "label_source": label_source,
-                "label_crop_img": crop_img_path,
-                "extracted_fields": extracted_fields,
-            })
+            # --- Special handling for label '1' (split TOC page) ---
+            if (
+                label == "1"
+                and "Left_Column" in page_config
+                and "Right_Column" in page_config
+            ):
+                all_pairs = []
+                for col in ["Left_Column", "Right_Column"]:
+                    field_info = page_config[col]
+                    method = field_info.get("method")
+                    crop = field_info.get("crop")
+                    if not crop or not method:
+                        continue
+                    if method == "vision":
+                        left = int(crop["left"] * w)
+                        right = int(crop["right"] * w)
+                        top = int(crop["top"] * h)
+                        bottom = int(crop["bottom"] * h)
+                        field_crop_img = img.crop((left, top, right, bottom))
+                        field_crop_img_path = os.path.join(
+                            self.output_dir, f"field_{col}_page_{page_number}.png"
+                        )
+                        field_crop_img.save(field_crop_img_path)
+                        try:
+                            # Use explicit prompt for extracting pairs
+                            prompt = "Extract a list of {description, value} pairs from this region."
+                            result = extract_structured_data_from_image(
+                                field_crop_img_path, prompt
+                            )
+                            # Save raw LLM response for debugging
+                            llm_response_path = os.path.join(
+                                self.output_dir,
+                                f"field_{col}_page_{page_number}_llm_response.json",
+                            )
+                            with open(llm_response_path, "w") as f:
+                                import json
+
+                                json.dump(result, f, indent=2)
+                            print(f"[LLM RESPONSE] {llm_response_path}: {result}")
+                            # Accept 'data', 'pairs', or a direct list in the LLM response
+                            pairs = None
+                            if isinstance(result, dict):
+                                if "data" in result and isinstance(
+                                    result["data"], list
+                                ):
+                                    pairs = result["data"]
+                                elif "pairs" in result and isinstance(
+                                    result["pairs"], list
+                                ):
+                                    pairs = result["pairs"]
+                            if pairs is None and isinstance(result, list):
+                                pairs = result
+                            if pairs:
+                                all_pairs.extend(pairs)
+                        except Exception as e:
+                            print(f"[LLM ERROR] {col} page {page_number}: {e}")
+                            pass  # Optionally log
+                extracted_fields["all_pairs"] = all_pairs
+            else:
+                for field, field_info in page_config.items():
+                    if field in ("Form_Label", "Title"):
+                        continue
+                    method = field_info.get("method")
+                    crop = field_info.get("crop")
+                    if not crop or not method:
+                        continue
+                    if method == "vision":
+                        left = int(crop["left"] * w)
+                        right = int(crop["right"] * w)
+                        top = int(crop["top"] * h)
+                        bottom = int(crop["bottom"] * h)
+                        field_crop_img = img.crop((left, top, right, bottom))
+                        field_crop_img_path = os.path.join(
+                            self.output_dir, f"field_{field}_page_{page_number}.png"
+                        )
+                        field_crop_img.save(field_crop_img_path)
+                        try:
+                            prompt = f"Extract the {field} from this region."
+                            result = extract_structured_data_from_image(
+                                field_crop_img_path, prompt
+                            )
+                            # Save raw LLM response for debugging
+                            llm_response_path = os.path.join(
+                                self.output_dir,
+                                f"field_{field}_page_{page_number}_llm_response.json",
+                            )
+                            with open(llm_response_path, "w") as f:
+                                import json
+
+                                json.dump(result, f, indent=2)
+                            print(f"[LLM RESPONSE] {llm_response_path}: {result}")
+                            value = result.get(field) or str(result)
+                            extracted_fields[field] = {
+                                "value": value,
+                                "source": "vision_llm",
+                                "crop": crop,
+                                "crop_img": field_crop_img_path,
+                            }
+                        except Exception as e:
+                            print(f"[LLM ERROR] {field} page {page_number}: {e}")
+                            extracted_fields[field] = {
+                                "value": None,
+                                "source": "vision_llm_failed",
+                                "crop": crop,
+                                "crop_img": field_crop_img_path,
+                                "error": str(e),
+                            }
+            if not extracted_fields or (
+                isinstance(extracted_fields, dict)
+                and all(not v for v in extracted_fields.values())
+            ):
+                print(
+                    f"[WARN] No extracted fields for page {page_number} (label={label})"
+                )
+            manifest.append(
+                {
+                    "page_number": page_number,
+                    "label": label,
+                    "label_source": label_source,
+                    "label_crop_img": crop_img_path,
+                    "extracted_fields": extracted_fields,
+                }
+            )
         # Save manifest
         manifest_path = os.path.join(self.output_dir, "all_fields_manifest.json")
         with open(manifest_path, "w") as f:
@@ -1448,11 +1568,15 @@ if __name__ == "__main__":
     load_dotenv()
     fail_fast_env_check()
     parser = argparse.ArgumentParser()
-    parser.add_argument("--pdf_path", type=str, help="Path to input PDF")
+    parser.add_argument("--pdf_path", required=True)
+    parser.add_argument("--output_dir", required=True)
+    parser.add_argument("--extract_all_fields_manifest", action="store_true")
     parser.add_argument(
-        "--output_dir", type=str, help="Output directory (default: timestamped)"
+        "--page", type=int, help="Process only this page number (1-based)"
     )
-    parser.add_argument("--extract_all_fields_manifest", action="store_true", help="Extract all fields for every page using the config lookup table, skipping TOC/Topic Index/merge.")
+    parser.add_argument(
+        "--pages", type=str, help="Comma-separated list of page numbers to process"
+    )
     args = parser.parse_args()
     output_dir = (
         args.output_dir
@@ -1467,6 +1591,15 @@ if __name__ == "__main__":
     CONFIG_PATH = os.path.join(os.path.dirname(__file__), "special_page_configs.json")
     with open(CONFIG_PATH, "r") as f:
         config = json.load(f)
+    if args.extract_all_fields_manifest:
+        page_numbers = None
+        if args.page:
+            page_numbers = [args.page]
+        elif args.pages:
+            page_numbers = [int(x) for x in args.pages.split(",") if x.strip()]
+        extractor = OrganizerExtractor(args.pdf_path, args.output_dir)
+        extractor.extract_all_fields_manifest(page_numbers=page_numbers)
+        exit(0)
     # Run label extraction for all pages
     label_results = extract_labels_for_all_pages(args.pdf_path, config, output_dir)
     for res in label_results:
@@ -1476,7 +1609,4 @@ if __name__ == "__main__":
     logging.info("--- Label Extraction Complete ---")
     # (Skip legacy extraction for this test run)
     extractor = OrganizerExtractor(args.pdf_path, args.output_dir)
-    if args.extract_all_fields_manifest:
-        extractor.extract_all_fields_manifest()
-    else:
-        extractor.extract()  # fallback to original pipeline
+    extractor.extract()  # fallback to original pipeline
