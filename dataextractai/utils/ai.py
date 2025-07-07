@@ -554,7 +554,6 @@ def extract_structured_data_from_image(img_path, prompt, model=None):
                     ],
                 },
             ],
-            max_tokens=1024,
             temperature=0.0,
             response_format={"type": "json_object"},
         )

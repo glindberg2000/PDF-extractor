@@ -1,0 +1,110 @@
+<context>
+# Overview
+The Tax Organizer Extractor Module is an extension of the PDF-Extractor Parsing App. It enables automated parsing of professional tax organizer PDFs (e.g., UltraTax, Lacerte, Drake) to extract structured, machine-readable tax data. This module is designed for tax preparers and developers who need to quickly ingest and analyze client-provided tax workbooks. It solves the problem of manual data entry and error-prone extraction by automating the process, supporting both scanned and digital PDFs, and integrating with an existing drag-and-drop UI.
+
+# Core Features
+- File ingest and format detection (text-based or scanned, with OCR)
+- Table of Contents (TOC) parser to map section labels/codes to page numbers
+- Section and form parser to extract worksheet headers, line-item fields, and TSJ columns
+- Document reference extractor for attached W2s, 1099s, etc.
+- Structured JSON output schema with error logging in metadata
+- Export options: JSON, CSV, Airtable, Markdown summary
+- Auto-detect (can_parse) feature for identifying tax organizer workbooks
+
+# User Experience
+- Tax preparers upload scanned or digital tax workbooks and receive a structured summary of all forms filled
+- Users can see which sections are incomplete or missing documents
+- Data can be exported to CRM/spreadsheet
+- Developers can reuse parsing modules and plug in form-specific extractors
+- UI integration provides visual preview and export buttons for CSV/JSON
+</context>
+<PRD>
+# Technical Architecture
+- Built as an importable module, following the same interface as other parsers (can_parse, parse, etc.)
+- Uses PyPDF2 or pdfplumber for text extraction, pytesseract for OCR, and regex for field parsing
+- JSON output schema includes organizer_sections, documents, unclassified_fields, and metadata.errors
+- No plugin/config system required; extensible for future worksheet types
+- No special requirements for redaction, anonymization, or performance limits
+
+# Development Roadmap
+## Phase 1: Foundation
+- TOC extractor and page mapping
+- Section label detection
+- Simple payer/amount field parser
+
+## Phase 2: Structured Field Extraction
+- Form-specific extractors (e.g., 5A, 5B, 6A, 9A)
+- TSJ flagging and annotations
+- Document attachment detection
+
+## Phase 3: Frontend + Export
+- UI integration with PDF-Extractor
+- Structured preview and download
+- CSV/JSON/Airtable export
+
+## Phase 4: Bonus/AI Layer (Optional)
+- Natural language summary per section
+- Flag inconsistencies or missing data
+- Ask questions like: "Did they include all their 1099s?"
+
+# Logical Dependency Chain
+- Foundation: TOC and section detection must be implemented before field extraction
+- Field extraction and document reference logic must be in place before export features
+- UI integration and export depend on successful parsing and data structuring
+- AI/bonus features are last and depend on all prior phases
+
+# Risks and Mitigations
+- Risk: Poor scan quality may limit OCR accuracy. Mitigation: Log errors in metadata and allow partial extraction.
+- Risk: Variability in organizer layouts. Mitigation: Use stable worksheet codes and extensible mapping logic.
+- Risk: Upstream changes in UI or export requirements. Mitigation: Maintain modular interface and clear output schema.
+
+# Appendix
+## JSON Output Schema Example
+```json
+{
+  "organizer_sections": [
+    {
+      "name": "Interest Income",
+      "page_number": 13,
+      "fields": [
+        {
+          "label": "Name of Payer",
+          "line_number": null,
+          "value": "FIRST REPUBLIC BANK",
+          "type": "text",
+          "notes": "TSJ: T"
+        }
+      ],
+      "complete": true
+    }
+  ],
+  "documents": [
+    {
+      "type": "1099-INT",
+      "received": true,
+      "details": "FIRST REPUBLIC BANK"
+    }
+  ],
+  "unclassified_fields": [
+    { "text": "Note: List all items sold on Schedule D.", "page_number": 15 }
+  ],
+  "metadata": {
+    "errors": [
+      {
+        "section": "Interest Income",
+        "page": 13,
+        "field": "Name of Payer",
+        "reason": "OCR failed"
+      }
+    ]
+  }
+}
+```
+
+## Additional Implementation Notes
+- Extraction should be partial: if some sections or fields fail, return all successfully extracted data and log errors in metadata.errors. Upstream users can fill in missing fields manually.
+- Attempt to infer field types (number, date, checkbox, etc.), but never block extraction if parsing fails. If a value cannot be parsed to its logical type, default to string. Ambiguous or multi-valued fields should be captured as strings.
+- Module should be importable and follow the same interface as other parsers (can_parse, parse, etc.). Implement a can_parse (auto-detect) feature to identify tax organizer workbooks.
+- No plugin/config system required; parser should be extensible but focus on current workbook format.
+- No special requirements for redaction, anonymization, or performance limits.
+</PRD> 

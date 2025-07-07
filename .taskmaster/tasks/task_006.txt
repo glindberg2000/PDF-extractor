@@ -1,18 +1,59 @@
 # Task ID: 6
-# Title: Implement Normalization in Investment Account Parsers
-# Status: done
-# Dependencies: 3
+# Title: Implement Form-Specific Field Extractors
+# Status: pending
+# Dependencies: 5
 # Priority: medium
-# Description: Update all investment account parsers to use the new normalization logic.
+# Description: Create specialized extractors for specific tax form sections (e.g., 5A, 5B, 6A, 9A).
 # Details:
-1. Identify all investment account parsers from the audit results.
-2. For each parser:
-   a. Import the normalization function if not using base class method.
-   b. Modify the parsing logic to call normalization before setting the amount.
-   c. Update any existing sign-flipping logic to use the new convention.
-   d. Ensure proper handling of buys, sells, dividends, and fees.
-3. Pay special attention to handling of short sells and margin interest.
-4. Consider using the Strategy pattern for different normalization strategies per transaction type.
+Extend the basic field extractor to handle specific tax form sections with their unique layouts and field types. Create a factory pattern to select the appropriate extractor based on the section type.
+
+```python
+# extractors/form_specific_extractors.py
+from .field_extractor import BasicFieldExtractor
+
+class FormExtractorFactory:
+    @staticmethod
+    def get_extractor(section_name, section_content):
+        """Return the appropriate extractor based on section name/code"""
+        section_code = extract_section_code(section_name)
+        
+        if section_code == "5A" or "Interest Income" in section_name:
+            return InterestIncomeExtractor(section_content)
+        elif section_code == "5B" or "Dividend Income" in section_name:
+            return DividendIncomeExtractor(section_content)
+        # Add more specialized extractors as needed
+        else:
+            return BasicFieldExtractor(section_content)
+            
+def extract_section_code(section_name):
+    """Extract section code (e.g., 5A) from section name"""
+    import re
+    match = re.search(r"\b(\d+[A-Z])\b", section_name)
+    return match.group(1) if match else ""
+
+class InterestIncomeExtractor(BasicFieldExtractor):
+    def extract_fields(self):
+        """Extract fields specific to Interest Income sections"""
+        fields = super().extract_fields()  # Get basic fields first
+        
+        # Look for specific interest income fields
+        # Example: Extract tax-exempt interest
+        tax_exempt_matches = re.finditer(r"(?i)tax.?exempt\s+interest[:\s]+(\$?[\d,]+\.?\d*)", self.content)
+        for match in tax_exempt_matches:
+            fields.append({
+                "label": "Tax-Exempt Interest",
+                "line_number": None,
+                "value": match.group(1).strip(),
+                "type": "number",
+                "notes": ""
+            })
+            
+        return fields
+
+class DividendIncomeExtractor(BasicFieldExtractor):
+    # Similar implementation for dividend income
+    pass
+```
 
 # Test Strategy:
-Update existing unit tests to check for correct sign convention. Add new tests specifically for normalization. Use real (anonymized) investment statements as test inputs.
+Test with sample content from different form sections. Verify that the factory correctly selects the appropriate extractor. Test each specialized extractor with its corresponding section content. Verify that form-specific fields are correctly extracted in addition to basic fields.

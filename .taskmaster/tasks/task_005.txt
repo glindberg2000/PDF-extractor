@@ -1,18 +1,59 @@
 # Task ID: 5
-# Title: Implement Normalization in Bank Account Parsers
-# Status: done
-# Dependencies: 3
+# Title: Implement Simple Payer/Amount Field Parser
+# Status: pending
+# Dependencies: 4
 # Priority: medium
-# Description: Update all bank account parsers to use the new normalization logic.
+# Description: Create a basic field parser to extract common field types like payer names and amounts.
 # Details:
-1. Identify all bank account parsers from the audit results.
-2. For each parser:
-   a. Import the normalization function if not using base class method.
-   b. Modify the parsing logic to call normalization before setting the amount.
-   c. Update any existing sign-flipping logic to use the new convention.
-   d. Ensure proper handling of deposits, withdrawals, and fees.
-3. Pay special attention to handling of overdraft fees and returned item fees.
-4. Use enum for transaction types to improve code readability and maintainability.
+Implement a simple field parser that can extract basic field types commonly found in tax organizers, such as payer names and monetary amounts. This will serve as the foundation for more complex field extraction in later tasks.
+
+```python
+# extractors/field_extractor.py
+import re
+
+class BasicFieldExtractor:
+    def __init__(self, section_content):
+        self.content = section_content
+        
+    def extract_fields(self):
+        """Extract basic fields from section content"""
+        fields = []
+        
+        # Extract payer names (typically labeled)
+        payer_matches = re.finditer(r"(?i)(name\s+of\s+payer|payer)[:\s]+(.*?)(?:\n|$)", self.content)
+        for match in payer_matches:
+            fields.append({
+                "label": "Name of Payer",
+                "line_number": None,  # Could be determined with more context
+                "value": match.group(2).strip(),
+                "type": "text",
+                "notes": ""  # Will be populated with TSJ info later
+            })
+            
+        # Extract monetary amounts (look for dollar signs, decimal points)
+        amount_matches = re.finditer(r"(?i)(amount|payment|income|interest)[:\s]+(\$?[\d,]+\.?\d*)", self.content)
+        for match in amount_matches:
+            fields.append({
+                "label": match.group(1).strip().capitalize(),
+                "line_number": None,
+                "value": match.group(2).strip(),
+                "type": "number",
+                "notes": ""
+            })
+            
+        return fields
+        
+    def infer_field_type(self, value):
+        """Attempt to infer the data type of a field value"""
+        if re.match(r"^\$?[\d,]+\.?\d*$", value):
+            return "number"
+        elif re.match(r"^\d{1,2}/\d{1,2}/\d{2,4}$", value):
+            return "date"
+        elif value.lower() in ["yes", "no", "true", "false", "x", "✓"]:
+            return "checkbox"
+        else:
+            return "text"
+```
 
 # Test Strategy:
-Update existing unit tests to check for correct sign convention. Add new tests specifically for normalization. Use real (anonymized) bank statements as test inputs.
+Test with sample section content containing various field types. Verify that payer names and amounts are correctly extracted. Test type inference with different value formats. Create test cases for edge cases like missing or malformed fields.

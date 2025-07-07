@@ -1,16 +1,41 @@
 # Task ID: 2
-# Title: Design Normalization Function
-# Status: done
+# Title: Implement PDF Text Extraction and OCR
+# Status: pending
 # Dependencies: 1
 # Priority: high
-# Description: Create a reusable function to normalize transaction amounts according to the new convention.
+# Description: Create utility functions for extracting text from PDFs, with OCR support for scanned documents.
 # Details:
-1. Implement a Python function 'normalize_amount(amount: float, transaction_type: str) -> float'.
-2. Use regex patterns to identify transaction types (e.g., r'(?i)(credit|payment|income)' for positive transactions).
-3. Apply the correct sign based on the transaction type.
-4. Handle edge cases like zero amounts and existing signs.
-5. Use Python's decimal module for precise financial calculations.
-6. Consider using TypedDict for better type hinting of transaction data.
+Implement utility functions in the utils module to handle both text-based and scanned PDFs. Use PyPDF2 or pdfplumber for text extraction from digital PDFs, and pytesseract for OCR on scanned documents. The system should automatically detect if OCR is needed based on text extraction results.
+
+```python
+# utils/ocr.py
+import pytesseract
+from PIL import Image
+import pdf2image
+
+def extract_text_from_pdf(pdf_path):
+    """Extract text from PDF using PyPDF2/pdfplumber first, fall back to OCR if needed"""
+    # Try text extraction first
+    text = extract_text_direct(pdf_path)
+    
+    # If minimal text found, try OCR
+    if is_mostly_empty(text):
+        return extract_text_with_ocr(pdf_path)
+    return text
+
+def extract_text_direct(pdf_path):
+    """Extract text directly from PDF"""
+    # Implementation using PyPDF2 or pdfplumber
+    pass
+
+def extract_text_with_ocr(pdf_path):
+    """Convert PDF to images and perform OCR"""
+    images = pdf2image.convert_from_path(pdf_path)
+    text = []
+    for img in images:
+        text.append(pytesseract.image_to_string(img))
+    return '\n'.join(text)
+```
 
 # Test Strategy:
-Write unit tests covering various scenarios: positive/negative inputs, zero amounts, different transaction types. Use pytest parametrize for comprehensive testing.
+Test with various PDF types (text-based, scanned, mixed). Verify that text extraction works correctly for digital PDFs. For OCR, test with sample scanned documents and verify text accuracy. Create mock PDFs with known content to validate extraction quality.

@@ -1,18 +1,53 @@
 # Task ID: 4
-# Title: Implement Normalization in Credit Card Parsers
-# Status: done
+# Title: Implement Section Label Detection
+# Status: pending
 # Dependencies: 3
-# Priority: medium
-# Description: Update all credit card parsers to use the new normalization logic.
+# Priority: high
+# Description: Create a parser to detect and extract section labels and headers from tax organizer pages.
 # Details:
-1. Identify all credit card parsers from the audit results.
-2. For each parser:
-   a. Import the normalization function if not using base class method.
-   b. Modify the parsing logic to call normalization before setting the amount.
-   c. Update any existing sign-flipping logic to use the new convention.
-   d. Ensure proper handling of fees, interest charges, and payments.
-3. Use logging to track normalization actions for debugging.
-4. Consider using a decorator pattern for applying normalization consistently.
+Implement a section detector that can identify section headers and labels within the tax organizer. This will work with the TOC mapping to locate and extract specific sections.
+
+```python
+# extractors/section_extractor.py
+import re
+
+class SectionExtractor:
+    def __init__(self, pdf_text, toc_mapping):
+        self.pdf_text = pdf_text
+        self.pages = self._split_into_pages(pdf_text)
+        self.toc_mapping = toc_mapping
+        
+    def _split_into_pages(self, text):
+        # Logic to split text into pages
+        pass
+        
+    def extract_sections(self):
+        """Extract all sections based on TOC mapping"""
+        sections = []
+        
+        for section_name, page_num in self.toc_mapping.items():
+            # Adjust for 0-based indexing if needed
+            page_index = page_num - 1 if page_num > 0 else 0
+            
+            if page_index < len(self.pages):
+                section_content = self.pages[page_index]
+                # Extract until next section or end of document
+                section_data = {
+                    "name": section_name,
+                    "page_number": page_num,
+                    "content": section_content,
+                    "fields": [],  # Will be populated by field extractor
+                    "complete": True  # Default, will be updated based on field extraction
+                }
+                sections.append(section_data)
+                
+        return sections
+        
+    def validate_section(self, section_name, page_content):
+        """Verify that the page actually contains the expected section"""
+        # Check if section name or code appears in the page content
+        return re.search(rf"(?i){re.escape(section_name)}", page_content) is not None
+```
 
 # Test Strategy:
-Update existing unit tests to check for correct sign convention. Add new tests specifically for normalization. Use real (anonymized) credit card statements as test inputs.
+Test with sample tax organizer PDFs. Verify that sections are correctly identified based on the TOC mapping. Test validation logic to ensure that extracted sections actually contain the expected content. Test with edge cases like missing sections or sections spanning multiple pages.

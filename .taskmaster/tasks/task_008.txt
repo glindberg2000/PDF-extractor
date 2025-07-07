@@ -1,18 +1,68 @@
 # Task ID: 8
-# Title: Comprehensive Integration Testing
-# Status: done
-# Dependencies: 7
-# Priority: high
-# Description: Perform end-to-end testing of the entire system with the updated parsers and analytics logic.
+# Title: Implement Document Attachment Detection
+# Status: pending
+# Dependencies: 5
+# Priority: medium
+# Description: Create a parser to detect references to attached tax documents (W2s, 1099s, etc.).
 # Details:
-1. Set up a test environment with copies of production data.
-2. Run all parsers on a diverse set of financial documents.
-3. Verify that all parsed data adheres to the new sign convention.
-4. Generate all standard reports and analytics.
-5. Compare results against known-good data from the old system.
-6. Document any discrepancies and investigate root causes.
-7. Use pytest for organizing and running the test suite.
-8. Implement property-based testing using hypothesis for edge case detection.
+Implement a document reference detector that can identify mentions of attached tax documents such as W2s, 1099s, etc. This will help users track which documents have been provided.
+
+```python
+# extractors/document_extractor.py
+import re
+
+class DocumentReferenceExtractor:
+    def __init__(self, full_text):
+        self.full_text = full_text
+        
+    def extract_document_references(self):
+        """Extract references to tax documents"""
+        documents = []
+        
+        # Common tax document types to look for
+        doc_types = [
+            "W-?2", "1099-?INT", "1099-?DIV", "1099-?MISC", "1099-?R", 
+            "1099-?NEC", "1098-?T", "1098", "K-?1", "Schedule K-?1"
+        ]
+        
+        # Create pattern to match document types
+        pattern = r"(?i)\b(" + "|".join(doc_types) + r")\b"
+        
+        # Find all matches
+        for match in re.finditer(pattern, self.full_text):
+            doc_type = match.group(1)
+            # Get surrounding context to extract payer info
+            context = self._get_context(match)
+            payer = self._extract_payer_from_context(context, doc_type)
+            
+            documents.append({
+                "type": doc_type.upper(),
+                "received": True,  # Assume received if mentioned
+                "details": payer if payer else ""
+            })
+            
+        return documents
+        
+    def _get_context(self, match, chars=100):
+        """Get text surrounding the match"""
+        start = max(0, match.start() - chars)
+        end = min(len(self.full_text), match.end() + chars)
+        return self.full_text[start:end]
+        
+    def _extract_payer_from_context(self, context, doc_type):
+        """Try to extract payer information from context"""
+        # Look for payer patterns near document reference
+        payer_match = re.search(r"(?i)(from|by|payer|provider)[:\s]+(\w[\w\s&,.'-]{2,30})", context)
+        if payer_match:
+            return payer_match.group(2).strip()
+            
+        # Alternative: look for capitalized words that might be company names
+        cap_words_match = re.search(r"\b([A-Z][A-Z\s&,.'-]{2,30})\b", context)
+        if cap_words_match:
+            return cap_words_match.group(1).strip()
+            
+        return ""
+```
 
 # Test Strategy:
-Create a comprehensive test plan covering all parser types and downstream analytics. Use both synthetic and anonymized real-world data for testing.
+Test with sample content containing references to various tax documents. Verify that the extractor correctly identifies document types. Test payer extraction with different context patterns. Create test cases for edge cases like ambiguous references or unusual document types.

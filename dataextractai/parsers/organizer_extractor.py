@@ -663,6 +663,9 @@ class OrganizerExtractor:
 
         output = []
         for entry in toc:
+            extracted_fields = (
+                {}
+            )  # Always initialize at the top of the loop to avoid NameError
             title = entry.get("title", "").strip()
             title_lc = title.lower()
             # Try exact match
@@ -936,6 +939,9 @@ class OrganizerExtractor:
                 "right": 1.0,
             }
         for page in pages_info:
+            extracted_fields = (
+                {}
+            )  # Always initialize at the top of the loop to avoid NameError
             page_number = page["page_number"]
             page_image_path = (
                 page["png_path"] if "png_path" in page else page["thumbnail_file"]
@@ -945,7 +951,7 @@ class OrganizerExtractor:
             label_source = None
             crop_used = None
             crop_img_path = None
-            # --- 1. Try default (narrow) crop ---
+            # 1. Try default (narrow) crop
             if label_crop:
                 img = Image.open(page_image_path)
                 w, h = img.size
@@ -964,23 +970,23 @@ class OrganizerExtractor:
                     )
                     label = result.get("Form_Label") or str(result)
                     if label and label.strip():
-                        label_source = "vision_llm_narrow"
-                        crop_used = label_crop
+                        label_source = "Form_Label (narrow)"
+                        crop_used = "Form_Label"
                     else:
                         label = None  # treat blank as None
                 except Exception as e:
                     logging.warning(
                         f"[LABEL EXTRACTION] Vision LLM (narrow) failed for page {page_number}: {e}"
                     )
-            # --- 2. Fallback: wide crop ---
-            wide_crop_img_path = None
-            if not label and wide_label_crop:
-                img = Image.open(page_image_path)
-                w, h = img.size
-                left = int(wide_label_crop["left"] * w)
-                right = int(wide_label_crop["right"] * w)
-                top = int(wide_label_crop["top"] * h)
-                bottom = int(wide_label_crop["bottom"] * h)
+            # 2. If not found, try wide crop if available
+            if (not label or not label.strip()) and config["default"].get(
+                "Wide_Form_Label"
+            ):
+                wide_crop = config["default"]["Wide_Form_Label"]["crop"]
+                left = int(wide_crop["left"] * w)
+                right = int(wide_crop["right"] * w)
+                top = int(wide_crop["top"] * h)
+                bottom = int(wide_crop["bottom"] * h)
                 wide_crop_img = img.crop((left, top, right, bottom))
                 wide_crop_img_path = os.path.join(
                     output_dir, f"label_wide_page_{page_number}.png"
@@ -992,26 +998,30 @@ class OrganizerExtractor:
                     )
                     label = result.get("Form_Label") or str(result)
                     if label and label.strip():
-                        label_source = "vision_llm_wide"
-                        crop_used = wide_label_crop
-                        crop_img_path = wide_crop_img_path
+                        label_source = "Wide_Form_Label (wide)"
+                        crop_used = "Wide_Form_Label"
                     else:
                         label = None
                 except Exception as e:
                     logging.warning(
                         f"[LABEL EXTRACTION] Vision LLM (wide) failed for page {page_number}: {e}"
                     )
-            # --- 3. Fallback: raw text ---
-            if not label and raw_text:
-                # Heuristic: use the first non-empty line as the label
-                lines = [l.strip() for l in raw_text.splitlines() if l.strip()]
-                if lines:
-                    label = lines[0]
-                    label_source = "raw_text_first_line"
-                    crop_used = None
-                    crop_img_path = None
-            logging.info(
-                f"[LABEL EXTRACTION] Page {page_number}: label='{label}' source={label_source} crop={crop_used} crop_img={crop_img_path}"
+            # 3. If still not found, scan raw text for unique_search_key
+            if not label or not label.strip():
+                for key, entry in config.items():
+                    if isinstance(entry, dict) and entry.get("unique_search_key"):
+                        if entry["unique_search_key"].lower() in raw_text.lower():
+                            config_key = key
+                            break
+            # 4. Use 'Title' for display, but config_key for lookup
+            title_for_manifest = (
+                config[config_key]["Title"]
+                if config_key and "Title" in config[config_key]
+                else label
+            )
+            # Log which crop was used
+            print(
+                f"[INFO] Page {page_number}: Label extracted using {label_source} ({crop_used} crop): {label}"
             )
             page["extracted_label"] = label
             page["label_source"] = label_source
@@ -1019,7 +1029,7 @@ class OrganizerExtractor:
             if wide_crop_img_path:
                 page["label_wide_crop_img"] = wide_crop_img_path
 
-            # --- Extract all other fields for this page using config ---
+            # Extract all other fields for this page using config
             # Determine form_code: prefer topic_index_match, else label, else TOC
             form_code = None
             if page.get("topic_index_match") and page["topic_index_match"].get(
@@ -1035,38 +1045,144 @@ class OrganizerExtractor:
                 if form_code and form_code in config
                 else default_fields
             )
-            extracted_fields = {}
             for field, field_info in page_config.items():
-                if field in ("Form_Label", "Title"):
-                    continue  # skip label/title crops
-                method = field_info.get("method")
-                crop = field_info.get("crop")
-                if not crop or not method:
+                # Only process fields where field_info is a dict and has a 'method' key
+                if not isinstance(field_info, dict) or "method" not in field_info:
                     continue
-                # Extract region using Vision LLM if method is 'vision'
-                if method == "vision":
+                method = field_info.get("method")
+                split_column = field_info.get("split_column", False)
+                crop_left = field_info.get("crop_left")
+                crop_right = field_info.get("crop_right")
+                crop = field_info.get("crop")
+                field_prompt_override = (
+                    field_info.get("prompt_override") or prompt_override
+                )
+                # --- Special handling for Cover and Signature pages: full page extraction ---
+                if (
+                    form_code in ("Cover_Sheet", "Signature_Page")
+                    and field == "Full_Page"
+                ):
+                    from PIL import Image
+
+                    img = Image.open(page_image_path)
+                    full_img_path = os.path.join(
+                        self.output_dir, f"full_page_{page_number}.png"
+                    )
+                    img.save(full_img_path)
+                    # Try to load raw PDF text for this page
+                    raw_text_path = os.path.join(
+                        self.output_dir, f"page_{page_number}.txt"
+                    )
+                    raw_text = ""
+                    if os.path.exists(raw_text_path):
+                        with open(raw_text_path, "r") as f:
+                            raw_text = f.read()
+                    prompt = field_prompt_override or (
+                        "Extract all fields/regions from this tax organizer cover/signature page. "
+                        "If helpful, use the following raw PDF text as context: "
+                        + raw_text
+                    )
+                    try:
+                        result = extract_structured_data_from_image(
+                            full_img_path, prompt
+                        )
+                        llm_response_path = os.path.join(
+                            self.output_dir,
+                            f"field_{field}_page_{page_number}_llm_response.json",
+                        )
+                        with open(llm_response_path, "w") as f:
+                            json.dump(result, f, indent=2)
+                        print(f"[LLM RESPONSE] {llm_response_path}: {result}")
+                        extracted_fields[field] = {
+                            "value": result,
+                            "source": "vision_llm_full_page",
+                            "full_img": full_img_path,
+                        }
+                    except Exception as e:
+                        print(
+                            f"[LLM ERROR] {field} page {page_number} (full page): {e}"
+                        )
+                        extracted_fields[field] = {
+                            "value": None,
+                            "source": "vision_llm_full_page_failed",
+                            "full_img": full_img_path,
+                            "error": str(e),
+                        }
+                    continue
+                # --- Split-column aggregation fix ---
+                if split_column and crop_left and crop_right:
+                    all_col_results = []
+                    for col_idx, col_crop in enumerate([crop_left, crop_right]):
+                        l = int(col_crop["left"] * w)
+                        r = int(col_crop["right"] * w)
+                        t = int(col_crop["top"] * h)
+                        b = int(col_crop["bottom"] * h)
+                        col_img = img.crop((l, t, r, b))
+                        col_img_path = os.path.join(
+                            self.output_dir,
+                            f"field_{field}_page_{page_number}_col{col_idx+1}.png",
+                        )
+                        col_img.save(col_img_path)
+                        try:
+                            prompt = field_prompt_override or (
+                                "Extract all {description, value} pairs from this column of a split-column tax organizer form. "
+                                "Return as a list of objects with keys 'description' and 'value'. Ignore empty or header rows."
+                            )
+                            result = extract_structured_data_from_image(
+                                col_img_path, prompt
+                            )
+                            llm_response_path = os.path.join(
+                                self.output_dir,
+                                f"field_{field}_page_{page_number}_col{col_idx+1}_llm_response.json",
+                            )
+                            with open(llm_response_path, "w") as f:
+                                json.dump(result, f, indent=2)
+                            print(f"[LLM RESPONSE] {llm_response_path}: {result}")
+                            # Accept either a list or dict with 'data' key
+                            col_values = (
+                                result.get("data")
+                                if isinstance(result, dict) and "data" in result
+                                else result
+                            )
+                            if isinstance(col_values, list):
+                                all_col_results.extend(col_values)
+                            elif isinstance(col_values, dict):
+                                all_col_results.append(col_values)
+                        except Exception as e:
+                            print(
+                                f"[LLM ERROR] {field} page {page_number} col {col_idx+1}: {e}"
+                            )
+                    # Aggregate both columns into a single list under 'data'
+                    extracted_fields[field] = {
+                        "data": all_col_results,
+                        "source": "vision_llm_split_column",
+                        "columns": 2,
+                    }
+                    continue
+                # --- Standard extraction for all other fields ---
+                if method == "vision" and crop:
                     left = int(crop["left"] * w)
                     right = int(crop["right"] * w)
                     top = int(crop["top"] * h)
                     bottom = int(crop["bottom"] * h)
                     field_crop_img = img.crop((left, top, right, bottom))
                     field_crop_img_path = os.path.join(
-                        output_dir, f"field_{field}_page_{page_number}.png"
+                        self.output_dir, f"field_{field}_page_{page_number}.png"
                     )
                     field_crop_img.save(field_crop_img_path)
                     try:
-                        prompt = f"Extract the {field} from this region."
+                        prompt = (
+                            field_prompt_override
+                            or f"Extract the {field} from this region."
+                        )
                         result = extract_structured_data_from_image(
                             field_crop_img_path, prompt
                         )
-                        # Save raw LLM response for debugging
                         llm_response_path = os.path.join(
                             self.output_dir,
                             f"field_{field}_page_{page_number}_llm_response.json",
                         )
                         with open(llm_response_path, "w") as f:
-                            import json
-
                             json.dump(result, f, indent=2)
                         print(f"[LLM RESPONSE] {llm_response_path}: {result}")
                         value = result.get(field) or str(result)
@@ -1085,7 +1201,6 @@ class OrganizerExtractor:
                             "crop_img": field_crop_img_path,
                             "error": str(e),
                         }
-            page["extracted_fields"] = extracted_fields
             if not extracted_fields or (
                 isinstance(extracted_fields, dict)
                 and all(not v for v in extracted_fields.values())
@@ -1106,12 +1221,26 @@ class OrganizerExtractor:
 
     def extract_all_fields_manifest(self, config_path=None, page_numbers=None):
         """
-        If page_numbers is provided (list of ints), only process those pages. Otherwise, process all.
+        Robustly extract all fields for each page using fallback logic:
+        1. Try narrow crop (Vision LLM)
+        2. If no config match, try wide crop (Vision LLM)
+        3. If still no match, try raw PDF text (for special pages)
+        For standard forms, map label through gold standard to get form ID.
+        For special pages, match unique phrases in raw text.
+        Log which fallback was used.
+        Only process the specified page_numbers if provided.
+        Handles split-column (Form 1) logic for correct extraction.
+        Supports config-driven prompt_override and unique_search_key for robust fallback.
         """
         import json
         from dataextractai.utils.ai import extract_structured_data_from_image
         from PIL import Image
         import os
+
+        # Always extract raw text for all pages before processing
+        print("[DEBUG] Extracting raw PDF text for all pages...")
+        self.extract_raw_text_per_page()
+        print("[DEBUG] Raw PDF text extraction complete.")
 
         # Load config
         if config_path is None:
@@ -1122,27 +1251,29 @@ class OrganizerExtractor:
             config = json.load(f)
         default_fields = config.get("default", {})
         label_crop = default_fields.get("Form_Label", {}).get("crop")
+        # Use Wide_Form_Label if present
         wide_label_crop = None
-        if label_crop:
-            wide_label_crop = {
-                "top": label_crop["top"],
-                "bottom": label_crop["bottom"],
-                "left": 0.0,
-                "right": 1.0,
-            }
+        if config["default"].get("Wide_Form_Label"):
+            wide_label_crop = config["default"]["Wide_Form_Label"]["crop"]
         pages_info = self.split_pages()
         self.generate_thumbnails(pages_info)
+        # Filter pages_info if page_numbers is provided
+        if page_numbers is not None:
+            page_numbers_set = set(page_numbers)
+            pages_info = [p for p in pages_info if p["page_number"] in page_numbers_set]
         manifest = []
         for page in pages_info:
+            extracted_fields = {}
             page_number = page["page_number"]
-            if page_numbers and page_number not in page_numbers:
-                continue
             page_image_path = page["thumbnail_path"]
             label = None
             label_source = None
             crop_used = None
             crop_img_path = None
-            # --- 1. Try default (narrow) crop ---
+            wide_crop_img_path = None
+            config_key = None
+            prompt_override = None
+            # 1. Try default (narrow) crop
             if label_crop:
                 img = Image.open(page_image_path)
                 w, h = img.size
@@ -1161,17 +1292,16 @@ class OrganizerExtractor:
                     )
                     label = result.get("Form_Label") or str(result)
                     if label and label.strip():
-                        label_source = "vision_llm_narrow"
-                        crop_used = label_crop
+                        label_source = "Form_Label (narrow)"
+                        crop_used = "Form_Label"
                     else:
                         label = None
-                except Exception:
-                    label = None
-            # --- 2. Fallback: wide crop ---
-            wide_crop_img_path = None
-            if not label and wide_label_crop:
-                img = Image.open(page_image_path)
-                w, h = img.size
+                except Exception as e:
+                    print(
+                        f"[LABEL EXTRACTION] Vision LLM (narrow) failed for page {page_number}: {e}"
+                    )
+            # 2. If not found, try wide crop if available
+            if (not label or not label.strip()) and wide_label_crop:
                 left = int(wide_label_crop["left"] * w)
                 right = int(wide_label_crop["right"] * w)
                 top = int(wide_label_crop["top"] * h)
@@ -1187,130 +1317,223 @@ class OrganizerExtractor:
                     )
                     label = result.get("Form_Label") or str(result)
                     if label and label.strip():
-                        label_source = "vision_llm_wide"
-                        crop_used = wide_label_crop
-                        crop_img_path = wide_crop_img_path
+                        label_source = "Wide_Form_Label (wide)"
+                        crop_used = "Wide_Form_Label"
                     else:
                         label = None
-                except Exception:
-                    label = None
-            # --- 3. Fallback: raw text (not available here, so skip) ---
-            # If you want to add raw text fallback, you can extract text from the PDF page here.
-            # ---
-            # Now extract all fields for this label (form_code)
-            page_config = (
-                config.get(label) if label and label in config else default_fields
+                except Exception as e:
+                    print(
+                        f"[LABEL EXTRACTION] Vision LLM (wide) failed for page {page_number}: {e}"
+                    )
+            # 3. If still not found, scan raw text for unique_search_key from config
+            if not label or not label.strip():
+                # Try all config sections with unique_search_key
+                raw_text_path = os.path.join(self.output_dir, f"page_{page_number}.txt")
+                raw_text = ""
+                if os.path.exists(raw_text_path):
+                    with open(raw_text_path, "r") as f:
+                        raw_text = f.read()
+                for key, entry in config.items():
+                    if isinstance(entry, dict) and entry.get("unique_search_key"):
+                        if entry["unique_search_key"].lower() in raw_text.lower():
+                            config_key = key
+                            prompt_override = entry.get("prompt_override")
+                            print(
+                                f"[DEBUG] Page {page_number}: unique_search_key '{entry['unique_search_key']}' matched in raw text. Using config_key: {config_key}"
+                            )
+                            break
+            # 4. Use 'Title' for display, but config_key for lookup
+            title_for_manifest = (
+                config[config_key]["Title"]
+                if config_key and "Title" in config[config_key]
+                else label
             )
-            extracted_fields = {}
-            img = Image.open(page_image_path)
-            w, h = img.size
-            # --- Special handling for label '1' (split TOC page) ---
-            if (
-                label == "1"
-                and "Left_Column" in page_config
-                and "Right_Column" in page_config
-            ):
-                all_pairs = []
-                for col in ["Left_Column", "Right_Column"]:
-                    field_info = page_config[col]
-                    method = field_info.get("method")
-                    crop = field_info.get("crop")
-                    if not crop or not method:
-                        continue
-                    if method == "vision":
-                        left = int(crop["left"] * w)
-                        right = int(crop["right"] * w)
-                        top = int(crop["top"] * h)
-                        bottom = int(crop["bottom"] * h)
-                        field_crop_img = img.crop((left, top, right, bottom))
-                        field_crop_img_path = os.path.join(
-                            self.output_dir, f"field_{col}_page_{page_number}.png"
+            # Log which crop was used
+            print(
+                f"[INFO] Page {page_number}: Label extracted using {label_source} ({crop_used} crop): {label}"
+            )
+            print(
+                f"[DEBUG] Page {page_number}: config_key={config_key}, form_code={label if label and label in config else config_key}, title_for_manifest={title_for_manifest}"
+            )
+            # Determine form_code: prefer label if in config, else use config_key, else default
+            form_code = None
+            if label and label in config:
+                form_code = label
+                prompt_override = (
+                    config[label].get("prompt_override")
+                    if config[label].get("prompt_override")
+                    else prompt_override
+                )
+            elif config_key:
+                form_code = config_key
+            page_config = (
+                config.get(form_code)
+                if form_code and form_code in config
+                else default_fields
+            )
+            if page_config is default_fields:
+                print(
+                    f"[DEBUG] Page {page_number}: Falling back to default_fields for extraction."
+                )
+            print(
+                f"[DEBUG] Page {page_number}: Fields to process: {list(page_config.keys())}"
+            )
+            for field, field_info in page_config.items():
+                # Only process fields where field_info is a dict and has a 'method' key
+                if not isinstance(field_info, dict) or "method" not in field_info:
+                    continue
+                method = field_info.get("method")
+                split_column = field_info.get("split_column", False)
+                crop_left = field_info.get("crop_left")
+                crop_right = field_info.get("crop_right")
+                crop = field_info.get("crop")
+                field_prompt_override = (
+                    field_info.get("prompt_override") or prompt_override
+                )
+                # --- Special handling for Cover and Signature pages: full page extraction ---
+                if (
+                    form_code in ("Cover_Sheet", "Signature_Page")
+                    and field == "Full_Page"
+                ):
+                    from PIL import Image
+
+                    img = Image.open(page_image_path)
+                    full_img_path = os.path.join(
+                        self.output_dir, f"full_page_{page_number}.png"
+                    )
+                    img.save(full_img_path)
+                    # Try to load raw PDF text for this page
+                    raw_text_path = os.path.join(
+                        self.output_dir, f"page_{page_number}.txt"
+                    )
+                    raw_text = ""
+                    if os.path.exists(raw_text_path):
+                        with open(raw_text_path, "r") as f:
+                            raw_text = f.read()
+                    prompt = field_prompt_override or (
+                        "Extract all fields/regions from this tax organizer cover/signature page. "
+                        "If helpful, use the following raw PDF text as context: "
+                        + raw_text
+                    )
+                    try:
+                        result = extract_structured_data_from_image(
+                            full_img_path, prompt
                         )
-                        field_crop_img.save(field_crop_img_path)
+                        llm_response_path = os.path.join(
+                            self.output_dir,
+                            f"field_{field}_page_{page_number}_llm_response.json",
+                        )
+                        with open(llm_response_path, "w") as f:
+                            json.dump(result, f, indent=2)
+                        print(f"[LLM RESPONSE] {llm_response_path}: {result}")
+                        extracted_fields[field] = {
+                            "value": result,
+                            "source": "vision_llm_full_page",
+                            "full_img": full_img_path,
+                        }
+                    except Exception as e:
+                        print(
+                            f"[LLM ERROR] {field} page {page_number} (full page): {e}"
+                        )
+                        extracted_fields[field] = {
+                            "value": None,
+                            "source": "vision_llm_full_page_failed",
+                            "full_img": full_img_path,
+                            "error": str(e),
+                        }
+                    continue
+                # --- Split-column aggregation fix ---
+                if split_column and crop_left and crop_right:
+                    all_col_results = []
+                    for col_idx, col_crop in enumerate([crop_left, crop_right]):
+                        l = int(col_crop["left"] * w)
+                        r = int(col_crop["right"] * w)
+                        t = int(col_crop["top"] * h)
+                        b = int(col_crop["bottom"] * h)
+                        col_img = img.crop((l, t, r, b))
+                        col_img_path = os.path.join(
+                            self.output_dir,
+                            f"field_{field}_page_{page_number}_col{col_idx+1}.png",
+                        )
+                        col_img.save(col_img_path)
                         try:
-                            # Use explicit prompt for extracting pairs
-                            prompt = "Extract a list of {description, value} pairs from this region."
-                            result = extract_structured_data_from_image(
-                                field_crop_img_path, prompt
+                            prompt = field_prompt_override or (
+                                "Extract all {description, value} pairs from this column of a split-column tax organizer form. "
+                                "Return as a list of objects with keys 'description' and 'value'. Ignore empty or header rows."
                             )
-                            # Save raw LLM response for debugging
+                            result = extract_structured_data_from_image(
+                                col_img_path, prompt
+                            )
                             llm_response_path = os.path.join(
                                 self.output_dir,
-                                f"field_{col}_page_{page_number}_llm_response.json",
+                                f"field_{field}_page_{page_number}_col{col_idx+1}_llm_response.json",
                             )
                             with open(llm_response_path, "w") as f:
-                                import json
-
                                 json.dump(result, f, indent=2)
                             print(f"[LLM RESPONSE] {llm_response_path}: {result}")
-                            # Accept 'data', 'pairs', or a direct list in the LLM response
-                            pairs = None
-                            if isinstance(result, dict):
-                                if "data" in result and isinstance(
-                                    result["data"], list
-                                ):
-                                    pairs = result["data"]
-                                elif "pairs" in result and isinstance(
-                                    result["pairs"], list
-                                ):
-                                    pairs = result["pairs"]
-                            if pairs is None and isinstance(result, list):
-                                pairs = result
-                            if pairs:
-                                all_pairs.extend(pairs)
+                            # Accept either a list or dict with 'data' key
+                            col_values = (
+                                result.get("data")
+                                if isinstance(result, dict) and "data" in result
+                                else result
+                            )
+                            if isinstance(col_values, list):
+                                all_col_results.extend(col_values)
+                            elif isinstance(col_values, dict):
+                                all_col_results.append(col_values)
                         except Exception as e:
-                            print(f"[LLM ERROR] {col} page {page_number}: {e}")
-                            pass  # Optionally log
-                extracted_fields["all_pairs"] = all_pairs
-            else:
-                for field, field_info in page_config.items():
-                    if field in ("Form_Label", "Title"):
-                        continue
-                    method = field_info.get("method")
-                    crop = field_info.get("crop")
-                    if not crop or not method:
-                        continue
-                    if method == "vision":
-                        left = int(crop["left"] * w)
-                        right = int(crop["right"] * w)
-                        top = int(crop["top"] * h)
-                        bottom = int(crop["bottom"] * h)
-                        field_crop_img = img.crop((left, top, right, bottom))
-                        field_crop_img_path = os.path.join(
-                            self.output_dir, f"field_{field}_page_{page_number}.png"
+                            print(
+                                f"[LLM ERROR] {field} page {page_number} col {col_idx+1}: {e}"
+                            )
+                    # Aggregate both columns into a single list under 'data'
+                    extracted_fields[field] = {
+                        "data": all_col_results,
+                        "source": "vision_llm_split_column",
+                        "columns": 2,
+                    }
+                    continue
+                # --- Standard extraction for all other fields ---
+                if method == "vision" and crop:
+                    left = int(crop["left"] * w)
+                    right = int(crop["right"] * w)
+                    top = int(crop["top"] * h)
+                    bottom = int(crop["bottom"] * h)
+                    field_crop_img = img.crop((left, top, right, bottom))
+                    field_crop_img_path = os.path.join(
+                        self.output_dir, f"field_{field}_page_{page_number}.png"
+                    )
+                    field_crop_img.save(field_crop_img_path)
+                    try:
+                        prompt = (
+                            field_prompt_override
+                            or f"Extract the {field} from this region."
                         )
-                        field_crop_img.save(field_crop_img_path)
-                        try:
-                            prompt = f"Extract the {field} from this region."
-                            result = extract_structured_data_from_image(
-                                field_crop_img_path, prompt
-                            )
-                            # Save raw LLM response for debugging
-                            llm_response_path = os.path.join(
-                                self.output_dir,
-                                f"field_{field}_page_{page_number}_llm_response.json",
-                            )
-                            with open(llm_response_path, "w") as f:
-                                import json
-
-                                json.dump(result, f, indent=2)
-                            print(f"[LLM RESPONSE] {llm_response_path}: {result}")
-                            value = result.get(field) or str(result)
-                            extracted_fields[field] = {
-                                "value": value,
-                                "source": "vision_llm",
-                                "crop": crop,
-                                "crop_img": field_crop_img_path,
-                            }
-                        except Exception as e:
-                            print(f"[LLM ERROR] {field} page {page_number}: {e}")
-                            extracted_fields[field] = {
-                                "value": None,
-                                "source": "vision_llm_failed",
-                                "crop": crop,
-                                "crop_img": field_crop_img_path,
-                                "error": str(e),
-                            }
+                        result = extract_structured_data_from_image(
+                            field_crop_img_path, prompt
+                        )
+                        llm_response_path = os.path.join(
+                            self.output_dir,
+                            f"field_{field}_page_{page_number}_llm_response.json",
+                        )
+                        with open(llm_response_path, "w") as f:
+                            json.dump(result, f, indent=2)
+                        print(f"[LLM RESPONSE] {llm_response_path}: {result}")
+                        value = result.get(field) or str(result)
+                        extracted_fields[field] = {
+                            "value": value,
+                            "source": "vision_llm",
+                            "crop": crop,
+                            "crop_img": field_crop_img_path,
+                        }
+                    except Exception as e:
+                        print(f"[LLM ERROR] {field} page {page_number}: {e}")
+                        extracted_fields[field] = {
+                            "value": None,
+                            "source": "vision_llm_failed",
+                            "crop": crop,
+                            "crop_img": field_crop_img_path,
+                            "error": str(e),
+                        }
             if not extracted_fields or (
                 isinstance(extracted_fields, dict)
                 and all(not v for v in extracted_fields.values())
@@ -1549,14 +1772,14 @@ def extract_labels_for_all_pages(pdf_path, config, output_dir):
         crop_img_path = os.path.join(output_dir, "crops", f"page_{i}_Form_Label.png")
         crop_img.save(crop_img_path)
         prompt = "Extract the Form_Label from this region."
-        label = extract_structured_data_from_image(crop_img_path, prompt)
+        result = extract_structured_data_from_image(crop_img_path, prompt)
         logging.info(
-            f"[LABEL EXTRACTION] Page {i}: label='{label}' | crop={crop} | img={crop_img_path}"
+            f"[LABEL EXTRACTION] Page {i}: label='{result.get('Form_Label')}' | crop={crop} | img={crop_img_path}"
         )
         results.append(
             {
                 "page_number": i,
-                "label": label,
+                "label": result.get("Form_Label"),
                 "crop_img_path": crop_img_path,
                 "crop": crop,
             }

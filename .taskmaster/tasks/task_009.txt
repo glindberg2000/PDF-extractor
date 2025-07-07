@@ -1,17 +1,51 @@
 # Task ID: 9
-# Title: Documentation Update
-# Status: done
-# Dependencies: 8
-# Priority: low
-# Description: Update all relevant documentation to reflect the new transaction amount convention.
+# Title: Implement Auto-Detection Feature
+# Status: pending
+# Dependencies: 2
+# Priority: medium
+# Description: Create a can_parse function to automatically detect tax organizer workbooks.
 # Details:
-1. Update the main README.md file with the new convention.
-2. Modify API documentation to reflect changes in data format.
-3. Update any developer guides or onboarding documents.
-4. Create a migration guide for downstream consumers of the parsed data.
-5. Update any data dictionaries or schema documentation.
-6. Use tools like Sphinx for generating comprehensive documentation.
-7. Consider creating a Jupyter notebook with examples of working with the new data format.
+Implement the can_parse function required by the PDF-Extractor interface to automatically detect if a PDF is a tax organizer workbook. This will allow the system to automatically select the appropriate parser for a given PDF.
+
+```python
+# parser.py
+from .utils.ocr import extract_text_from_pdf
+import re
+
+class TaxOrganizerParser:
+    @staticmethod
+    def can_parse(pdf_path):
+        """Determine if the PDF is a tax organizer workbook"""
+        # Extract first few pages of text for analysis
+        try:
+            text = extract_text_from_pdf(pdf_path, max_pages=5)
+            
+            # Look for common tax organizer indicators
+            indicators = [
+                r"(?i)tax\s+organizer",
+                r"(?i)income\s+tax\s+information\s+worksheet",
+                r"(?i)(ultratax|lacerte|drake)\s+tax\s+software",
+                r"(?i)tax\s+year\s+\d{4}\s+preparation\s+checklist",
+                r"(?i)table\s+of\s+contents.*income.*deductions"
+            ]
+            
+            # Check for presence of any indicator
+            for pattern in indicators:
+                if re.search(pattern, text):
+                    return True
+                    
+            # Check for common section codes
+            section_codes = r"(?i)\b(5A|5B|6A|9A)\b.*(?:income|interest|dividend)"
+            if re.search(section_codes, text):
+                return True
+                
+            return False
+            
+        except Exception as e:
+            # Log error but don't crash
+            print(f"Error in can_parse: {str(e)}")
+            return False
+```
 
 # Test Strategy:
-Perform a documentation review with team members. Create a checklist of all documents to be updated and verify each one.
+Test with various PDF types including tax organizers from different providers (UltraTax, Lacerte, Drake) and non-tax organizer PDFs. Verify that the function correctly identifies tax organizers and rejects other documents. Test with edge cases like partially completed organizers or unusual formats.

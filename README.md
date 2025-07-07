@@ -712,3 +712,19 @@ Each entry includes:
 - **Only** use `organizer_manifest_final.json` for ingestion.
 - All other files (e.g., `toc_llm_merged.json`, `toc_llm_merged_with_prefilled.json`, etc.) are for debugging or pipeline steps only.
 
+## CLI Arguments for organizer_extractor
+
+- `--extract_all_fields_manifest`: Run the region-based extraction pipeline for all pages (or a subset if paging flags are used).
+- `--page N`: Process only page N (1-based index). Example: `--page 3` processes only page 3.
+- `--pages N1,N2,...`: Process only the specified pages. Example: `--pages 3,4,5` processes pages 3, 4, and 5.
+
+### Example Usage
+
+```bash
+python3 -m dataextractai.parsers.organizer_extractor --pdf_path <PDF_PATH> --output_dir <OUTPUT_DIR> --extract_all_fields_manifest --page 3
+```
+
+This will run the extraction pipeline only for page 3, greatly speeding up debugging and targeted extraction.
+
+Omit `--page`/`--pages` to process all pages (default behavior).
+

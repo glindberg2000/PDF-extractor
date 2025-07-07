@@ -1,16 +1,54 @@
 # Task ID: 7
-# Title: Update Downstream Analytics Logic
+# Title: Implement TSJ Flagging and Annotations
 # Status: pending
-# Dependencies: 4, 5, 6
-# Priority: low
-# Description: Simplify reporting and analytics logic to leverage the new normalized data format.
+# Dependencies: 6
+# Priority: medium
+# Description: Add support for detecting and annotating Taxpayer/Spouse/Joint (TSJ) indicators in extracted fields.
 # Details:
-1. Identify all scripts and modules that perform calculations on transaction amounts.
-2. Update summing logic to use simple addition instead of checking transaction context.
-3. Modify expense calculations to use abs(amount) for correct totals.
-4. Update income calculations to sum positive amounts directly.
-5. Refactor any logic that relied on the old sign conventions.
-6. Consider using pandas for efficient data manipulation in analytics scripts.
+Enhance the field extractors to detect and annotate Taxpayer/Spouse/Joint (TSJ) indicators that are commonly used in tax organizers to specify which person a particular item relates to.
+
+```python
+# utils/tsj_detector.py
+import re
+
+class TSJDetector:
+    @staticmethod
+    def detect_tsj(text):
+        """Detect TSJ indicators in text"""
+        # Look for common TSJ patterns
+        tsj_match = re.search(r"(?i)\bTSJ:?\s*([TSJ])\b|\b(Taxpayer|Spouse|Joint)\b", text)
+        
+        if not tsj_match:
+            return None
+            
+        if tsj_match.group(1):
+            # Matched the abbreviated form (T/S/J)
+            indicator = tsj_match.group(1).upper()
+            if indicator == "T":
+                return "Taxpayer"
+            elif indicator == "S":
+                return "Spouse"
+            elif indicator == "J":
+                return "Joint"
+        else:
+            # Matched the full word
+            return tsj_match.group(2)
+            
+        return None
+
+# Update field extractors to use TSJ detection
+class EnhancedFieldExtractor(BasicFieldExtractor):
+    def extract_fields(self):
+        fields = super().extract_fields()
+        
+        # Add TSJ detection to each field
+        for field in fields:
+            tsj = TSJDetector.detect_tsj(self.content)
+            if tsj:
+                field["notes"] = f"TSJ: {tsj[0]}"  # Just use first letter (T/S/J)
+                
+        return fields
+```
 
 # Test Strategy:
-Create a test suite with sample normalized data. Verify that all reports and analytics produce correct results with the new data format.
+Test with sample content containing TSJ indicators in various formats. Verify that the detector correctly identifies Taxpayer, Spouse, and Joint indicators. Test integration with field extractors to ensure TSJ information is correctly added to field notes.

@@ -1,16 +1,49 @@
 # Task ID: 3
-# Title: Update Parser Base Class
-# Status: done
+# Title: Implement Table of Contents (TOC) Extractor
+# Status: pending
 # Dependencies: 2
 # Priority: high
-# Description: Modify the base parser class to incorporate the normalization function.
+# Description: Create a parser to extract the Table of Contents from tax organizer PDFs and map section labels/codes to page numbers.
 # Details:
-1. Locate the base parser class (likely in 'PDF-extractor/dataextractai/parsers/base.py').
-2. Import the normalization function.
-3. Add a method 'normalize_transaction_amount' that calls the normalization function.
-4. Update the 'parse' method to use the new normalization method before returning results.
-5. Add type hints and docstrings for the new method.
-6. Consider using the @abstractmethod decorator if normalization should be customizable per parser.
+Implement a TOC extractor that identifies the table of contents in tax organizer PDFs and creates a mapping between section labels/codes and their corresponding page numbers. This is a critical foundation for the rest of the parsing logic.
+
+```python
+# extractors/toc_extractor.py
+import re
+
+class TOCExtractor:
+    def __init__(self, pdf_text):
+        self.pdf_text = pdf_text
+        self.pages = self._split_into_pages(pdf_text)
+        
+    def _split_into_pages(self, text):
+        # Logic to split text into pages based on page markers
+        pass
+        
+    def extract_toc(self):
+        """Extract Table of Contents and return section to page mapping"""
+        toc_page = self._find_toc_page()
+        if not toc_page:
+            return {}
+            
+        section_mapping = {}
+        # Use regex to find patterns like "Section Name...........15"
+        pattern = r"([\w\s]+)\.*\s*(\d+)"
+        matches = re.findall(pattern, toc_page)
+        
+        for section, page in matches:
+            section_mapping[section.strip()] = int(page)
+            
+        return section_mapping
+        
+    def _find_toc_page(self):
+        """Find the page containing the Table of Contents"""
+        # Look for pages with titles like "Table of Contents", "Contents", etc.
+        for page in self.pages:
+            if re.search(r"(?i)table\s+of\s+contents|contents", page):
+                return page
+        return None
+```
 
 # Test Strategy:
-Write unit tests for the base parser class to ensure the normalization method is called correctly. Mock the normalization function to isolate testing.
+Test with sample tax organizer PDFs containing TOCs. Verify that the extractor correctly identifies the TOC page and extracts section names and page numbers. Test with different TOC formats and layouts. Create test cases for edge cases like missing TOC or unusual formatting.
