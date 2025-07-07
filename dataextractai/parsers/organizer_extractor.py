@@ -969,24 +969,31 @@ class OrganizerExtractor:
                         crop_img_path, "Extract the Form_Label from this region."
                     )
                     label = result.get("Form_Label") or str(result)
-                    if label and label.strip():
+                    # PATCH: Treat empty dict string or blank as no label
+                    if (
+                        label is None
+                        or not str(label).strip()
+                        or str(label).strip() in ("{'Form_Label': ''}", "{}", "None")
+                    ):
+                        print(
+                            f"[DEBUG] Page {page_number}: Label extraction returned empty or invalid label: {label}. Will trigger search key fallback."
+                        )
+                        label = None
+                        label_source = None
+                        crop_used = None
+                    else:
                         label_source = "Form_Label (narrow)"
                         crop_used = "Form_Label"
-                    else:
-                        label = None  # treat blank as None
                 except Exception as e:
-                    logging.warning(
+                    print(
                         f"[LABEL EXTRACTION] Vision LLM (narrow) failed for page {page_number}: {e}"
                     )
             # 2. If not found, try wide crop if available
-            if (not label or not label.strip()) and config["default"].get(
-                "Wide_Form_Label"
-            ):
-                wide_crop = config["default"]["Wide_Form_Label"]["crop"]
-                left = int(wide_crop["left"] * w)
-                right = int(wide_crop["right"] * w)
-                top = int(wide_crop["top"] * h)
-                bottom = int(wide_crop["bottom"] * h)
+            if (not label or not str(label).strip()) and wide_label_crop:
+                left = int(wide_label_crop["left"] * w)
+                right = int(wide_label_crop["right"] * w)
+                top = int(wide_label_crop["top"] * h)
+                bottom = int(wide_label_crop["bottom"] * h)
                 wide_crop_img = img.crop((left, top, right, bottom))
                 wide_crop_img_path = os.path.join(
                     output_dir, f"label_wide_page_{page_number}.png"
@@ -997,22 +1004,64 @@ class OrganizerExtractor:
                         wide_crop_img_path, "Extract the Form_Label from this region."
                     )
                     label = result.get("Form_Label") or str(result)
-                    if label and label.strip():
+                    # PATCH: Treat empty dict string or blank as no label
+                    if (
+                        label is None
+                        or not str(label).strip()
+                        or str(label).strip() in ("{'Form_Label': ''}", "{}", "None")
+                    ):
+                        print(
+                            f"[DEBUG] Page {page_number}: Wide label extraction returned empty or invalid label: {label}. Will trigger search key fallback."
+                        )
+                        label = None
+                        label_source = None
+                        crop_used = None
+                    else:
                         label_source = "Wide_Form_Label (wide)"
                         crop_used = "Wide_Form_Label"
-                    else:
-                        label = None
                 except Exception as e:
-                    logging.warning(
+                    print(
                         f"[LABEL EXTRACTION] Vision LLM (wide) failed for page {page_number}: {e}"
                     )
-            # 3. If still not found, scan raw text for unique_search_key
-            if not label or not label.strip():
+            # 3. If still not found, scan raw text for unique_search_key from config
+            # PATCH: Always run search key fallback if label is None, empty, or not a valid config key
+            if not label or not str(label).strip() or str(label).strip() not in config:
+                print(
+                    f"[DEBUG] Page {page_number}: Entering search key fallback block (label: {label!r})"
+                )
+                # Try all config sections with unique_search_key
+                raw_text_path = os.path.join(self.output_dir, f"page_{page_number}.txt")
+                raw_text = ""
+                if os.path.exists(raw_text_path):
+                    with open(raw_text_path, "r") as f:
+                        raw_text = f.read()
+                # Normalize raw text for matching
+                raw_text_normalized = (
+                    raw_text.replace("\n", "").replace("\r", "").strip().lower()
+                )
                 for key, entry in config.items():
                     if isinstance(entry, dict) and entry.get("unique_search_key"):
-                        if entry["unique_search_key"].lower() in raw_text.lower():
+                        search_key = (
+                            entry["unique_search_key"]
+                            .replace("\n", "")
+                            .replace("\r", "")
+                            .strip()
+                            .lower()
+                        )
+                        print(
+                            f"[DEBUG] Page {page_number}: Comparing search_key '{search_key}' to raw_text_normalized (first 200 chars): '{raw_text_normalized[:200]}'"
+                        )
+                        if search_key in raw_text_normalized:
                             config_key = key
+                            prompt_override = entry.get("prompt_override")
+                            print(
+                                f"[DEBUG] Page {page_number}: unique_search_key '{entry['unique_search_key']}' matched in raw text. Using config_key: {config_key}"
+                            )
                             break
+                        else:
+                            print(
+                                f"[DEBUG] Page {page_number}: unique_search_key '{entry['unique_search_key']}' NOT found in raw text."
+                            )
             # 4. Use 'Title' for display, but config_key for lookup
             title_for_manifest = (
                 config[config_key]["Title"]
@@ -1326,22 +1375,47 @@ class OrganizerExtractor:
                         f"[LABEL EXTRACTION] Vision LLM (wide) failed for page {page_number}: {e}"
                     )
             # 3. If still not found, scan raw text for unique_search_key from config
-            if not label or not label.strip():
+            print(
+                f"[DEBUG] Page {page_number}: label before fallback check: {label!r} (type: {type(label)})"
+            )
+            # PATCH: Always run search key fallback if label is None, empty, or not a valid config key
+            if not label or not str(label).strip() or str(label).strip() not in config:
+                print(
+                    f"[DEBUG] Page {page_number}: Entering search key fallback block (label: {label!r})"
+                )
                 # Try all config sections with unique_search_key
                 raw_text_path = os.path.join(self.output_dir, f"page_{page_number}.txt")
                 raw_text = ""
                 if os.path.exists(raw_text_path):
                     with open(raw_text_path, "r") as f:
                         raw_text = f.read()
+                # Normalize raw text for matching
+                raw_text_normalized = (
+                    raw_text.replace("\n", "").replace("\r", "").strip().lower()
+                )
                 for key, entry in config.items():
                     if isinstance(entry, dict) and entry.get("unique_search_key"):
-                        if entry["unique_search_key"].lower() in raw_text.lower():
+                        search_key = (
+                            entry["unique_search_key"]
+                            .replace("\n", "")
+                            .replace("\r", "")
+                            .strip()
+                            .lower()
+                        )
+                        print(
+                            f"[DEBUG] Page {page_number}: Comparing search_key '{search_key}' to raw_text_normalized (first 200 chars): '{raw_text_normalized[:200]}'"
+                        )
+                        if search_key in raw_text_normalized:
                             config_key = key
                             prompt_override = entry.get("prompt_override")
                             print(
                                 f"[DEBUG] Page {page_number}: unique_search_key '{entry['unique_search_key']}' matched in raw text. Using config_key: {config_key}"
                             )
                             break
+                        else:
+                            print(
+                                f"[DEBUG] Page {page_number}: unique_search_key '{entry['unique_search_key']}' NOT found in raw text."
+                            )
             # 4. Use 'Title' for display, but config_key for lookup
             title_for_manifest = (
                 config[config_key]["Title"]

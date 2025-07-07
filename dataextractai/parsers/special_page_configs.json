@@ -50,7 +50,7 @@
     },
     "Cover_Sheet": {
         "Title": "Mail/Presentation Sheet - to taxpayer",
-        "unique_search_key": "This organizer is provided as a service to our clients",
+        "unique_search_key": "REMOVE THIS SHEET PRIOR TO RETURNING THE COMPLETED ORGANIZER",
         "Form_Label": {
             "method": "vision",
             "crop": {
@@ -82,7 +82,7 @@
     },
     "Signature_Page": {
         "Title": "Signature Page",
-        "unique_search_key": "Under penalties of perjury, I declare that I have examined this organizer",
+        "unique_search_key": "I (We) have submitted this information for the sole purpose of preparing",
         "Form_Label": {
             "method": "vision",
             "crop": {
@@ -109,7 +109,7 @@
                 "left": 0.0,
                 "right": 1.0
             },
-            "prompt_override": "Extract all fields/regions from this signature page. Use the provided raw PDF text as context if helpful. Return a JSON object with all detected fields and values."
+            "prompt_override": "Extract all signature and taxpayer information from this page. Use the provided raw PDF text as context if helpful. Return a JSON object with all detected fields and values."
         }
     },
     "CA_Page_1": {
