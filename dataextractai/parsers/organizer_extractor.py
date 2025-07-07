@@ -16,6 +16,8 @@ import argparse
 import datetime
 import shutil
 from logging.handlers import RotatingFileHandler
+import sys
+from dataextractai.utils.ai import extract_structured_data_from_image
 
 
 class MergedEntry(BaseModel):
@@ -910,6 +912,307 @@ class OrganizerExtractor:
             pass
         return False
 
+    def build_manifest_with_labels(self, pages_info, config, output_dir, toc_map=None):
+        """
+        For every page, robustly extract the label using Vision LLM (default crop), then fallback to wide crop, then raw text if needed.
+        Then, extract all other fields for the page using the config lookup table.
+        Log the result and include it in the manifest.
+        """
+        import logging
+        from dataextractai.utils.ai import extract_structured_data_from_image
+        from PIL import Image
+        import os
+
+        manifest = []
+        default_fields = config.get("default", {})
+        label_crop = default_fields.get("Form_Label", {}).get("crop")
+        # Define wide crop (full width, same top/bottom)
+        wide_label_crop = None
+        if label_crop:
+            wide_label_crop = {
+                "top": label_crop["top"],
+                "bottom": label_crop["bottom"],
+                "left": 0.0,
+                "right": 1.0,
+            }
+        for page in pages_info:
+            page_number = page["page_number"]
+            page_image_path = (
+                page["png_path"] if "png_path" in page else page["thumbnail_file"]
+            )
+            raw_text = page.get("raw_text", "")
+            label = None
+            label_source = None
+            crop_used = None
+            crop_img_path = None
+            # --- 1. Try default (narrow) crop ---
+            if label_crop:
+                img = Image.open(page_image_path)
+                w, h = img.size
+                left = int(label_crop["left"] * w)
+                right = int(label_crop["right"] * w)
+                top = int(label_crop["top"] * h)
+                bottom = int(label_crop["bottom"] * h)
+                crop_img = img.crop((left, top, right, bottom))
+                crop_img_path = os.path.join(
+                    output_dir, f"label_narrow_page_{page_number}.png"
+                )
+                crop_img.save(crop_img_path)
+                try:
+                    result = extract_structured_data_from_image(
+                        crop_img_path, "Extract the Form_Label from this region."
+                    )
+                    label = result.get("Form_Label") or str(result)
+                    if label and label.strip():
+                        label_source = "vision_llm_narrow"
+                        crop_used = label_crop
+                    else:
+                        label = None  # treat blank as None
+                except Exception as e:
+                    logging.warning(
+                        f"[LABEL EXTRACTION] Vision LLM (narrow) failed for page {page_number}: {e}"
+                    )
+            # --- 2. Fallback: wide crop ---
+            wide_crop_img_path = None
+            if not label and wide_label_crop:
+                img = Image.open(page_image_path)
+                w, h = img.size
+                left = int(wide_label_crop["left"] * w)
+                right = int(wide_label_crop["right"] * w)
+                top = int(wide_label_crop["top"] * h)
+                bottom = int(wide_label_crop["bottom"] * h)
+                wide_crop_img = img.crop((left, top, right, bottom))
+                wide_crop_img_path = os.path.join(
+                    output_dir, f"label_wide_page_{page_number}.png"
+                )
+                wide_crop_img.save(wide_crop_img_path)
+                try:
+                    result = extract_structured_data_from_image(
+                        wide_crop_img_path, "Extract the Form_Label from this region."
+                    )
+                    label = result.get("Form_Label") or str(result)
+                    if label and label.strip():
+                        label_source = "vision_llm_wide"
+                        crop_used = wide_label_crop
+                        crop_img_path = wide_crop_img_path
+                    else:
+                        label = None
+                except Exception as e:
+                    logging.warning(
+                        f"[LABEL EXTRACTION] Vision LLM (wide) failed for page {page_number}: {e}"
+                    )
+            # --- 3. Fallback: raw text ---
+            if not label and raw_text:
+                # Heuristic: use the first non-empty line as the label
+                lines = [l.strip() for l in raw_text.splitlines() if l.strip()]
+                if lines:
+                    label = lines[0]
+                    label_source = "raw_text_first_line"
+                    crop_used = None
+                    crop_img_path = None
+            logging.info(
+                f"[LABEL EXTRACTION] Page {page_number}: label='{label}' source={label_source} crop={crop_used} crop_img={crop_img_path}"
+            )
+            page["extracted_label"] = label
+            page["label_source"] = label_source
+            page["label_crop_img"] = crop_img_path
+            if wide_crop_img_path:
+                page["label_wide_crop_img"] = wide_crop_img_path
+
+            # --- Extract all other fields for this page using config ---
+            # Determine form_code: prefer topic_index_match, else label, else TOC
+            form_code = None
+            if page.get("topic_index_match") and page["topic_index_match"].get(
+                "form_code"
+            ):
+                form_code = page["topic_index_match"]["form_code"]
+            elif label and label in config:
+                form_code = label
+            # Fallback: try to map from TOC if available (not implemented here)
+            # Use 'default' if no form_code found
+            page_config = (
+                config.get(form_code)
+                if form_code and form_code in config
+                else default_fields
+            )
+            extracted_fields = {}
+            for field, field_info in page_config.items():
+                if field in ("Form_Label", "Title"):
+                    continue  # skip label/title crops
+                method = field_info.get("method")
+                crop = field_info.get("crop")
+                if not crop or not method:
+                    continue
+                # Extract region using Vision LLM if method is 'vision'
+                if method == "vision":
+                    left = int(crop["left"] * w)
+                    right = int(crop["right"] * w)
+                    top = int(crop["top"] * h)
+                    bottom = int(crop["bottom"] * h)
+                    field_crop_img = img.crop((left, top, right, bottom))
+                    field_crop_img_path = os.path.join(
+                        output_dir, f"field_{field}_page_{page_number}.png"
+                    )
+                    field_crop_img.save(field_crop_img_path)
+                    try:
+                        prompt = f"Extract the {field} from this region."
+                        result = extract_structured_data_from_image(
+                            field_crop_img_path, prompt
+                        )
+                        value = result.get(field) or str(result)
+                        extracted_fields[field] = {
+                            "value": value,
+                            "source": "vision_llm",
+                            "crop": crop,
+                            "crop_img": field_crop_img_path,
+                        }
+                        logging.info(
+                            f"[FIELD EXTRACTION] Page {page_number} field={field}: value='{value}' | crop={crop} | img={field_crop_img_path}"
+                        )
+                    except Exception as e:
+                        logging.warning(
+                            f"[FIELD EXTRACTION] Vision LLM failed for page {page_number} field={field}: {e}"
+                        )
+            page["extracted_fields"] = extracted_fields
+            manifest.append(page)
+        return manifest
+
+    def extract_all_fields_manifest(self, config_path=None):
+        """
+        For every page, extract the label (with fallback), then extract all fields for that label using the config lookup table.
+        Output a manifest with all extracted fields for every page, skipping TOC/Topic Index/merge.
+        """
+        import json
+        from dataextractai.utils.ai import extract_structured_data_from_image
+        from PIL import Image
+        import os
+        # Load config
+        if config_path is None:
+            config_path = os.path.join(os.path.dirname(__file__), 'special_page_configs.json')
+        with open(config_path, 'r') as f:
+            config = json.load(f)
+        default_fields = config.get("default", {})
+        label_crop = default_fields.get("Form_Label", {}).get("crop")
+        wide_label_crop = None
+        if label_crop:
+            wide_label_crop = {
+                "top": label_crop["top"],
+                "bottom": label_crop["bottom"],
+                "left": 0.0,
+                "right": 1.0,
+            }
+        pages_info = self.split_pages()
+        self.generate_thumbnails(pages_info)
+        manifest = []
+        for page in pages_info:
+            page_number = page["page_number"]
+            page_image_path = page["thumbnail_path"]
+            label = None
+            label_source = None
+            crop_used = None
+            crop_img_path = None
+            # --- 1. Try default (narrow) crop ---
+            if label_crop:
+                img = Image.open(page_image_path)
+                w, h = img.size
+                left = int(label_crop["left"] * w)
+                right = int(label_crop["right"] * w)
+                top = int(label_crop["top"] * h)
+                bottom = int(label_crop["bottom"] * h)
+                crop_img = img.crop((left, top, right, bottom))
+                crop_img_path = os.path.join(self.output_dir, f"label_narrow_page_{page_number}.png")
+                crop_img.save(crop_img_path)
+                try:
+                    result = extract_structured_data_from_image(
+                        crop_img_path, "Extract the Form_Label from this region."
+                    )
+                    label = result.get("Form_Label") or str(result)
+                    if label and label.strip():
+                        label_source = "vision_llm_narrow"
+                        crop_used = label_crop
+                    else:
+                        label = None
+                except Exception:
+                    label = None
+            # --- 2. Fallback: wide crop ---
+            wide_crop_img_path = None
+            if not label and wide_label_crop:
+                img = Image.open(page_image_path)
+                w, h = img.size
+                left = int(wide_label_crop["left"] * w)
+                right = int(wide_label_crop["right"] * w)
+                top = int(wide_label_crop["top"] * h)
+                bottom = int(wide_label_crop["bottom"] * h)
+                wide_crop_img = img.crop((left, top, right, bottom))
+                wide_crop_img_path = os.path.join(self.output_dir, f"label_wide_page_{page_number}.png")
+                wide_crop_img.save(wide_crop_img_path)
+                try:
+                    result = extract_structured_data_from_image(
+                        wide_crop_img_path, "Extract the Form_Label from this region."
+                    )
+                    label = result.get("Form_Label") or str(result)
+                    if label and label.strip():
+                        label_source = "vision_llm_wide"
+                        crop_used = wide_label_crop
+                        crop_img_path = wide_crop_img_path
+                    else:
+                        label = None
+                except Exception:
+                    label = None
+            # --- 3. Fallback: raw text (not available here, so skip) ---
+            # If you want to add raw text fallback, you can extract text from the PDF page here.
+            # ---
+            # Now extract all fields for this label (form_code)
+            page_config = config.get(label) if label and label in config else default_fields
+            extracted_fields = {}
+            img = Image.open(page_image_path)
+            w, h = img.size
+            for field, field_info in page_config.items():
+                if field in ("Form_Label", "Title"):
+                    continue
+                method = field_info.get("method")
+                crop = field_info.get("crop")
+                if not crop or not method:
+                    continue
+                if method == "vision":
+                    left = int(crop["left"] * w)
+                    right = int(crop["right"] * w)
+                    top = int(crop["top"] * h)
+                    bottom = int(crop["bottom"] * h)
+                    field_crop_img = img.crop((left, top, right, bottom))
+                    field_crop_img_path = os.path.join(self.output_dir, f"field_{field}_page_{page_number}.png")
+                    field_crop_img.save(field_crop_img_path)
+                    try:
+                        prompt = f"Extract the {field} from this region."
+                        result = extract_structured_data_from_image(field_crop_img_path, prompt)
+                        value = result.get(field) or str(result)
+                        extracted_fields[field] = {
+                            "value": value,
+                            "source": "vision_llm",
+                            "crop": crop,
+                            "crop_img": field_crop_img_path,
+                        }
+                    except Exception as e:
+                        extracted_fields[field] = {
+                            "value": None,
+                            "source": "vision_llm_failed",
+                            "crop": crop,
+                            "crop_img": field_crop_img_path,
+                            "error": str(e),
+                        }
+            manifest.append({
+                "page_number": page_number,
+                "label": label,
+                "label_source": label_source,
+                "label_crop_img": crop_img_path,
+                "extracted_fields": extracted_fields,
+            })
+        # Save manifest
+        manifest_path = os.path.join(self.output_dir, "all_fields_manifest.json")
+        with open(manifest_path, "w") as f:
+            json.dump(manifest, f, indent=2)
+        print(f"[DONE] Saved all-fields manifest to {manifest_path}")
+
 
 class PrefilledDataDetector:
     """
@@ -939,6 +1242,14 @@ class PrefilledDataDetector:
         self.models = [os.getenv(k) for k in self.model_env_keys if os.getenv(k)]
         if not self.models:
             raise RuntimeError("No LLM models found in .env for prefilled detection.")
+        # Load exclusion terms from file
+        try:
+            with open(self.exclude_terms_path, "r") as f:
+                self.exclude_terms = set(
+                    line.strip().lower() for line in f if line.strip()
+                )
+        except Exception:
+            self.exclude_terms = set()
 
     def _filter_excluded(self, fields):
         # Recursively filter out any field/value matching exclude_terms
@@ -1072,27 +1383,76 @@ def setup_logging(output_dir):
     logging.info(f"Logging to {log_file}")
 
 
+def fail_fast_env_check():
+    required_envs = [
+        "OPENAI_API_KEY",
+        "OPENAI_MODEL_OCR",
+        "OPENAI_MODEL_FAST",
+        "OPENAI_MODEL_PRECISE",
+    ]
+    missing = [k for k in required_envs if not os.getenv(k)]
+    if missing:
+        print(
+            f"[FATAL] Missing required environment variables: {', '.join(missing)}.\nCheck your .env file and model configuration."
+        )
+        sys.exit(1)
+    print("[CHECK] All required environment variables are set.")
+    print(
+        f"[MODELS] OCR: {os.getenv('OPENAI_MODEL_OCR')}, FAST: {os.getenv('OPENAI_MODEL_FAST')}, PRECISE: {os.getenv('OPENAI_MODEL_PRECISE')}"
+    )
+    sys.stdout.flush()
+
+
+def extract_labels_for_all_pages(pdf_path, config, output_dir):
+    """
+    For a given PDF, split to pages and extract the label for every page using the default Form_Label crop.
+    Save the crop image and log the result for every page.
+    Returns a list of dicts: [{page_number, label, crop_img_path, ...}]
+    """
+    import os
+    import logging
+    from pdf2image import convert_from_path
+    from dataextractai.utils.ai import extract_structured_data_from_image
+    from PIL import Image
+
+    os.makedirs(os.path.join(output_dir, "crops"), exist_ok=True)
+    images = convert_from_path(pdf_path, dpi=300)
+    results = []
+    for i, img in enumerate(images, 1):
+        crop = config["default"]["Form_Label"]["crop"]
+        w, h = img.size
+        left = int(crop["left"] * w)
+        right = int(crop["right"] * w)
+        top = int(crop["top"] * h)
+        bottom = int(crop["bottom"] * h)
+        crop_img = img.crop((left, top, right, bottom))
+        crop_img_path = os.path.join(output_dir, "crops", f"page_{i}_Form_Label.png")
+        crop_img.save(crop_img_path)
+        prompt = "Extract the Form_Label from this region."
+        label = extract_structured_data_from_image(crop_img_path, prompt)
+        logging.info(
+            f"[LABEL EXTRACTION] Page {i}: label='{label}' | crop={crop} | img={crop_img_path}"
+        )
+        results.append(
+            {
+                "page_number": i,
+                "label": label,
+                "crop_img_path": crop_img_path,
+                "crop": crop,
+            }
+        )
+    return results
+
+
 if __name__ == "__main__":
+    load_dotenv()
+    fail_fast_env_check()
     parser = argparse.ArgumentParser()
     parser.add_argument("--pdf_path", type=str, help="Path to input PDF")
     parser.add_argument(
         "--output_dir", type=str, help="Output directory (default: timestamped)"
     )
-    parser.add_argument(
-        "--test_mode",
-        action="store_true",
-        help="Use pre-generated JSON files for TOC and Topic Index",
-    )
-    parser.add_argument(
-        "--detect_prefilled",
-        action="store_true",
-        help="Run only prefilled data detection on existing manifest/raw text",
-    )
-    parser.add_argument(
-        "--skip_prefilled",
-        action="store_true",
-        help="Skip prefilled data detection step",
-    )
+    parser.add_argument("--extract_all_fields_manifest", action="store_true", help="Extract all fields for every page using the config lookup table, skipping TOC/Topic Index/merge.")
     args = parser.parse_args()
     output_dir = (
         args.output_dir
@@ -1100,79 +1460,23 @@ if __name__ == "__main__":
     )
     os.makedirs(output_dir, exist_ok=True)
     setup_logging(output_dir)
-    logging.info("--- OrganizerExtractor Pipeline Started ---")
+    logging.info("--- OrganizerExtractor Label Extraction Only ---")
     logging.info(f"PDF: {args.pdf_path}")
     logging.info(f"Output dir: {output_dir}")
-    extractor = OrganizerExtractor(pdf_path=args.pdf_path, output_dir=output_dir)
-    if args.test_mode:
+    # Load config
+    CONFIG_PATH = os.path.join(os.path.dirname(__file__), "special_page_configs.json")
+    with open(CONFIG_PATH, "r") as f:
+        config = json.load(f)
+    # Run label extraction for all pages
+    label_results = extract_labels_for_all_pages(args.pdf_path, config, output_dir)
+    for res in label_results:
         logging.info(
-            "[TEST MODE] Skipping all PDF/Vision extraction. Using cached JSONs only."
+            f"[LABEL RESULT] Page {res['page_number']}: label='{res['label']}' | crop_img={res['crop_img_path']}"
         )
-        llm_toc_merged = extractor.merge_llm_toc_driven(test_mode=True)
-        print(f"TOC-driven LLM output: {len(llm_toc_merged)} entries. Example:")
-        print(llm_toc_merged[0] if len(llm_toc_merged) > 0 else "No entries.")
+    logging.info("--- Label Extraction Complete ---")
+    # (Skip legacy extraction for this test run)
+    extractor = OrganizerExtractor(args.pdf_path, args.output_dir)
+    if args.extract_all_fields_manifest:
+        extractor.extract_all_fields_manifest()
     else:
-        logging.info("[LIVE MODE] Running full extraction pipeline.")
-        extractor.extract()
-        logging.info("[TOPIC INDEX] Extracting topic index pairs with Vision LLM...")
-        pairs = extractor.extract_topic_index_pairs_vision()
-        logging.info("[RAW TEXT] Extracting raw text per page...")
-        extractor.extract_raw_text_per_page()
-        logging.info("[LLM MERGE] Merging TOC and Topic Index with LLM...")
-        llm_toc_merged = extractor.merge_llm_toc_driven()
-        manifest_path = os.path.join(output_dir, "toc_llm_merged.json")
-        raw_text_dir = output_dir
-        detector = PrefilledDataDetector(manifest_path, raw_text_dir)
-        logging.info("[PREFILLED] Running prefilled data detection step...")
-        detector.detect()
-        prefilled_manifest_path = manifest_path.replace(".json", "_with_prefilled.json")
-        from dataextractai.parsers.organizer_vision_enhancer import (
-            enhance_manifest_with_vision,
-        )
-
-        vision_output_path = os.path.join(output_dir, "organizer_manifest_final.json")
-        # --- Robust PNG generation before Vision overlay ---
-        with open(prefilled_manifest_path, "r") as f:
-            manifest = json.load(f)
-        missing_pngs = []
-        for entry in manifest:
-            page_num = entry.get("page_number")
-            png_path = os.path.join(output_dir, f"page_{page_num}_full.png")
-            if not os.path.exists(png_path):
-                missing_pngs.append(page_num)
-        if missing_pngs:
-            from pdf2image import convert_from_path
-
-            logging.info(
-                f"[VISION][PNG] Generating {len(missing_pngs)} missing full-page PNGs..."
-            )
-            images = convert_from_path(args.pdf_path, dpi=300)
-            for i, img in enumerate(images):
-                png_path = os.path.join(output_dir, f"page_{i+1}_full.png")
-                if (i + 1) in missing_pngs:
-                    img.save(png_path)
-            logging.info(f"[VISION][PNG] PNG generation complete.")
-        # --- Vision overlay as before ---
-        logging.info(
-            f"[VISION] Enhancing manifest with Vision LLM: {prefilled_manifest_path} -> {vision_output_path}"
-        )
-        enhance_manifest_with_vision(prefilled_manifest_path, vision_output_path)
-        logging.info(
-            f"[VISION] Vision-enhanced manifest written to {vision_output_path}"
-        )
-        # Always use the vision-enhanced manifest as the final output
-        final_manifest_path = vision_output_path
-        logging.info(f"[FINAL] Final manifest for upstream: {final_manifest_path}")
-    if args.detect_prefilled:
-        # Only run prefilled detection on existing manifest/raw text
-        manifest_path = os.path.join(output_dir, "toc_llm_merged.json")
-        raw_text_dir = output_dir
-        detector = PrefilledDataDetector(manifest_path, raw_text_dir)
-        detector.detect()
-        exit(0)
-    if not args.skip_prefilled:
-        manifest_path = os.path.join(output_dir, "toc_llm_merged.json")
-        raw_text_dir = output_dir
-        detector = PrefilledDataDetector(manifest_path, raw_text_dir)
-        detector.detect()
-    logging.info("--- OrganizerExtractor Pipeline Finished ---")
+        extractor.extract()  # fallback to original pipeline

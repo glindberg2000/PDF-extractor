@@ -1,0 +1,670 @@
+{
+    "default": {
+        "Form_Label": {
+            "method": "vision",
+            "crop": {
+                "top": 0.045,
+                "bottom": 0.08,
+                "left": 0.875,
+                "right": 1.0
+            }
+        },
+        "Title": {
+            "method": "vision",
+            "crop": {
+                "top": 0.045,
+                "bottom": 0.08,
+                "left": 0.0,
+                "right": 0.875
+            }
+        }
+    },
+    "6A": {
+        "Expenses": {
+            "method": "vision",
+            "crop": {
+                "top": 0.19,
+                "bottom": 0.586,
+                "left": 0.0,
+                "right": 1.0
+            }
+        },
+        "Other_Expenses": {
+            "method": "vision",
+            "crop": {
+                "top": 0.586,
+                "bottom": 0.72,
+                "left": 0.0,
+                "right": 1.0
+            }
+        }
+    },
+    "Mail/Presentation Sheet - to taxpayer": {
+        "Organizer_Notice": {
+            "method": "vision",
+            "crop": {
+                "top": 0.12,
+                "bottom": 0.58,
+                "left": 0.0,
+                "right": 1.0
+            }
+        },
+        "Contact_Info": {
+            "method": "vision",
+            "crop": {
+                "top": 0.58,
+                "bottom": 0.94,
+                "left": 0.0,
+                "right": 1.0
+            }
+        },
+        "Remove_This_Sheet_Box": {
+            "method": "vision",
+            "crop": {
+                "top": 0.02,
+                "bottom": 0.07,
+                "left": 0.05,
+                "right": 0.95
+            }
+        },
+        "Packet_Title": {
+            "method": "vision",
+            "crop": {
+                "top": 0.09,
+                "bottom": 0.11,
+                "left": 0.0,
+                "right": 1.0
+            }
+        }
+    },
+    "Mail/Presentation Sheet - to preparer": {
+        "Signature_Block": {
+            "method": "vision",
+            "crop": {
+                "top": 0.18,
+                "bottom": 0.42,
+                "left": 0.0,
+                "right": 1.0
+            }
+        },
+        "Attestation_Statement": {
+            "method": "vision",
+            "crop": {
+                "top": 0.42,
+                "bottom": 0.65,
+                "left": 0.0,
+                "right": 1.0
+            }
+        },
+        "Contact_Info": {
+            "method": "vision",
+            "crop": {
+                "top": 0.65,
+                "bottom": 0.95,
+                "left": 0.0,
+                "right": 1.0
+            }
+        },
+        "Packet_Title": {
+            "method": "vision",
+            "crop": {
+                "top": 0.09,
+                "bottom": 0.11,
+                "left": 0.0,
+                "right": 1.0
+            }
+        }
+    },
+    "2": {
+        "Questions": {
+            "method": "vision",
+            "crop": {
+                "top": 0.08,
+                "bottom": 0.92,
+                "left": 0.0,
+                "right": 1.0
+            }
+        }
+    },
+    "2B": {
+        "Questions": {
+            "method": "vision",
+            "crop": {
+                "top": 0.0773,
+                "bottom": 0.9545,
+                "left": 0.0,
+                "right": 1.0
+            }
+        }
+    },
+    "2C": {
+        "Questions": {
+            "method": "vision",
+            "crop": {
+                "top": 0.0773,
+                "bottom": 0.9545,
+                "left": 0.0,
+                "right": 1.0
+            }
+        }
+    },
+    "2D": {
+        "Questions": {
+            "method": "vision",
+            "crop": {
+                "top": 0.0773,
+                "bottom": 0.9545,
+                "left": 0.0,
+                "right": 1.0
+            }
+        }
+    },
+    "2E": {
+        "Questions": {
+            "method": "vision",
+            "crop": {
+                "top": 0.0773,
+                "bottom": 0.9545,
+                "left": 0.0,
+                "right": 1.0
+            }
+        }
+    },
+    "1": {
+        "Left_Column": {
+            "method": "vision",
+            "crop": {
+                "top": 0.08,
+                "bottom": 0.95,
+                "left": 0.0,
+                "right": 0.5
+            }
+        },
+        "Right_Column": {
+            "method": "vision",
+            "crop": {
+                "top": 0.08,
+                "bottom": 0.95,
+                "left": 0.5,
+                "right": 1.0
+            }
+        }
+    },
+    "3": {
+        "Personal_Info_Block": {
+            "method": "vision",
+            "crop": {
+                "top": 0.08,
+                "bottom": 0.73,
+                "left": 0.0,
+                "right": 1.0
+            }
+        }
+    },
+    "3A": {
+        "Dependent_Information": {
+            "method": "vision",
+            "crop": {
+                "top": 0.08,
+                "bottom": 0.45,
+                "left": 0.0,
+                "right": 1.0
+            }
+        },
+        "Wages_and_Salaries": {
+            "method": "vision",
+            "crop": {
+                "top": 0.45,
+                "bottom": 0.89,
+                "left": 0.0,
+                "right": 1.0
+            }
+        }
+    },
+    "4": {
+        "Fillable_Block": {
+            "method": "vision",
+            "crop": {
+                "top": 0.08,
+                "bottom": 0.89,
+                "left": 0.0,
+                "right": 1.0
+            }
+        }
+    },
+    "4A": {
+        "Fillable_Block": {
+            "method": "vision",
+            "crop": {
+                "top": 0.08,
+                "bottom": 0.92,
+                "left": 0.0,
+                "right": 1.0
+            }
+        }
+    },
+    "5A": {
+        "Interest_Information": {
+            "method": "vision",
+            "crop": {
+                "top": 0.08,
+                "bottom": 0.46,
+                "left": 0.0,
+                "right": 1.0
+            }
+        }
+    },
+    "5B": {
+        "Ordinary_Dividends": {
+            "method": "vision",
+            "crop": {
+                "top": 0.08,
+                "bottom": 0.41,
+                "left": 0.0,
+                "right": 1.0
+            }
+        },
+        "Tax_Exempt_Interest": {
+            "method": "vision",
+            "crop": {
+                "top": 0.41,
+                "bottom": 0.62,
+                "left": 0.0,
+                "right": 1.0
+            }
+        },
+        "Additional_Info": {
+            "method": "vision",
+            "crop": {
+                "top": 0.62,
+                "bottom": 0.77,
+                "left": 0.0,
+                "right": 1.0
+            }
+        }
+    },
+    "6": {
+        "Business_Info": {
+            "method": "vision",
+            "crop": {
+                "top": 0.08,
+                "bottom": 0.23,
+                "left": 0.0,
+                "right": 1.0
+            }
+        },
+        "Business_Questions": {
+            "method": "vision",
+            "crop": {
+                "top": 0.23,
+                "bottom": 0.38,
+                "left": 0.0,
+                "right": 1.0
+            }
+        },
+        "Income": {
+            "method": "vision",
+            "crop": {
+                "top": 0.38,
+                "bottom": 0.5,
+                "left": 0.0,
+                "right": 1.0
+            }
+        },
+        "Cost_of_Goods_Sold": {
+            "method": "vision",
+            "crop": {
+                "top": 0.5,
+                "bottom": 0.74,
+                "left": 0.0,
+                "right": 1.0
+            }
+        },
+        "Other_Income": {
+            "method": "vision",
+            "crop": {
+                "top": 0.74,
+                "bottom": 0.86,
+                "left": 0.0,
+                "right": 1.0
+            }
+        }
+    },
+    "6B": {
+        "Business_Info": {
+            "method": "vision",
+            "crop": {
+                "top": 0.08,
+                "bottom": 0.17,
+                "left": 0.0,
+                "right": 1.0
+            }
+        },
+        "Listed_Property_Questions": {
+            "method": "vision",
+            "crop": {
+                "top": 0.17,
+                "bottom": 0.45,
+                "left": 0.0,
+                "right": 1.0
+            }
+        },
+        "Vehicle_Info": {
+            "method": "vision",
+            "crop": {
+                "top": 0.45,
+                "bottom": 0.62,
+                "left": 0.0,
+                "right": 1.0
+            }
+        },
+        "Vehicle_Expenses": {
+            "method": "vision",
+            "crop": {
+                "top": 0.62,
+                "bottom": 0.83,
+                "left": 0.0,
+                "right": 1.0
+            }
+        }
+    },
+    "7": {
+        "Capital_Gains_Sales": {
+            "method": "vision",
+            "crop": {
+                "top": 0.08,
+                "bottom": 0.47,
+                "left": 0.0,
+                "right": 1.0
+            }
+        },
+        "Installment_Sales": {
+            "method": "vision",
+            "crop": {
+                "top": 0.47,
+                "bottom": 0.76,
+                "left": 0.0,
+                "right": 1.0
+            }
+        },
+        "Disposition_Questions": {
+            "method": "vision",
+            "crop": {
+                "top": 0.76,
+                "bottom": 0.92,
+                "left": 0.0,
+                "right": 1.0
+            }
+        }
+    },
+    "11": {
+        "Passthrough_Income": {
+            "method": "vision",
+            "crop": {
+                "top": 0.08,
+                "bottom": 0.55,
+                "left": 0.0,
+                "right": 1.0
+            }
+        }
+    },
+    "13": {
+        "Misc_Income": {
+            "method": "vision",
+            "crop": {
+                "top": 0.08,
+                "bottom": 0.35,
+                "left": 0.0,
+                "right": 1.0
+            }
+        },
+        "State_Tax_Refunds": {
+            "method": "vision",
+            "crop": {
+                "top": 0.35,
+                "bottom": 0.52,
+                "left": 0.0,
+                "right": 1.0
+            }
+        },
+        "Other_Income": {
+            "method": "vision",
+            "crop": {
+                "top": 0.52,
+                "bottom": 0.68,
+                "left": 0.0,
+                "right": 1.0
+            }
+        },
+        "Alimony": {
+            "method": "vision",
+            "crop": {
+                "top": 0.68,
+                "bottom": 0.86,
+                "left": 0.0,
+                "right": 1.0
+            }
+        }
+    },
+    "13A": {
+        "Educator_Expenses": {
+            "method": "vision",
+            "crop": {
+                "top": 0.08,
+                "bottom": 0.18,
+                "left": 0.0,
+                "right": 1.0
+            }
+        },
+        "Health_Savings_Account": {
+            "method": "vision",
+            "crop": {
+                "top": 0.18,
+                "bottom": 0.53,
+                "left": 0.0,
+                "right": 1.0
+            }
+        },
+        "Other_Adjustments": {
+            "method": "vision",
+            "crop": {
+                "top": 0.53,
+                "bottom": 0.76,
+                "left": 0.0,
+                "right": 1.0
+            }
+        }
+    },
+    "14": {
+        "Medical_Expenses": {
+            "method": "vision",
+            "crop": {
+                "top": 0.08,
+                "bottom": 0.31,
+                "left": 0.0,
+                "right": 1.0
+            }
+        },
+        "Other_Medical_Expenses": {
+            "method": "vision",
+            "crop": {
+                "top": 0.31,
+                "bottom": 0.48,
+                "left": 0.0,
+                "right": 1.0
+            }
+        },
+        "Taxes_Paid": {
+            "method": "vision",
+            "crop": {
+                "top": 0.48,
+                "bottom": 0.68,
+                "left": 0.0,
+                "right": 1.0
+            }
+        },
+        "Other_Taxes_Paid": {
+            "method": "vision",
+            "crop": {
+                "top": 0.68,
+                "bottom": 0.82,
+                "left": 0.0,
+                "right": 1.0
+            }
+        }
+    },
+    "14A": {
+        "Mortgage_Questions": {
+            "method": "vision",
+            "crop": {
+                "top": 0.08,
+                "bottom": 0.3,
+                "left": 0.0,
+                "right": 1.0
+            }
+        },
+        "Mortgage_Interest_Financial": {
+            "method": "vision",
+            "crop": {
+                "top": 0.3,
+                "bottom": 0.48,
+                "left": 0.0,
+                "right": 1.0
+            }
+        },
+        "Other_Mortgage_Interest": {
+            "method": "vision",
+            "crop": {
+                "top": 0.48,
+                "bottom": 0.62,
+                "left": 0.0,
+                "right": 1.0
+            }
+        },
+        "Points": {
+            "method": "vision",
+            "crop": {
+                "top": 0.62,
+                "bottom": 0.74,
+                "left": 0.0,
+                "right": 1.0
+            }
+        },
+        "Investment_Interest": {
+            "method": "vision",
+            "crop": {
+                "top": 0.74,
+                "bottom": 0.84,
+                "left": 0.0,
+                "right": 1.0
+            }
+        }
+    },
+    "16": {
+        "Misc_Itemized_Deductions": {
+            "method": "vision",
+            "crop": {
+                "top": 0.08,
+                "bottom": 0.37,
+                "left": 0.0,
+                "right": 1.0
+            }
+        },
+        "Other_Itemized_Deductions": {
+            "method": "vision",
+            "crop": {
+                "top": 0.37,
+                "bottom": 0.6,
+                "left": 0.0,
+                "right": 1.0
+            }
+        },
+        "Casualty_Theft_Loss": {
+            "method": "vision",
+            "crop": {
+                "top": 0.6,
+                "bottom": 0.86,
+                "left": 0.0,
+                "right": 1.0
+            }
+        }
+    },
+    "20A": {
+        "State_Estimates_Block_1": {
+            "method": "vision",
+            "crop": {
+                "top": 0.08,
+                "bottom": 0.36,
+                "left": 0.0,
+                "right": 1.0
+            }
+        },
+        "State_Estimates_Block_2": {
+            "method": "vision",
+            "crop": {
+                "top": 0.36,
+                "bottom": 0.64,
+                "left": 0.0,
+                "right": 1.0
+            }
+        },
+        "State_Estimates_Block_3": {
+            "method": "vision",
+            "crop": {
+                "top": 0.64,
+                "bottom": 0.92,
+                "left": 0.0,
+                "right": 1.0
+            }
+        }
+    },
+    "California Information (Page 1 of 2)": {
+        "General_Info": {
+            "method": "vision",
+            "crop": {
+                "top": 0.08,
+                "bottom": 0.25,
+                "left": 0.0,
+                "right": 1.0
+            }
+        },
+        "Residency_Info": {
+            "method": "vision",
+            "crop": {
+                "top": 0.25,
+                "bottom": 0.58,
+                "left": 0.0,
+                "right": 1.0
+            }
+        },
+        "Voluntary_Contributions": {
+            "method": "vision",
+            "crop": {
+                "top": 0.58,
+                "bottom": 0.9,
+                "left": 0.0,
+                "right": 1.0
+            }
+        }
+    },
+    "California Information (Page 2 of 2)": {
+        "Renters_Credit": {
+            "method": "vision",
+            "crop": {
+                "top": 0.08,
+                "bottom": 0.54,
+                "left": 0.0,
+                "right": 1.0
+            }
+        },
+        "Additional_CA_Information": {
+            "method": "vision",
+            "crop": {
+                "top": 0.54,
+                "bottom": 0.86,
+                "left": 0.0,
+                "right": 1.0
+            }
+        }
+    }
+}
