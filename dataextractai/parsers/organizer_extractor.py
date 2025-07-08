@@ -1257,6 +1257,14 @@ class OrganizerExtractor:
                 print(
                     f"[WARN] No extracted fields for page {page_number} (label={label})"
                 )
+            # Add file name fields for manifest (do not change any other logic)
+            pdf_page_file = os.path.basename(
+                os.path.join(self.output_dir, f"page_{page_number}.pdf")
+            )
+            thumbnail_file = os.path.basename(page_image_path)
+            raw_text_file = os.path.basename(
+                os.path.join(self.output_dir, f"page_{page_number}.txt")
+            )
             manifest.append(
                 {
                     "page_number": page_number,
@@ -1264,6 +1272,9 @@ class OrganizerExtractor:
                     "label_source": label_source,
                     "label_crop_img": crop_img_path,
                     "extracted_fields": extracted_fields,
+                    "pdf_page_file": pdf_page_file,
+                    "thumbnail_file": thumbnail_file,
+                    "raw_text_file": raw_text_file,
                 }
             )
         return manifest
@@ -1615,6 +1626,14 @@ class OrganizerExtractor:
                 print(
                     f"[WARN] No extracted fields for page {page_number} (label={label})"
                 )
+            # Add file name fields for manifest (do not change any other logic)
+            pdf_page_file = os.path.basename(
+                os.path.join(self.output_dir, f"page_{page_number}.pdf")
+            )
+            thumbnail_file = os.path.basename(page_image_path)
+            raw_text_file = os.path.basename(
+                os.path.join(self.output_dir, f"page_{page_number}.txt")
+            )
             manifest.append(
                 {
                     "page_number": page_number,
@@ -1622,6 +1641,9 @@ class OrganizerExtractor:
                     "label_source": label_source,
                     "label_crop_img": crop_img_path,
                     "extracted_fields": extracted_fields,
+                    "pdf_page_file": pdf_page_file,
+                    "thumbnail_file": thumbnail_file,
+                    "raw_text_file": raw_text_file,
                 }
             )
         # Save manifest
