@@ -156,7 +156,7 @@ def clean_manifest(
 ):
     """
     Clean and normalize an organizer manifest for client consumption.
-    Adds file_hash and file_summary at the top level.
+    Adds file_hash, file_summary, and extracted_with at the top level.
     Args:
         input_path (str): Path to input manifest JSON.
         output_path (str): Path to output cleaned manifest JSON.
@@ -166,6 +166,25 @@ def clean_manifest(
         openai_model_precise (str, optional): Model name for high-quality file summary.
         exclude_terms_path (str, optional): Path to exclusion terms file.
         include_terms_path (str, optional): Path to inclusion terms file.
+    Output manifest schema:
+        {
+            "file_hash": str,
+            "file_summary": str or null,
+            "pages": [
+                {
+                    "page_number": int,
+                    "label": str,
+                    "extracted_with": str,  # Provenance of extraction method
+                    "pdf_page_file": str,
+                    "thumbnail_file": str,
+                    "raw_text_file": str,
+                    "data": dict,
+                    "summary": str,
+                    "user_data_detected": bool
+                },
+                ...
+            ]
+        }
     """
     load_dotenv()
     if openai_api_key is None:
@@ -201,9 +220,12 @@ def clean_manifest(
         data = clean_extracted_fields(
             entry.get("extracted_fields", {}), entry.get("label")
         )
-        cleaned_entry = {
+        cleaned_page = {
             "page_number": entry.get("page_number"),
             "label": entry.get("label"),
+            "extracted_with": entry.get(
+                "extracted_with"
+            ),  # Add extraction method provenance
             "pdf_page_file": entry.get("pdf_page_file"),
             "thumbnail_file": entry.get("thumbnail_file"),
             "raw_text_file": entry.get("raw_text_file"),
@@ -213,7 +235,7 @@ def clean_manifest(
         if openai_api_key:
             try:
                 summary, has_user_data = llm_summarize(
-                    cleaned_entry, openai_api_key, openai_model_fast
+                    cleaned_page, openai_api_key, openai_model_fast
                 )
             except Exception as e:
                 print(f"[LLM ERROR] Per-page summary failed: {e}")
@@ -222,7 +244,7 @@ def clean_manifest(
                 has_user_data, user_fields, included_found = detect_user_data(
                     data, exclude_terms=exclude_terms, include_terms=include_terms
                 )
-                summary = f"Page {cleaned_entry['page_number']} ({cleaned_entry.get('label','')}): "
+                summary = f"Page {cleaned_page['page_number']} ({cleaned_page.get('label','')}): "
                 if has_user_data:
                     summary += f"Contains user data fields: {', '.join(user_fields)}."
                     if included_found:
@@ -235,11 +257,11 @@ def clean_manifest(
                 print(f"[ERROR] Rule-based summary failed: {e}")
                 summary = "Summary unavailable."
                 has_user_data = False
-        cleaned_entry["summary"] = summary
-        cleaned_entry["has_user_data"] = (
+        cleaned_page["summary"] = summary
+        cleaned_page["has_user_data"] = (
             has_user_data if has_user_data is not None else False
         )
-        cleaned.append(cleaned_entry)
+        cleaned.append(cleaned_page)
         page_summaries.append(summary)
     # Compute file hash if pdf_path is provided
     file_hash = compute_file_hash(pdf_path) if pdf_path else None
