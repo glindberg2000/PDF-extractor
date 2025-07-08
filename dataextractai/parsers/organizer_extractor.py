@@ -36,9 +36,6 @@ def is_garbage_label(val):
     return False
 
 
-
-
-
 class MergedEntry(BaseModel):
     form_code: str
     description: str
@@ -223,9 +220,6 @@ class OrganizerExtractor:
     See the __main__ block for a full demo pipeline.
     """
 
-
-
-
     def __init__(self, pdf_path: str, output_dir: str, thumbnail_dpi: int = 200):
         self.pdf_path = pdf_path
         self.output_dir = output_dir
@@ -287,20 +281,42 @@ class OrganizerExtractor:
                 page_pdf_path = os.path.join(self.output_dir, f"page_{i+1}.pdf")
                 with open(page_pdf_path, "wb") as f:
                     writer.write(f)
-                pages_info.append({"page_number": i + 1, "pdf_path": page_pdf_path})
+                pages_info.append(
+                    {
+                        "page_number": i + 1,
+                        "pdf_path": page_pdf_path,
+                        # We'll add png_path, thumbnail_path, and raw_text_file below
+                    }
+                )
         except Exception as e:
             self.errors.append(f"Page splitting failed: {e}")
         return pages_info
 
-    def generate_thumbnails(self, pages_info: List[Dict[str, Any]]):
+    def generate_thumbnails_and_images(self, pages_info: List[Dict[str, Any]]):
         try:
             images = convert_from_path(self.pdf_path, dpi=self.thumbnail_dpi)
             for i, image in enumerate(images):
                 thumb_path = os.path.join(self.output_dir, f"thumb_{i+1}.png")
+                png_path = os.path.join(self.output_dir, f"page_{i+1}.png")
                 image.save(thumb_path, "PNG")
+                image.save(png_path, "PNG")
                 pages_info[i]["thumbnail_path"] = thumb_path
+                pages_info[i]["png_path"] = png_path
         except Exception as e:
-            self.warnings.append(f"Thumbnail generation failed: {e}")
+            self.warnings.append(f"Thumbnail/image generation failed: {e}")
+
+    def extract_raw_text_per_page(self, pages_info: List[Dict[str, Any]]):
+        from PyPDF2 import PdfReader
+
+        reader = PdfReader(self.pdf_path)
+        for i, page in enumerate(reader.pages):
+            text = page.extract_text() or ""
+            fname = f"page_{i+1}.txt"
+            fpath = os.path.join(self.output_dir, fname)
+            with open(fpath, "w") as f:
+                f.write(text)
+            pages_info[i]["raw_text_file"] = fpath
+        logging.info(f"Extracted raw text for {len(pages_info)} pages.")
 
     def write_toc_inventory(self, toc, path=None):
         """Write the TOC inventory as valid JSON (no debug output)."""
@@ -312,7 +328,8 @@ class OrganizerExtractor:
     def extract(self) -> Dict[str, Any]:
         toc = self.extract_toc()
         pages_info = self.split_pages()
-        self.generate_thumbnails(pages_info)
+        self.generate_thumbnails_and_images(pages_info)
+        self.extract_raw_text_per_page(pages_info)
         # Link TOC entries to page and thumbnail paths
         for entry in toc:
             page_num = entry.get("page_number")
@@ -734,578 +751,6 @@ class OrganizerExtractor:
                 json.dump(output, f, indent=2)
         return output
 
-    def extract_raw_text_per_page(self):
-        """
-        Extracts raw text for each page and saves as page_{n}.txt in output_dir.
-        Returns a list of filenames.
-        """
-        from PyPDF2 import PdfReader
-
-        reader = PdfReader(self.pdf_path)
-        raw_text_files = []
-        for i, page in enumerate(reader.pages):
-            text = page.extract_text() or ""
-            fname = f"page_{i+1}.txt"
-            fpath = os.path.join(self.output_dir, fname)
-            with open(fpath, "w") as f:
-                f.write(text)
-            raw_text_files.append(fname)
-        logging.info(f"Extracted raw text for {len(raw_text_files)} pages.")
-        return raw_text_files
-
-    def merge_llm_toc_driven(
-        self, topic_index_path=None, toc_path=None, save_json=True, test_mode=False
-    ):
-        """
-        For each TOC entry, use LLM to find the best matching form_code (using all associated descriptions for each code).
-        Output is a list of dicts, each with:
-          - toc_title: the TOC entry title
-          - topic_index_match: {form_code, description} or null
-          - page_number, pdf_path, thumbnail_path
-          - matching_method: 'llm' or 'none'
-        If test_mode is True, use pre-generated JSON files for TOC and Topic Index.
-        """
-        # Determine file paths
-        if test_mode:
-            toc_path = toc_path or os.path.abspath(
-                "debug_outputs/organizer_test/toc_inventory.json"
-            )
-            topic_index_path = topic_index_path or os.path.abspath(
-                "debug_outputs/organizer_test/topic_index_pairs_vision.json"
-            )
-            logging.info(f"[TEST MODE] Using pre-generated TOC: {toc_path}")
-            logging.info(
-                f"[TEST MODE] Using pre-generated Topic Index: {topic_index_path}"
-            )
-        else:
-            toc_path = toc_path or os.path.abspath(
-                os.path.join(self.output_dir, "toc_inventory.json")
-            )
-            topic_index_path = topic_index_path or os.path.abspath(
-                os.path.join(self.output_dir, "topic_index_pairs_vision.json")
-            )
-            logging.info(f"[LIVE MODE] Using TOC: {toc_path}")
-            logging.info(f"[LIVE MODE] Using Topic Index: {topic_index_path}")
-        # Load TOC
-        with open(toc_path, "r") as f:
-            toc = json.load(f)
-        logging.info(f"Loaded {len(toc)} TOC entries from {toc_path}")
-        # Load Topic Index
-        with open(topic_index_path, "r") as f:
-            topic_index = json.load(f)
-        logging.info(
-            f"Loaded {len(topic_index)} Topic Index pairs from {topic_index_path}"
-        )
-        # Build form_code -> [descriptions] mapping
-        from collections import defaultdict
-
-        form_code_to_desc = defaultdict(list)
-        for entry in topic_index:
-            codes = [c.strip() for c in entry["form_code"].split(",")]
-            for code in codes:
-                form_code_to_desc[code].append(entry["description"])
-        # Build enhanced topic index: [{form_code, descriptions: [..]}]
-        enhanced_topic_index = [
-            {"form_code": code, "descriptions": descs}
-            for code, descs in form_code_to_desc.items()
-        ]
-        # Load raw text files (assume page_{n}.txt in output_dir)
-        raw_text_files = [f"page_{i+1}.txt" for i in range(len(toc))]
-        output = []
-        for i, toc_entry in enumerate(toc):
-            toc_title = toc_entry.get("title")
-            page_number = toc_entry.get("page_number")
-            pdf_path = toc_entry.get("pdf_path")
-            thumbnail_path = toc_entry.get("thumbnail_path")
-            raw_text_file = raw_text_files[i] if i < len(raw_text_files) else None
-            match = self.llm_match_topic_index_multi(toc_title, enhanced_topic_index)
-            if match:
-                topic_index_match = {
-                    "form_code": match["form_code"],
-                    "description": match["description"],
-                }
-                matching_method = "llm"
-            else:
-                topic_index_match = None
-                matching_method = "none"
-            pdf_page_file = os.path.basename(pdf_path) if pdf_path else None
-            thumbnail_file = (
-                os.path.basename(thumbnail_path) if thumbnail_path else None
-            )
-            output.append(
-                {
-                    "page_number": page_number,
-                    "toc_title": toc_title,
-                    "topic_index_match": topic_index_match,
-                    "pdf_page_file": pdf_page_file,
-                    "thumbnail_file": thumbnail_file,
-                    "raw_text_file": raw_text_file,
-                    "matching_method": matching_method,
-                }
-            )
-        if save_json:
-            out_path = os.path.abspath(
-                os.path.join(self.output_dir, "toc_llm_merged.json")
-            )
-            with open(out_path, "w") as f:
-                json.dump(output, f, indent=2)
-            logging.info(f"Saved TOC-driven LLM output to {out_path}")
-        return output
-
-    def llm_match_topic_index_multi(self, toc_title, enhanced_topic_index):
-        """
-        Use OpenAI LLM to select the best matching form_code (with all associated descriptions) for a given TOC title.
-        Returns a dict with form_code and description (the best-matching description), or None if no good match.
-        """
-        import openai
-        import os
-        import json
-        from dotenv import load_dotenv
-
-        load_dotenv()
-        api_key = os.getenv("OPENAI_API_KEY")
-        model = os.getenv("OPENAI_MODEL_OCR", "gpt-4o")
-        prompt = (
-            f"You are a data assistant. Given a TOC entry title and a list of form codes, each with all associated descriptions, "
-            f"select the best matching form_code for the TOC title. "
-            f"For the best match, also return the most relevant description. "
-            f"If no good match, return null.\n"
-            f"TOC Title: {toc_title}\n"
-            f"Form Codes with Descriptions: {json.dumps(enhanced_topic_index)}\n"
-            f"Return a JSON object with keys: form_code, description. If no good match, return null."
-        )
-        try:
-            client = openai.OpenAI(api_key=api_key)
-            completion = client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=256,
-                temperature=0.0,
-            )
-            import re
-            import ast
-
-            content = completion.choices[0].message.content
-            # Try to extract a JSON object or null
-            match = re.search(r"\{.*?\}|null", content, re.DOTALL)
-            if match:
-                if match.group(0) == "null":
-                    return None
-                try:
-                    result = json.loads(match.group(0))
-                    if (
-                        isinstance(result, dict)
-                        and "form_code" in result
-                        and "description" in result
-                    ):
-                        return result
-                except Exception:
-                    try:
-                        result = ast.literal_eval(match.group(0))
-                        if (
-                            isinstance(result, dict)
-                            and "form_code" in result
-                            and "description" in result
-                        ):
-                            return result
-                    except Exception:
-                        pass
-            return None
-        except Exception as e:
-            logging.warning(f"LLM match failed for '{toc_title}': {e}")
-            return None
-
-    @staticmethod
-    def can_parse(file_path: str) -> bool:
-        """
-        Returns True if the file is likely a professional tax organizer PDF (by filename or first page text).
-        """
-        if not file_path.lower().endswith(".pdf"):
-            return False
-        fname = os.path.basename(file_path).lower()
-        if "organizer" in fname:
-            return True
-        try:
-            from PyPDF2 import PdfReader
-
-            reader = PdfReader(file_path)
-            first_page = reader.pages[0]
-            text = first_page.extract_text() or ""
-            if "organizer" in text.lower() or "tax organizer" in text.lower():
-                return True
-        except Exception:
-            pass
-        return False
-
-    def build_manifest_with_labels(self, pages_info, config, output_dir, toc_map=None):
-        """
-        For every page, robustly extract the label using Vision LLM (default crop), then fallback to wide crop, then raw text if needed.
-        Then, extract all other fields for the page using the config lookup table.
-        Log the result and include it in the manifest.
-        """
-        import logging
-        from dataextractai.utils.ai import extract_structured_data_from_image
-        from PIL import Image
-        import os
-
-        manifest = []
-        default_fields = config.get("default", {})
-        label_crop = default_fields.get("Form_Label", {}).get("crop")
-        # Define wide crop (full width, same top/bottom)
-        wide_label_crop = None
-        if label_crop:
-            wide_label_crop = {
-                "top": label_crop["top"],
-                "bottom": label_crop["bottom"],
-                "left": 0.0,
-                "right": 1.0,
-            }
-        for page in pages_info:
-            extracted_fields = (
-                {}
-            )  # Always initialize at the top of the loop to avoid NameError
-            page_number = page["page_number"]
-            page_image_path = (
-                page["png_path"] if "png_path" in page else page["thumbnail_file"]
-            )
-            raw_text = page.get("raw_text", "")
-            label = None
-            label_source = None
-            crop_used = None
-            crop_img_path = None
-            # 1. Try default (narrow) crop
-            if label_crop:
-                img = Image.open(page_image_path)
-                w, h = img.size
-                left = int(label_crop["left"] * w)
-                right = int(label_crop["right"] * w)
-                top = int(label_crop["top"] * h)
-                bottom = int(label_crop["bottom"] * h)
-                crop_img = img.crop((left, top, right, bottom))
-                crop_img_path = os.path.join(
-                    output_dir, f"label_narrow_page_{page_number}.png"
-                )
-                crop_img.save(crop_img_path)
-                try:
-                    result = extract_structured_data_from_image(
-                        crop_img_path, "Extract the Form_Label from this region."
-                    )
-                    label = result.get("Form_Label") or str(result)
-                    # PATCH: Treat empty dict string or blank as no label
-                    if (
-                        label is None
-                        or not str(label).strip()
-                        or str(label).strip() in ("{'Form_Label': ''}", "{}", "None")
-                    ):
-                        print(
-                            f"[DEBUG] Page {page_number}: Label extraction returned empty or invalid label: {label}. Will trigger search key fallback."
-                        )
-                        label = None
-                        label_source = None
-                        crop_used = None
-                    else:
-                        label_source = "Form_Label (narrow)"
-                        crop_used = "Form_Label"
-                except Exception as e:
-                    print(
-                        f"[LABEL EXTRACTION] Vision LLM (narrow) failed for page {page_number}: {e}"
-                    )
-            # 2. If not found, try wide crop if available
-            if (not label or not str(label).strip()) and wide_label_crop:
-                left = int(wide_label_crop["left"] * w)
-                right = int(wide_label_crop["right"] * w)
-                top = int(wide_label_crop["top"] * h)
-                bottom = int(wide_label_crop["bottom"] * h)
-                wide_crop_img = img.crop((left, top, right, bottom))
-                wide_crop_img_path = os.path.join(
-                    output_dir, f"label_wide_page_{page_number}.png"
-                )
-                wide_crop_img.save(wide_crop_img_path)
-                try:
-                    result = extract_structured_data_from_image(
-                        wide_crop_img_path, "Extract the Form_Label from this region."
-                    )
-                    label = result.get("Form_Label") or str(result)
-                    # PATCH: Treat empty dict string or blank as no label
-                    if (
-                        label is None
-                        or not str(label).strip()
-                        or str(label).strip() in ("{'Form_Label': ''}", "{}", "None")
-                    ):
-                        print(
-                            f"[DEBUG] Page {page_number}: Wide label extraction returned empty or invalid label: {label}. Will trigger search key fallback."
-                        )
-                        label = None
-                        label_source = None
-                        crop_used = None
-                    else:
-                        label_source = "Wide_Form_Label (wide)"
-                        crop_used = "Wide_Form_Label"
-                except Exception as e:
-                    print(
-                        f"[LABEL EXTRACTION] Vision LLM (wide) failed for page {page_number}: {e}"
-                    )
-            # 3. If still not found, scan raw text for unique_search_key from config
-            # PATCH: Always run search key fallback if label is None, empty, or not a valid config key
-            if not label or not str(label).strip() or str(label).strip() not in config:
-                print(
-                    f"[DEBUG] Page {page_number}: Entering search key fallback block (label: {label!r})"
-                )
-                # Try all config sections with unique_search_key
-                raw_text_path = os.path.join(self.output_dir, f"page_{page_number}.txt")
-                raw_text = ""
-                if os.path.exists(raw_text_path):
-                    with open(raw_text_path, "r") as f:
-                        raw_text = f.read()
-                # Normalize raw text for matching
-                raw_text_normalized = (
-                    raw_text.replace("\n", "").replace("\r", "").strip().lower()
-                )
-                for key, entry in config.items():
-                    if isinstance(entry, dict) and entry.get("unique_search_key"):
-                        search_key = (
-                            entry["unique_search_key"]
-                            .replace("\n", "")
-                            .replace("\r", "")
-                            .strip()
-                            .lower()
-                        )
-                        print(
-                            f"[DEBUG] Page {page_number}: Comparing search_key '{search_key}' to raw_text_normalized (first 200 chars): '{raw_text_normalized[:200]}'"
-                        )
-                        if search_key in raw_text_normalized:
-                            config_key = key
-                            prompt_override = entry.get("prompt_override")
-                            print(
-                                f"[DEBUG] Page {page_number}: unique_search_key '{entry['unique_search_key']}' matched in raw text. Using config_key: {config_key}"
-                            )
-                            break
-                        else:
-                            print(
-                                f"[DEBUG] Page {page_number}: unique_search_key '{entry['unique_search_key']}' NOT found in raw text."
-                            )
-            # After search key fallback, inject label and label_source if config_key was found and label is empty/garbage
-            garbage_labels = [None, "", "{}", "None", "{'Form_Label': ''"]
-            if is_garbage_label(label) and config_key:
-                label = config_key
-                label_source = "config_fallback"
-            # 4. Use 'Title' for display, but config_key for lookup
-            title_for_manifest = (
-                config[config_key]["Title"]
-                if config_key and "Title" in config[config_key]
-                else label
-            )
-            # Log which crop was used
-            print(
-                f"[INFO] Page {page_number}: Label extracted using {label_source} ({crop_used} crop): {label}"
-            )
-            page["extracted_label"] = label
-            page["label_source"] = label_source
-            page["label_crop_img"] = crop_img_path
-            if wide_crop_img_path:
-                page["label_wide_crop_img"] = wide_crop_img_path
-
-            # Extract all other fields for this page using config
-            # Determine form_code: prefer topic_index_match, else label, else TOC
-            form_code = None
-            if page.get("topic_index_match") and page["topic_index_match"].get(
-                "form_code"
-            ):
-                form_code = page["topic_index_match"]["form_code"]
-            elif label and label in config:
-                form_code = label
-            # Fallback: try to map from TOC if available (not implemented here)
-            # Use 'default' if no form_code found
-            page_config = (
-                config.get(form_code)
-                if form_code and form_code in config
-                else default_fields
-            )
-            for field, field_info in page_config.items():
-                # Only process fields where field_info is a dict and has a 'method' key
-                if not isinstance(field_info, dict) or "method" not in field_info:
-                    continue
-                method = field_info.get("method")
-                split_column = field_info.get("split_column", False)
-                crop_left = field_info.get("crop_left")
-                crop_right = field_info.get("crop_right")
-                crop = field_info.get("crop")
-                field_prompt_override = (
-                    field_info.get("prompt_override") or prompt_override
-                )
-                # --- Special handling for Cover and Signature pages: full page extraction ---
-                if (
-                    form_code in ("Cover_Sheet", "Signature_Page")
-                    and field == "Full_Page"
-                ):
-                    from PIL import Image
-
-                    img = Image.open(page_image_path)
-                    full_img_path = os.path.join(
-                        self.output_dir, f"full_page_{page_number}.png"
-                    )
-                    img.save(full_img_path)
-                    # Try to load raw PDF text for this page
-                    raw_text_path = os.path.join(
-                        self.output_dir, f"page_{page_number}.txt"
-                    )
-                    raw_text = ""
-                    if os.path.exists(raw_text_path):
-                        with open(raw_text_path, "r") as f:
-                            raw_text = f.read()
-                    prompt = field_prompt_override or (
-                        "Extract all fields/regions from this tax organizer cover/signature page. "
-                        "If helpful, use the following raw PDF text as context: "
-                        + raw_text
-                    )
-                    try:
-                        result = extract_structured_data_from_image(
-                            full_img_path, prompt
-                        )
-                        llm_response_path = os.path.join(
-                            self.output_dir,
-                            f"field_{field}_page_{page_number}_llm_response.json",
-                        )
-                        with open(llm_response_path, "w") as f:
-                            json.dump(result, f, indent=2)
-                        print(f"[LLM RESPONSE] {llm_response_path}: {result}")
-                        extracted_fields[field] = {
-                            "value": result,
-                            "source": "vision_llm_full_page",
-                            "full_img": full_img_path,
-                        }
-                    except Exception as e:
-                        print(
-                            f"[LLM ERROR] {field} page {page_number} (full page): {e}"
-                        )
-                        extracted_fields[field] = {
-                            "value": None,
-                            "source": "vision_llm_full_page_failed",
-                            "full_img": full_img_path,
-                            "error": str(e),
-                        }
-                    continue
-                # --- Split-column aggregation fix ---
-                if split_column and crop_left and crop_right:
-                    all_col_results = []
-                    for col_idx, col_crop in enumerate([crop_left, crop_right]):
-                        l = int(col_crop["left"] * w)
-                        r = int(col_crop["right"] * w)
-                        t = int(col_crop["top"] * h)
-                        b = int(col_crop["bottom"] * h)
-                        col_img = img.crop((l, t, r, b))
-                        col_img_path = os.path.join(
-                            self.output_dir,
-                            f"field_{field}_page_{page_number}_col{col_idx+1}.png",
-                        )
-                        col_img.save(col_img_path)
-                        try:
-                            prompt = field_prompt_override or (
-                                "Extract all {description, value} pairs from this column of a split-column tax organizer form. "
-                                "Return as a list of objects with keys 'description' and 'value'. Ignore empty or header rows."
-                            )
-                            result = extract_structured_data_from_image(
-                                col_img_path, prompt
-                            )
-                            llm_response_path = os.path.join(
-                                self.output_dir,
-                                f"field_{field}_page_{page_number}_col{col_idx+1}_llm_response.json",
-                            )
-                            with open(llm_response_path, "w") as f:
-                                json.dump(result, f, indent=2)
-                            print(f"[LLM RESPONSE] {llm_response_path}: {result}")
-                            # Accept either a list or dict with 'data' key
-                            col_values = (
-                                result.get("data")
-                                if isinstance(result, dict) and "data" in result
-                                else result
-                            )
-                            if isinstance(col_values, list):
-                                all_col_results.extend(col_values)
-                            elif isinstance(col_values, dict):
-                                all_col_results.append(col_values)
-                        except Exception as e:
-                            print(
-                                f"[LLM ERROR] {field} page {page_number} col {col_idx+1}: {e}"
-                            )
-                    # Aggregate both columns into a single list under 'data'
-                    extracted_fields[field] = {
-                        "data": all_col_results,
-                        "source": "vision_llm_split_column",
-                        "columns": 2,
-                    }
-                    continue
-                # --- Standard extraction for all other fields ---
-                if method == "vision" and crop:
-                    left = int(crop["left"] * w)
-                    right = int(crop["right"] * w)
-                    top = int(crop["top"] * h)
-                    bottom = int(crop["bottom"] * h)
-                    field_crop_img = img.crop((left, top, right, bottom))
-                    field_crop_img_path = os.path.join(
-                        self.output_dir, f"field_{field}_page_{page_number}.png"
-                    )
-                    field_crop_img.save(field_crop_img_path)
-                    try:
-                        prompt = (
-                            field_prompt_override
-                            or f"Extract the {field} from this region."
-                        )
-                        result = extract_structured_data_from_image(
-                            field_crop_img_path, prompt
-                        )
-                        llm_response_path = os.path.join(
-                            self.output_dir,
-                            f"field_{field}_page_{page_number}_llm_response.json",
-                        )
-                        with open(llm_response_path, "w") as f:
-                            json.dump(result, f, indent=2)
-                        print(f"[LLM RESPONSE] {llm_response_path}: {result}")
-                        value = result.get(field) or str(result)
-                        extracted_fields[field] = {
-                            "value": value,
-                            "source": "vision_llm",
-                            "crop": crop,
-                            "crop_img": field_crop_img_path,
-                        }
-                    except Exception as e:
-                        print(f"[LLM ERROR] {field} page {page_number}: {e}")
-                        extracted_fields[field] = {
-                            "value": None,
-                            "source": "vision_llm_failed",
-                            "crop": crop,
-                            "crop_img": field_crop_img_path,
-                            "error": str(e),
-                        }
-            if not extracted_fields or (
-                isinstance(extracted_fields, dict)
-                and all(not v for v in extracted_fields.values())
-            ):
-                print(
-                    f"[WARN] No extracted fields for page {page_number} (label={label})"
-                )
-            # Add file name fields for manifest (do not change any other logic)
-            pdf_page_file = os.path.basename(
-                os.path.join(self.output_dir, f"page_{page_number}.pdf")
-            )
-            thumbnail_file = os.path.basename(page_image_path)
-            raw_text_file = os.path.basename(
-                os.path.join(self.output_dir, f"page_{page_number}.txt")
-            )
-            manifest.append(
-                {
-                    "page_number": page_number,
-                    "label": label,
-                    "label_source": label_source,
-                    "label_crop_img": crop_img_path,
-                    "extracted_fields": extracted_fields,
-                    "pdf_page_file": pdf_page_file,
-                    "thumbnail_file": thumbnail_file,
-                    "raw_text_file": raw_text_file,
-                }
-            )
-        return manifest
-
     def extract_all_fields_manifest(self, config_path=None, page_numbers=None):
         """
         Robustly extract all fields for each page using fallback logic:
@@ -1324,10 +769,9 @@ class OrganizerExtractor:
         from PIL import Image
         import os
 
-
         # Always extract raw text for all pages before processing
         print("[DEBUG] Extracting raw PDF text for all pages...")
-        self.extract_raw_text_per_page()
+        self.extract_raw_text_per_page(self.split_pages())
         print("[DEBUG] Raw PDF text extraction complete.")
 
         # Load config
@@ -1344,16 +788,27 @@ class OrganizerExtractor:
         if config["default"].get("Wide_Form_Label"):
             wide_label_crop = config["default"]["Wide_Form_Label"]["crop"]
         pages_info = self.split_pages()
-        self.generate_thumbnails(pages_info)
-        # Filter pages_info if page_numbers is provided
+        self.generate_thumbnails_and_images(pages_info)
+        self.extract_raw_text_per_page(pages_info)
+        # Now filter pages_info if page_numbers is provided
         if page_numbers is not None:
             page_numbers_set = set(page_numbers)
             pages_info = [p for p in pages_info if p["page_number"] in page_numbers_set]
         manifest = []
         for page in pages_info:
-            extracted_fields = {}
+            print(
+                f"[DEBUG] Page {page['page_number']}: initial state: label=None, label_source=None, extraction_method=None"
+            )
+            extracted_fields = (
+                {}
+            )  # Always initialize at the top of the loop to avoid NameError
             page_number = page["page_number"]
-            page_image_path = page["thumbnail_path"]
+            page_image_path = page.get("png_path") or page.get("thumbnail_file")
+            if not page_image_path:
+                print(
+                    f"[WARNING] Page {page_number}: No 'png_path' or 'thumbnail_file' found in page dict. Skipping image-based extraction for this page."
+                )
+            raw_text = page.get("raw_text", "")
             label = None
             label_source = None
             crop_used = None
@@ -1361,6 +816,7 @@ class OrganizerExtractor:
             wide_crop_img_path = None
             config_key = None
             prompt_override = None
+            extraction_method = None  # <-- New field for user-friendly provenance
             # 1. Try default (narrow) crop
             if label_crop:
                 img = Image.open(page_image_path)
@@ -1379,6 +835,7 @@ class OrganizerExtractor:
                         crop_img_path, "Extract the Form_Label from this region."
                     )
                     label = result.get("Form_Label") or str(result)
+                    print(f"[DEBUG] Page {page_number}: label set to: {label}")
                     if label and label.strip():
                         label_source = "Form_Label (narrow)"
                         crop_used = "Form_Label"
@@ -1450,11 +907,15 @@ class OrganizerExtractor:
                             print(
                                 f"[DEBUG] Page {page_number}: unique_search_key '{entry['unique_search_key']}' matched in raw text. Using config_key: {config_key}"
                             )
+                            extraction_method = "Text Only"  # Fallback to text search
                             break
                         else:
                             print(
                                 f"[DEBUG] Page {page_number}: unique_search_key '{entry['unique_search_key']}' NOT found in raw text."
                             )
+                # If still not set, mark as config fallback
+                if extraction_method is None:
+                    extraction_method = "Config Fallback"
             # After search key fallback, inject label and label_source if config_key was found and label is empty/garbage
             garbage_labels = [None, "", "{}", "None", "{'Form_Label': ''"]
             if is_garbage_label(label) and config_key:
@@ -1677,7 +1138,12 @@ class OrganizerExtractor:
                     "pdf_page_file": pdf_page_file,
                     "thumbnail_file": thumbnail_file,
                     "raw_text_file": raw_text_file,
+                    "extracted_with": extraction_method,  # <-- Add this line
                 }
+            )
+            # Print extraction_method for debug
+            print(
+                f"[DEBUG] Page {page_number}: extraction_method before manifest append: {extraction_method}"
             )
         # Save manifest
         manifest_path = os.path.join(self.output_dir, "all_fields_manifest.json")
@@ -1966,5 +1432,3 @@ if __name__ == "__main__":
 from dataextractai.parsers_core.registry import ParserRegistry
 
 ParserRegistry.register_parser("organizer_extractor", OrganizerExtractor)
-
-
