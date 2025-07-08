@@ -1929,3 +1929,7 @@ if __name__ == "__main__":
     # (Skip legacy extraction for this test run)
     extractor = OrganizerExtractor(args.pdf_path, args.output_dir)
     extractor.extract()  # fallback to original pipeline
+
+from dataextractai.parsers_core.registry import ParserRegistry
+
+ParserRegistry.register_parser("organizer_extractor", OrganizerExtractor)
