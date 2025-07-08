@@ -18,6 +18,25 @@ import shutil
 from logging.handlers import RotatingFileHandler
 import sys
 from dataextractai.utils.ai import extract_structured_data_from_image
+import re
+
+
+# Helper to robustly detect garbage/empty label values
+def is_garbage_label(val):
+    if val is None:
+        return True
+    s = str(val).strip()
+    if s in ("", "{}", "None"):
+        return True
+    # Match patterns like {"Form_Label": ''} or {"Wide_Form_Label": ''}
+    import re
+
+    if re.match(r"^\{\s*'\w+_?\w*'\s*:\s*''\s*\}$", s):
+        return True
+    return False
+
+
+
 
 
 class MergedEntry(BaseModel):
@@ -203,6 +222,9 @@ class OrganizerExtractor:
 
     See the __main__ block for a full demo pipeline.
     """
+
+
+
 
     def __init__(self, pdf_path: str, output_dir: str, thumbnail_dpi: int = 200):
         self.pdf_path = pdf_path
@@ -1062,6 +1084,11 @@ class OrganizerExtractor:
                             print(
                                 f"[DEBUG] Page {page_number}: unique_search_key '{entry['unique_search_key']}' NOT found in raw text."
                             )
+            # After search key fallback, inject label and label_source if config_key was found and label is empty/garbage
+            garbage_labels = [None, "", "{}", "None", "{'Form_Label': ''"]
+            if is_garbage_label(label) and config_key:
+                label = config_key
+                label_source = "config_fallback"
             # 4. Use 'Title' for display, but config_key for lookup
             title_for_manifest = (
                 config[config_key]["Title"]
@@ -1297,6 +1324,7 @@ class OrganizerExtractor:
         from PIL import Image
         import os
 
+
         # Always extract raw text for all pages before processing
         print("[DEBUG] Extracting raw PDF text for all pages...")
         self.extract_raw_text_per_page()
@@ -1427,6 +1455,11 @@ class OrganizerExtractor:
                             print(
                                 f"[DEBUG] Page {page_number}: unique_search_key '{entry['unique_search_key']}' NOT found in raw text."
                             )
+            # After search key fallback, inject label and label_source if config_key was found and label is empty/garbage
+            garbage_labels = [None, "", "{}", "None", "{'Form_Label': ''"]
+            if is_garbage_label(label) and config_key:
+                label = config_key
+                label_source = "config_fallback"
             # 4. Use 'Title' for display, but config_key for lookup
             title_for_manifest = (
                 config[config_key]["Title"]
@@ -1933,3 +1966,5 @@ if __name__ == "__main__":
 from dataextractai.parsers_core.registry import ParserRegistry
 
 ParserRegistry.register_parser("organizer_extractor", OrganizerExtractor)
+
+
