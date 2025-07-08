@@ -1,6 +1,7 @@
 import os
 import json
 import argparse
+import hashlib
 from dotenv import load_dotenv
 
 
@@ -67,6 +68,30 @@ Data: {json.dumps(page.get('data', {}))}
         return None, None
 
 
+def llm_file_summary(page_summaries, openai_api_key, model):
+    import openai
+
+    prompt = f"""
+You are a helpful assistant. Given the following list of page summaries from a tax organizer PDF, provide:
+1. A concise, high-level summary of the entire document, including what sections/pages are present, what is missing, and any notable findings.
+2. If possible, list any detected user data or sensitive information.
+
+Page summaries:
+{json.dumps(page_summaries, indent=2)}
+"""
+    try:
+        client = openai.OpenAI(api_key=openai_api_key)
+        response = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=512,
+            temperature=0.0,
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        return None
+
+
 def load_terms(path):
     if not os.path.exists(path):
         return set()
@@ -103,21 +128,42 @@ def clean_extracted_fields(extracted_fields, label):
     return data
 
 
+def compute_file_hash(pdf_path):
+    BUF_SIZE = 65536
+    sha256 = hashlib.sha256()
+    try:
+        with open(pdf_path, "rb") as f:
+            while True:
+                data = f.read(BUF_SIZE)
+                if not data:
+                    break
+                sha256.update(data)
+        return sha256.hexdigest()
+    except Exception as e:
+        print(f"[WARN] Could not compute file hash: {e}")
+        return None
+
+
 def clean_manifest(
     input_path,
     output_path,
+    pdf_path=None,
     openai_api_key=None,
     openai_model_fast=None,
+    openai_model_precise=None,
     exclude_terms_path=None,
     include_terms_path=None,
 ):
     """
     Clean and normalize an organizer manifest for client consumption.
+    Adds file_hash and file_summary at the top level.
     Args:
         input_path (str): Path to input manifest JSON.
         output_path (str): Path to output cleaned manifest JSON.
+        pdf_path (str, optional): Path to the original PDF file (for hashing).
         openai_api_key (str, optional): OpenAI API key for LLM summaries.
         openai_model_fast (str, optional): Model name for LLM summaries.
+        openai_model_precise (str, optional): Model name for high-quality file summary.
         exclude_terms_path (str, optional): Path to exclusion terms file.
         include_terms_path (str, optional): Path to inclusion terms file.
     """
@@ -126,6 +172,8 @@ def clean_manifest(
         openai_api_key = os.getenv("OPENAI_API_KEY")
     if openai_model_fast is None:
         openai_model_fast = os.getenv("OPENAI_MODEL_FAST", "gpt-4.1-mini")
+    if openai_model_precise is None:
+        openai_model_precise = os.getenv("OPENAI_MODEL_PRECISE", openai_model_fast)
     if exclude_terms_path is None:
         exclude_terms_path = os.path.join(
             os.path.dirname(__file__), "prefilled_exclude_terms.txt"
@@ -143,6 +191,7 @@ def clean_manifest(
         print(f"[ERROR] Failed to load input manifest: {e}")
         raise
     cleaned = []
+    page_summaries = []
     for entry in manifest:
         data = clean_extracted_fields(
             entry.get("extracted_fields", {}), entry.get("label")
@@ -176,9 +225,19 @@ def clean_manifest(
             has_user_data if has_user_data is not None else False
         )
         cleaned.append(cleaned_entry)
+        page_summaries.append(summary)
+    # Compute file hash if pdf_path is provided
+    file_hash = compute_file_hash(pdf_path) if pdf_path else None
+    # Generate whole file summary using best available LLM
+    file_summary = None
+    if openai_api_key and page_summaries:
+        file_summary = llm_file_summary(
+            page_summaries, openai_api_key, openai_model_precise
+        )
+    output = {"file_hash": file_hash, "file_summary": file_summary, "pages": cleaned}
     try:
         with open(output_path, "w") as f:
-            json.dump(cleaned, f, indent=2)
+            json.dump(output, f, indent=2)
         print(
             f"Cleaned manifest written to {output_path}. {len(cleaned)} pages processed."
         )
@@ -189,14 +248,17 @@ def clean_manifest(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Clean and normalize an organizer manifest for client consumption."
+        description="Clean and normalize an organizer manifest for client consumption. Adds file_hash and file_summary."
     )
     parser.add_argument("--input", required=True, help="Path to input manifest JSON")
     parser.add_argument(
         "--output", required=True, help="Path to output cleaned manifest JSON"
     )
+    parser.add_argument(
+        "--pdf", required=False, help="Path to original PDF file (for hashing)"
+    )
     args = parser.parse_args()
-    clean_manifest(args.input, args.output)
+    clean_manifest(args.input, args.output, pdf_path=args.pdf)
 
 
 if __name__ == "__main__":
