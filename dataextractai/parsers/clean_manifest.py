@@ -103,31 +103,47 @@ def clean_extracted_fields(extracted_fields, label):
     return data
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--input", required=True, help="Path to input manifest JSON")
-    parser.add_argument(
-        "--output", required=True, help="Path to output cleaned manifest JSON"
-    )
-    args = parser.parse_args()
-
+def clean_manifest(
+    input_path,
+    output_path,
+    openai_api_key=None,
+    openai_model_fast=None,
+    exclude_terms_path=None,
+    include_terms_path=None,
+):
+    """
+    Clean and normalize an organizer manifest for client consumption.
+    Args:
+        input_path (str): Path to input manifest JSON.
+        output_path (str): Path to output cleaned manifest JSON.
+        openai_api_key (str, optional): OpenAI API key for LLM summaries.
+        openai_model_fast (str, optional): Model name for LLM summaries.
+        exclude_terms_path (str, optional): Path to exclusion terms file.
+        include_terms_path (str, optional): Path to inclusion terms file.
+    """
     load_dotenv()
-    openai_api_key = os.getenv("OPENAI_API_KEY")
-    openai_model_fast = os.getenv("OPENAI_MODEL_FAST", "gpt-4.1-mini")
-
-    exclude_terms = load_terms(
-        os.path.join(os.path.dirname(__file__), "prefilled_exclude_terms.txt")
-    )
-    include_terms = load_terms(
-        os.path.join(os.path.dirname(__file__), "prefilled_include_terms.txt")
-    )
-
-    with open(args.input, "r") as f:
-        manifest = json.load(f)
-
+    if openai_api_key is None:
+        openai_api_key = os.getenv("OPENAI_API_KEY")
+    if openai_model_fast is None:
+        openai_model_fast = os.getenv("OPENAI_MODEL_FAST", "gpt-4.1-mini")
+    if exclude_terms_path is None:
+        exclude_terms_path = os.path.join(
+            os.path.dirname(__file__), "prefilled_exclude_terms.txt"
+        )
+    if include_terms_path is None:
+        include_terms_path = os.path.join(
+            os.path.dirname(__file__), "prefilled_include_terms.txt"
+        )
+    exclude_terms = load_terms(exclude_terms_path)
+    include_terms = load_terms(include_terms_path)
+    try:
+        with open(input_path, "r") as f:
+            manifest = json.load(f)
+    except Exception as e:
+        print(f"[ERROR] Failed to load input manifest: {e}")
+        raise
     cleaned = []
     for entry in manifest:
-        # Clean and flatten extracted fields
         data = clean_extracted_fields(
             entry.get("extracted_fields", {}), entry.get("label")
         )
@@ -139,18 +155,14 @@ def main():
             "raw_text_file": entry.get("raw_text_file"),
             "data": data,
         }
-        # Try LLM summary
         summary, has_user_data = None, None
         if openai_api_key:
             summary, has_user_data = llm_summarize(
                 cleaned_entry, openai_api_key, openai_model_fast
             )
-        # Fallback if LLM fails
         if summary is None:
             has_user_data, user_fields, included_found = detect_user_data(
-                data,
-                exclude_terms=exclude_terms,
-                include_terms=include_terms,
+                data, exclude_terms=exclude_terms, include_terms=include_terms
             )
             summary = f"Page {cleaned_entry['page_number']} ({cleaned_entry.get('label','')}): "
             if has_user_data:
@@ -164,10 +176,27 @@ def main():
             has_user_data if has_user_data is not None else False
         )
         cleaned.append(cleaned_entry)
+    try:
+        with open(output_path, "w") as f:
+            json.dump(cleaned, f, indent=2)
+        print(
+            f"Cleaned manifest written to {output_path}. {len(cleaned)} pages processed."
+        )
+    except Exception as e:
+        print(f"[ERROR] Failed to write cleaned manifest: {e}")
+        raise
 
-    with open(args.output, "w") as f:
-        json.dump(cleaned, f, indent=2)
-    print(f"Cleaned manifest written to {args.output}. {len(cleaned)} pages processed.")
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Clean and normalize an organizer manifest for client consumption."
+    )
+    parser.add_argument("--input", required=True, help="Path to input manifest JSON")
+    parser.add_argument(
+        "--output", required=True, help="Path to output cleaned manifest JSON"
+    )
+    args = parser.parse_args()
+    clean_manifest(args.input, args.output)
 
 
 if __name__ == "__main__":
