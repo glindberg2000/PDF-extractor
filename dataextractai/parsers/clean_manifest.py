@@ -170,6 +170,11 @@ def clean_manifest(
     load_dotenv()
     if openai_api_key is None:
         openai_api_key = os.getenv("OPENAI_API_KEY")
+    # Try OCR model first if present
+    openai_model_ocr = os.getenv("OPENAI_MODEL_OCR")
+    if openai_model_ocr:
+        openai_model_fast = openai_model_ocr
+        openai_model_precise = openai_model_ocr
     if openai_model_fast is None:
         openai_model_fast = os.getenv("OPENAI_MODEL_FAST", "gpt-4.1-mini")
     if openai_model_precise is None:
@@ -206,20 +211,30 @@ def clean_manifest(
         }
         summary, has_user_data = None, None
         if openai_api_key:
-            summary, has_user_data = llm_summarize(
-                cleaned_entry, openai_api_key, openai_model_fast
-            )
+            try:
+                summary, has_user_data = llm_summarize(
+                    cleaned_entry, openai_api_key, openai_model_fast
+                )
+            except Exception as e:
+                print(f"[LLM ERROR] Per-page summary failed: {e}")
         if summary is None:
-            has_user_data, user_fields, included_found = detect_user_data(
-                data, exclude_terms=exclude_terms, include_terms=include_terms
-            )
-            summary = f"Page {cleaned_entry['page_number']} ({cleaned_entry.get('label','')}): "
-            if has_user_data:
-                summary += f"Contains user data fields: {', '.join(user_fields)}."
-                if included_found:
-                    summary += f" Included terms found: {', '.join(included_found)}."
-            else:
-                summary += "No user data detected."
+            try:
+                has_user_data, user_fields, included_found = detect_user_data(
+                    data, exclude_terms=exclude_terms, include_terms=include_terms
+                )
+                summary = f"Page {cleaned_entry['page_number']} ({cleaned_entry.get('label','')}): "
+                if has_user_data:
+                    summary += f"Contains user data fields: {', '.join(user_fields)}."
+                    if included_found:
+                        summary += (
+                            f" Included terms found: {', '.join(included_found)}."
+                        )
+                else:
+                    summary += "No user data detected."
+            except Exception as e:
+                print(f"[ERROR] Rule-based summary failed: {e}")
+                summary = "Summary unavailable."
+                has_user_data = False
         cleaned_entry["summary"] = summary
         cleaned_entry["has_user_data"] = (
             has_user_data if has_user_data is not None else False
@@ -231,9 +246,12 @@ def clean_manifest(
     # Generate whole file summary using best available LLM
     file_summary = None
     if openai_api_key and page_summaries:
-        file_summary = llm_file_summary(
-            page_summaries, openai_api_key, openai_model_precise
-        )
+        try:
+            file_summary = llm_file_summary(
+                page_summaries, openai_api_key, openai_model_precise
+            )
+        except Exception as e:
+            print(f"[LLM ERROR] File-level summary failed: {e}")
     output = {"file_hash": file_hash, "file_summary": file_summary, "pages": cleaned}
     try:
         with open(output_path, "w") as f:
