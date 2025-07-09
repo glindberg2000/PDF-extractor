@@ -1107,7 +1107,14 @@ class OrganizerExtractor:
                         with open(llm_response_path, "w") as f:
                             json.dump(result, f, indent=2)
                         print(f"[LLM RESPONSE] {llm_response_path}: {result}")
-                        value = result.get(field) or str(result)
+                        # Patch: Always use native JSON object if possible
+                        value = result.get(field)
+                        if value is None:
+                            # If result itself is a dict or list, use it directly
+                            if isinstance(result, (dict, list)):
+                                value = result
+                            else:
+                                value = str(result)
                         extracted_fields[field] = {
                             "value": value,
                             "source": "vision_llm",
@@ -1173,6 +1180,22 @@ class OrganizerExtractor:
         with open(manifest_path, "w") as f:
             json.dump(manifest, f, indent=2)
         print(f"[DONE] Saved all-fields manifest to {manifest_path}")
+        # --- Built-in cleaning step: always run after manifest generation ---
+        try:
+            from dataextractai.parsers.clean_manifest import clean_manifest
+
+            cleaned_manifest_path = os.path.join(
+                self.output_dir, "all_fields_manifest_cleaned.json"
+            )
+            clean_manifest(
+                input_path=manifest_path,
+                output_path=cleaned_manifest_path,
+                pdf_path=self.pdf_path,
+            )
+            print(f"[DONE] Cleaned manifest written to {cleaned_manifest_path}")
+        except Exception as e:
+            print(f"[ERROR] Cleaning step failed: {e}")
+        # NOTE: Only Python scripts should be committed to git. Do NOT commit debug_outputs/ or JSON output files.
 
 
 class PrefilledDataDetector:

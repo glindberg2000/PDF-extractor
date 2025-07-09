@@ -577,7 +577,7 @@ The test harness now uses content-based detection for all parsers, ensuring that
 
 ### Usage (CLI)
 
-#### Full Pipeline (with prefilled data detection by default)
+#### Full Pipeline (with prefilled data detection and manifest cleaning by default)
 ```bash
 python3 -m dataextractai.parsers.organizer_extractor --pdf_path <input.pdf>
 ```
@@ -603,34 +603,40 @@ python3 -m dataextractai.parsers.organizer_extractor --pdf_path <input.pdf> --ou
 ```
 
 ### Output Directory Structure
-- Each run creates a timestamped output directory (unless --output_dir is set):
-  - `toc_llm_merged.json`: Main manifest (one entry per TOC page)
-  - `toc_llm_merged_prefilled.json`: Manifest with prefilled data fields
-  - `page_{n}.pdf`, `page_{n}.png`, `page_{n}.txt`: Per-page PDF, thumbnail, and raw text
+- Each run creates a unique output directory (timestamped by default, or as specified by --output_dir):
+  - `all_fields_manifest.json`: Raw manifest with all extracted fields and regions
+  - `all_fields_manifest_cleaned.json`: Cleaned, canonical manifest for upstream use (always produced automatically)
+  - Other intermediate/debug files (e.g., per-page PNGs, OCR text, LLM responses, logs)
 
 ### Manifest Schema
-Each entry includes:
-- `page_number`: int
-- `toc_title`: str (from TOC)
-- `topic_index_match`: {"form_code": str, "description": str} or null
-- `pdf_page_file`: str (filename)
-- `thumbnail_file`: str (filename)
-- `raw_text_file`: str (filename)
-- `matching_method`: str ("llm" or "none")
-- `has_prefilled_data`: bool
-- `prefilled_fields`: dict or null
-- `prefilled_model`: str (LLM model used)
+- The cleaned manifest (`all_fields_manifest_cleaned.json`) is the canonical output for ingestion.
+- The raw manifest (`all_fields_manifest.json`) is for debugging and post-processing.
+- The `main_area` field is config-driven and may be nested; upstream consumers may need to flatten or post-process as needed.
 
-### Logging
-- Logs all file paths, output directories, and LLM model usage.
-- At the end, logs the location of the final output manifest (e.g., `toc_llm_merged_prefilled.json`).
+### Logging and Status
+- All progress and errors are logged to `organizer_pipeline.log` in the output directory.
+- **Web App Integration Note:**
+  - The pipeline can take several minutes for large PDFs.
+  - It is recommended to run the pipeline as an offline subprocess (e.g., using Python's `subprocess` module) and poll for status by monitoring the log file or output directory.
+  - There is currently no built-in status callback or async API.
+  - Do **not** block a web request (e.g., Django/Flask) waiting for completion; instead, launch the process in the background and notify the user when the cleaned manifest is ready.
+
+### Programmatic Usage Example
+```python
+from dataextractai.parsers.organizer_extractor import OrganizerExtractor
+
+extractor = OrganizerExtractor(pdf_path, output_dir)
+extractor.extract_all_fields_manifest()
+# The cleaned manifest will be at:
+cleaned_manifest_path = os.path.join(output_dir, 'all_fields_manifest_cleaned.json')
+```
 
 ### Example Workflow
 1. Run the full pipeline:
    ```bash
    python3 -m dataextractai.parsers.organizer_extractor --pdf_path data/_examples/workbooks/22I_VALENTI_T_Organizer_V1_13710.PDF
    ```
-2. Find the output in `debug_outputs/organizer_test/<timestamp>/toc_llm_merged_prefilled.json`.
+2. Find the output in the specified output directory (e.g., `debug_outputs/organizer_test/<timestamp>/all_fields_manifest_cleaned.json`).
 3. To re-run prefilled detection on cached outputs:
    ```bash
    python3 -m dataextractai.parsers.organizer_extractor --pdf_path data/_examples/workbooks/22I_VALENTI_T_Organizer_V1_13710.PDF --detect_prefilled --output_dir debug_outputs/organizer_test/<timestamp>
