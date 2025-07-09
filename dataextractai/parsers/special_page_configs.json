@@ -29,6 +29,7 @@
         }
     },
     "6A": {
+        "Title": "Business Expenses and Property & Equipment",
         "Expenses": {
             "method": "vision",
             "crop": {
