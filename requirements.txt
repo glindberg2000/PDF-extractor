@@ -1,32 +1,40 @@
 # Core dependencies
 #
-# NOTE: For PDF image extraction, you must also install poppler (system dependency):
-#   macOS:  brew install poppler
-#   Ubuntu: sudo apt-get install poppler-utils
+# NOTE: For PDF/image extraction, you must also install system dependencies:
+#   macOS:  brew install poppler tesseract
+#   Ubuntu: sudo apt-get install poppler-utils tesseract-ocr
+#   PyMuPDF (fitz) and pdf2image require poppler; pytesseract requires tesseract-ocr
 #
 pandas>=2.0.0
 numpy>=1.21.0
 PyYAML>=6.0.0
 python-dotenv>=1.0.0
 openai>=1.0.0
+pydantic>=2.0.0
+python-dateutil>=2.8.2
 
 # PDF processing
 pdfplumber>=0.7.0
 PyPDF2>=3.0.0
-PyMuPDF>=1.23.0
+PyMuPDF>=1.23.0  # (imported as fitz)
 pdf2image>=1.16.3
 pillow>=9.0.0
+pytesseract>=0.3.10
 
 # CLI and UI
 typer>=0.9.0
 rich>=12.0.0
 click>=8.0.0
+questionary>=2.0.0
 
 # Google Sheets API
 google-auth-oauthlib>=1.0.0
 google-auth-httplib2>=0.1.0
 google-api-python-client>=2.0.0
 gspread>=5.0.0
+
+# PDF/Report generation
+reportlab>=4.0.0
 
 # Development
 pytest>=7.0.0
