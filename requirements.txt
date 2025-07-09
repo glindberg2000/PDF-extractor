@@ -44,3 +44,6 @@ mypy>=0.950
 
 # Excel output support
 openpyxl 
+
+# String matching utilities
+rapidfuzz>=3.0.0 
