@@ -326,6 +326,21 @@ class OrganizerExtractor:
             json.dump(toc, f, indent=2)
 
     def extract(self) -> Dict[str, Any]:
+        """
+        Run the full extraction pipeline for a tax organizer PDF.
+        This will:
+        - Extract the TOC and per-page info
+        - Generate thumbnails and raw text
+        - Write a TOC inventory JSON
+        - Run the all-fields manifest extraction (with LLM/vision extraction)
+        - Always produce both a raw manifest (all_fields_manifest.json) and a cleaned manifest (all_fields_manifest_cleaned.json) in the output directory
+        - Return the cleaned manifest path as part of the result
+
+        Usage:
+            extractor = OrganizerExtractor(pdf_path, output_dir)
+            result = extractor.extract()
+            print("Cleaned manifest at:", result["cleaned_manifest_path"])
+        """
         toc = self.extract_toc()
         pages_info = self.split_pages()
         self.generate_thumbnails_and_images(pages_info)
@@ -345,11 +360,17 @@ class OrganizerExtractor:
                 entry["thumbnail_path"] = None
         # Write valid JSON TOC inventory
         self.write_toc_inventory(toc)
+        # --- Always run the all-fields manifest extraction and cleaning step ---
+        manifest_result = self.extract_all_fields_manifest()
+        cleaned_manifest_path = os.path.join(
+            self.output_dir, "all_fields_manifest_cleaned.json"
+        )
         return {
             "toc": toc,
             "pages": pages_info,
             "errors": self.errors,
             "warnings": self.warnings,
+            "cleaned_manifest_path": cleaned_manifest_path,
         }
 
     def extract_topic_index_columns(self) -> Optional[List[str]]:
