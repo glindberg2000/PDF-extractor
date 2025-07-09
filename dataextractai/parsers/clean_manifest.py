@@ -223,6 +223,7 @@ def clean_manifest(
         cleaned_page = {
             "page_number": entry.get("page_number"),
             "label": entry.get("label"),
+            "Title": entry.get("Title"),
             "extracted_with": entry.get(
                 "extracted_with"
             ),  # Add extraction method provenance
