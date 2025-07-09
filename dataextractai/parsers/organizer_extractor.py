@@ -922,7 +922,7 @@ class OrganizerExtractor:
                 label = config_key
                 label_source = "config_fallback"
             # 4. Use 'Title' for display, but config_key for lookup
-            title_for_manifest = config.get(form_code, {}).get("Title") or label
+            title_for_manifest = config.get(label, {}).get("Title") or label
             # Log which crop was used
             print(
                 f"[INFO] Page {page_number}: Label extracted using {label_source} ({crop_used} crop): {label}"

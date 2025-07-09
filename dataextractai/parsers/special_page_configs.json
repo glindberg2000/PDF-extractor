@@ -728,7 +728,7 @@
                 "left": 0.05,
                 "right": 0.95
             },
-            "prompt_override": "Extract all expenses and their amounts for 2023 and 2022, as well as any other tables, from this region. Return as structured JSON."
+            "prompt_override": "This region contains three sections: (1) Location of Property, (2) Expenses (table with 2023/2022 columns), and (3) Description/Other Expenses (table at the bottom). Extract all structured data from all three zones and return as structured JSON."
         }
     },
     "10B": {
