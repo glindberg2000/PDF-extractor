@@ -922,11 +922,7 @@ class OrganizerExtractor:
                 label = config_key
                 label_source = "config_fallback"
             # 4. Use 'Title' for display, but config_key for lookup
-            title_for_manifest = (
-                config[config_key]["Title"]
-                if config_key and "Title" in config[config_key]
-                else label
-            )
+            title_for_manifest = config.get(form_code, {}).get("Title") or label
             # Log which crop was used
             print(
                 f"[INFO] Page {page_number}: Label extracted using {label_source} ({crop_used} crop): {label}"
@@ -1082,11 +1078,25 @@ class OrganizerExtractor:
                         self.output_dir, f"field_{field}_page_{page_number}.png"
                     )
                     field_crop_img.save(field_crop_img_path)
+                    # Save raw OCR text for debug
                     try:
-                        prompt = (
-                            field_prompt_override
-                            or f"Extract the {field} from this region."
-                        )
+                        import pytesseract
+
+                        ocr_text = pytesseract.image_to_string(field_crop_img)
+                        ocr_txt_path = field_crop_img_path.replace(".png", "_ocr.txt")
+                        with open(ocr_txt_path, "w") as f:
+                            f.write(ocr_text)
+                        print(f"[DEBUG] Saved OCR text to {ocr_txt_path}")
+                    except Exception as e:
+                        print(f"[WARN] Could not save OCR text: {e}")
+                    prompt = (
+                        field_prompt_override
+                        or f"Extract the {field} from this region."
+                    )
+                    print(
+                        f"[DEBUG] Sending PNG to Vision LLM: {field_crop_img_path} with prompt: {prompt}"
+                    )
+                    try:
                         result = extract_structured_data_from_image(
                             field_crop_img_path, prompt
                         )
@@ -1128,22 +1138,35 @@ class OrganizerExtractor:
             raw_text_file = os.path.basename(
                 os.path.join(self.output_dir, f"page_{page_number}.txt")
             )
+            # After label is set, set extraction_method for region-based extraction
+            if label_source == "Form_Label (narrow)":
+                extraction_method = "Regions + Text"
+                print(
+                    f"[DEBUG] Page {page_number}: extraction_method set to 'Regions + Text' due to region-based extraction."
+                )
+            # If extraction_method is still None, set to 'Extraction Method Unknown'
+            if extraction_method is None:
+                extraction_method = "Extraction Method Unknown"
+                print(
+                    f"[DEBUG] Page {page_number}: extraction_method was None, set to 'Extraction Method Unknown'."
+                )
+            # Print extraction_method for debug
+            print(
+                f"[DEBUG] Page {page_number}: extraction_method before manifest append: {extraction_method}"
+            )
             manifest.append(
                 {
                     "page_number": page_number,
                     "label": label,
                     "label_source": label_source,
                     "label_crop_img": crop_img_path,
+                    "Title": title_for_manifest,
                     "extracted_fields": extracted_fields,
                     "pdf_page_file": pdf_page_file,
                     "thumbnail_file": thumbnail_file,
                     "raw_text_file": raw_text_file,
-                    "extracted_with": extraction_method,  # <-- Add this line
+                    "extracted_with": extraction_method,
                 }
-            )
-            # Print extraction_method for debug
-            print(
-                f"[DEBUG] Page {page_number}: extraction_method before manifest append: {extraction_method}"
             )
         # Save manifest
         manifest_path = os.path.join(self.output_dir, "all_fields_manifest.json")

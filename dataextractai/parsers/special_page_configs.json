@@ -175,6 +175,7 @@
         }
     },
     "2": {
+        "Title": "Questions (Page 1 of 5)",
         "Questions": {
             "method": "vision",
             "crop": {
@@ -186,6 +187,7 @@
         }
     },
     "2B": {
+        "Title": "Questions (Page 2 of 5)",
         "Questions": {
             "method": "vision",
             "crop": {
@@ -197,6 +199,7 @@
         }
     },
     "2C": {
+        "Title": "Questions (Page 3 of 5)",
         "Questions": {
             "method": "vision",
             "crop": {
@@ -208,6 +211,7 @@
         }
     },
     "2D": {
+        "Title": "Questions (Page 4 of 5)",
         "Questions": {
             "method": "vision",
             "crop": {
@@ -219,6 +223,7 @@
         }
     },
     "2E": {
+        "Title": "Questions (Page 5 of 5)",
         "Questions": {
             "method": "vision",
             "crop": {
@@ -250,6 +255,7 @@
         }
     },
     "3": {
+        "Title": "Personal Information",
         "Personal_Info_Block": {
             "method": "vision",
             "crop": {
@@ -261,6 +267,7 @@
         }
     },
     "3A": {
+        "Title": "Dependents and Wages",
         "Dependent_Information": {
             "method": "vision",
             "crop": {
@@ -278,9 +285,18 @@
                 "left": 0.0,
                 "right": 1.0
             }
+        },
+        "main_area": {
+            "crop": {
+                "top": 0.12,
+                "bottom": 0.92,
+                "left": 0.05,
+                "right": 0.95
+            }
         }
     },
     "4": {
+        "Title": "Electronic Filing",
         "Fillable_Block": {
             "method": "vision",
             "crop": {
@@ -292,6 +308,7 @@
         }
     },
     "4A": {
+        "Title": "Direct Deposit and Withdrawal",
         "Fillable_Block": {
             "method": "vision",
             "crop": {
@@ -303,6 +320,7 @@
         }
     },
     "5A": {
+        "Title": "Interest Income",
         "Interest_Information": {
             "method": "vision",
             "crop": {
@@ -314,6 +332,7 @@
         }
     },
     "5B": {
+        "Title": "Dividend Income",
         "Ordinary_Dividends": {
             "method": "vision",
             "crop": {
@@ -343,6 +362,7 @@
         }
     },
     "6": {
+        "Title": "Business Income and Cost of Goods Sold",
         "Business_Info": {
             "method": "vision",
             "crop": {
@@ -390,6 +410,7 @@
         }
     },
     "6B": {
+        "Title": "Business Expenses - Vehicle and Other Listed Property",
         "Business_Info": {
             "method": "vision",
             "crop": {
@@ -428,6 +449,7 @@
         }
     },
     "7": {
+        "Title": "Sales of Stocks, Securities, Capital Assets & Installment Sales",
         "Capital_Gains_Sales": {
             "method": "vision",
             "crop": {
@@ -457,6 +479,7 @@
         }
     },
     "11": {
+        "Title": "Partnership, S Corporation, Estate, Trust",
         "Passthrough_Income": {
             "method": "vision",
             "crop": {
@@ -468,6 +491,7 @@
         }
     },
     "13": {
+        "Title": "Miscellaneous Income, Adjustments and Alimony",
         "Misc_Income": {
             "method": "vision",
             "crop": {
@@ -506,6 +530,7 @@
         }
     },
     "13A": {
+        "Title": "Miscellaneous Adjustments",
         "Educator_Expenses": {
             "method": "vision",
             "crop": {
@@ -535,6 +560,7 @@
         }
     },
     "14": {
+        "Title": "Itemized Deductions - Medical and Taxes",
         "Medical_Expenses": {
             "method": "vision",
             "crop": {
@@ -573,6 +599,7 @@
         }
     },
     "14A": {
+        "Title": "Itemized Deductions - Mortgage Interest and Points",
         "Mortgage_Questions": {
             "method": "vision",
             "crop": {
@@ -620,6 +647,7 @@
         }
     },
     "16": {
+        "Title": "Itemized Deductions - Miscellaneous",
         "Misc_Itemized_Deductions": {
             "method": "vision",
             "crop": {
@@ -649,6 +677,7 @@
         }
     },
     "20A": {
+        "Title": "State and City Tax Payments",
         "State_Estimates_Block_1": {
             "method": "vision",
             "crop": {
@@ -674,6 +703,126 @@
                 "bottom": 0.92,
                 "left": 0.0,
                 "right": 1.0
+            }
+        }
+    },
+    "10": {
+        "Title": "Rental and Royalty Income",
+        "main_area": {
+            "method": "vision",
+            "crop": {
+                "top": 0.12,
+                "bottom": 0.92,
+                "left": 0.05,
+                "right": 0.95
+            }
+        }
+    },
+    "10A": {
+        "Title": "Rental and Royalty Expenses",
+        "main_area": {
+            "method": "vision",
+            "crop": {
+                "top": 0.12,
+                "bottom": 0.92,
+                "left": 0.05,
+                "right": 0.95
+            },
+            "prompt_override": "Extract all expenses and their amounts for 2023 and 2022, as well as any other tables, from this region. Return as structured JSON."
+        }
+    },
+    "10B": {
+        "Title": "Rental and Royalty",
+        "main_area": {
+            "method": "vision",
+            "crop": {
+                "top": 0.12,
+                "bottom": 0.92,
+                "left": 0.05,
+                "right": 0.95
+            }
+        }
+    },
+    "15": {
+        "Title": "Itemized Deductions - Contributions",
+        "main_area": {
+            "method": "vision",
+            "crop": {
+                "top": 0.12,
+                "bottom": 0.92,
+                "left": 0.05,
+                "right": 0.95
+            }
+        }
+    },
+    "20": {
+        "Title": "Federal Tax Payments",
+        "main_area": {
+            "method": "vision",
+            "crop": {
+                "top": 0.12,
+                "bottom": 0.92,
+                "left": 0.05,
+                "right": 0.95
+            }
+        }
+    },
+    "32": {
+        "Title": "Foreign Taxes",
+        "main_area": {
+            "method": "vision",
+            "crop": {
+                "top": 0.12,
+                "bottom": 0.92,
+                "left": 0.05,
+                "right": 0.95
+            }
+        }
+    },
+    "6D": {
+        "Title": "Business Use of Home",
+        "main_area": {
+            "method": "vision",
+            "crop": {
+                "top": 0.12,
+                "bottom": 0.92,
+                "left": 0.05,
+                "right": 0.95
+            }
+        }
+    },
+    "9": {
+        "Title": "Individual Retirement Account (IRA) Information",
+        "main_area": {
+            "method": "vision",
+            "crop": {
+                "top": 0.12,
+                "bottom": 0.92,
+                "left": 0.05,
+                "right": 0.95
+            }
+        }
+    },
+    "9A": {
+        "Title": "Pension, Annuity and Retirement Plan Information",
+        "main_area": {
+            "method": "vision",
+            "crop": {
+                "top": 0.12,
+                "bottom": 0.92,
+                "left": 0.05,
+                "right": 0.95
+            }
+        }
+    },
+    "10": {
+        "main_area": {
+            "method": "vision",
+            "crop": {
+                "top": 0.12,
+                "bottom": 0.92,
+                "left": 0.05,
+                "right": 0.95
             }
         }
     }
