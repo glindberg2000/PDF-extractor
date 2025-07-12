@@ -72,9 +72,11 @@ def llm_file_summary(page_summaries, openai_api_key, model):
     import openai
 
     prompt = f"""
-You are a helpful assistant. Given the following list of page summaries from a tax organizer PDF, provide:
-1. A concise, high-level summary of the entire document, including what sections/pages are present, what is missing, and any notable findings.
-2. If possible, list any detected user data or sensitive information.
+You are a professional document summarizer for a tax organizer PDF. Given the following list of page summaries, provide:
+- A concise, actionable summary of the document's purpose and structure (no greetings, no boilerplate, no 'Certainly!').
+- Highlight which pages or sections require user attention, especially those with prefilled or missing data, or that are critical for completion.
+- If possible, mention any detected sensitive or user-specific data.
+- Do NOT include any introductory phrases or unnecessary explanations.
 
 Page summaries:
 {json.dumps(page_summaries, indent=2)}
@@ -264,6 +266,60 @@ def clean_manifest(
         )
         cleaned.append(cleaned_page)
         page_summaries.append(summary)
+
+    # --- Manifest-level Title Extraction ---
+    cover_page = None
+    for page in cleaned:
+        if page.get("page_number") == 1 or (
+            page.get("label") and "cover" in str(page["label"]).lower()
+        ):
+            cover_page = page
+            break
+    manifest_title = None
+    tax_year = None
+    if cover_page:
+        vision_title = cover_page.get("Title") or cover_page["data"].get("Title")
+        raw_text = None
+        raw_text_file = cover_page.get("raw_text_file")
+        if raw_text_file and os.path.exists(
+            os.path.join(os.path.dirname(input_path), raw_text_file)
+        ):
+            with open(
+                os.path.join(os.path.dirname(input_path), raw_text_file), "r"
+            ) as f:
+                raw_text = f.read()
+        if openai_api_key:
+            try:
+                import openai
+
+                prompt = f"""
+Given the following extracted title: '{vision_title}'
+And the following raw page text:
+{raw_text}
+
+Return a JSON object with keys:
+- Title: The definitive title for this tax organizer (e.g., '2023 Tax Organizer for Douglas Gorman & Amelia Petrovich')
+- Tax_Year: The tax year (e.g., 2023)
+If the title is missing or ambiguous, infer it from the raw text.
+"""
+                client = openai.OpenAI(api_key=openai_api_key)
+                response = client.chat.completions.create(
+                    model=openai_model_precise,
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=128,
+                    temperature=0.0,
+                    response_format={"type": "json_object"},
+                )
+                content = response.choices[0].message.content
+                result = json.loads(content)
+                manifest_title = result.get("Title")
+                tax_year = result.get("Tax_Year")
+            except Exception as e:
+                print(f"[LLM ERROR] Manifest-level title extraction failed: {e}")
+        if not manifest_title and vision_title:
+            manifest_title = vision_title
+    # --- End Manifest-level Title Extraction ---
+
     # Compute file hash if pdf_path is provided
     file_hash = compute_file_hash(pdf_path) if pdf_path else None
     # Generate whole file summary using best available LLM
@@ -275,7 +331,16 @@ def clean_manifest(
             )
         except Exception as e:
             print(f"[LLM ERROR] File-level summary failed: {e}")
-    output = {"file_hash": file_hash, "file_summary": file_summary, "pages": cleaned}
+    # Add original PDF file name/path to output
+    original_pdf = os.path.abspath(pdf_path) if pdf_path else None
+    output = {
+        "file_hash": file_hash,
+        "original_pdf": original_pdf,
+        "file_summary": file_summary,
+        "Title": manifest_title,
+        "Tax_Year": tax_year,
+        "pages": cleaned,
+    }
     try:
         with open(output_path, "w") as f:
             json.dump(output, f, indent=2)
