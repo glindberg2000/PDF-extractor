@@ -74,9 +74,13 @@ def llm_file_summary(page_summaries, openai_api_key, model):
     prompt = f"""
 You are a professional document summarizer for a tax organizer PDF. Given the following list of page summaries, provide:
 - A concise, actionable summary of the document's purpose and structure (no greetings, no boilerplate, no 'Certainly!').
-- Highlight which pages or sections require user attention, especially those with prefilled or missing data, or that are critical for completion.
-- If possible, mention any detected sensitive or user-specific data.
+- Focus on pages/sections that require user attention, especially:
+  - Pages with prefilled numeric data (note: these are from the previous year and are for reference only; the user must supply current year values).
+  - Pages with prefilled company or taxpayer info that should be verified or updated.
+  - All questionnaire pages (these must be reviewed and answered).
+- Exclude generic statements about the presence of cover or signature pages unless they contain user data or require action.
 - Do NOT include any introductory phrases or unnecessary explanations.
+- Make the summary as actionable and concise as possible for the end user.
 
 Page summaries:
 {json.dumps(page_summaries, indent=2)}
@@ -332,7 +336,7 @@ If the title is missing or ambiguous, infer it from the raw text.
         except Exception as e:
             print(f"[LLM ERROR] File-level summary failed: {e}")
     # Add original PDF file name/path to output
-    original_pdf = os.path.abspath(pdf_path) if pdf_path else None
+    original_pdf = os.path.basename(pdf_path) if pdf_path else None
     output = {
         "file_hash": file_hash,
         "original_pdf": original_pdf,
