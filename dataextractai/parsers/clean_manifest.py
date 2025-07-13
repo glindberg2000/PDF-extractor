@@ -48,7 +48,8 @@ def llm_summarize(page, openai_api_key, model):
 You are a professional document summarizer for a tax organizer PDF. Given the following page data, provide:
 - A concise, actionable summary of the page's content (no greetings, no boilerplate, no 'Certainly!').
 - Explicitly state if any non-empty numeric or string value (including prior-year amounts) is present, unless it is a generic placeholder or in the exclusion list. If any such value is present, set has_user_data to true.
-- Return a JSON object with keys: summary (string), has_user_data (bool).
+- Assign a \"priority\" field (string: \"high\", \"medium\", or \"low\") to indicate how urgent or important it is for the user to review or act on this page. Use your best judgment based on the content.
+- Return a JSON object with keys: summary (string), has_user_data (bool), priority (string).
 
 Page data:
 {page}
@@ -64,9 +65,13 @@ Page data:
         )
         content = response.choices[0].message.content
         result = json.loads(content)
-        return result.get("summary", ""), result.get("has_user_data", False)
+        return (
+            result.get("summary", ""),
+            result.get("has_user_data", False),
+            result.get("priority", "medium"),
+        )
     except Exception as e:
-        return None, None
+        return None, None, "medium"
 
 
 def llm_file_summary(page_summaries, openai_api_key, model):
@@ -187,7 +192,8 @@ def clean_manifest(
                     "raw_text_file": str,
                     "data": dict,
                     "summary": str,
-                    "user_data_detected": bool
+                    "has_user_data": bool,
+                    "priority": str  # 'high', 'medium', or 'low'
                 },
                 ...
             ]
@@ -239,10 +245,10 @@ def clean_manifest(
             "raw_text_file": entry.get("raw_text_file"),
             "data": data,
         }
-        summary, has_user_data = None, None
+        summary, has_user_data, priority = None, None, "medium"
         if openai_api_key:
             try:
-                summary, has_user_data = llm_summarize(
+                summary, has_user_data, priority = llm_summarize(
                     cleaned_page, openai_api_key, openai_model_fast
                 )
             except Exception as e:
@@ -265,10 +271,12 @@ def clean_manifest(
                 print(f"[ERROR] Rule-based summary failed: {e}")
                 summary = "Summary unavailable."
                 has_user_data = False
+            priority = "medium"
         cleaned_page["summary"] = summary
         cleaned_page["has_user_data"] = (
             has_user_data if has_user_data is not None else False
         )
+        cleaned_page["priority"] = priority
         cleaned.append(cleaned_page)
         page_summaries.append(summary)
 
