@@ -26,7 +26,8 @@
                 "left": 0.55,
                 "right": 1.0
             }
-        }
+        },
+        "include_raw_text": false
     },
     "6A": {
         "Title": "Business Expenses and Property & Equipment",
@@ -78,7 +79,8 @@
                 "left": 0.0,
                 "right": 1.0
             },
-            "prompt_override": "Extract all fields/regions from this tax organizer cover page. Use the provided raw PDF text as context if helpful. Return a JSON object with all detected fields and values."
+            "prompt_override": "Extract all fields/regions from this tax organizer cover page. Use the provided raw PDF text as context if helpful. Return a JSON object with all detected fields and values.",
+            "include_raw_text": true
         }
     },
     "Signature_Page": {
@@ -110,7 +112,8 @@
                 "left": 0.0,
                 "right": 1.0
             },
-            "prompt_override": "Extract all signature and taxpayer information from this page. Use the provided raw PDF text as context if helpful. Return a JSON object with all detected fields and values."
+            "prompt_override": "Extract all signature and taxpayer information from this page. Use the provided raw PDF text as context if helpful. Return a JSON object with all detected fields and values.",
+            "include_raw_text": true
         }
     },
     "CA_Page_1": {
@@ -141,7 +144,8 @@
                 "bottom": 0.5,
                 "left": 0.0,
                 "right": 1.0
-            }
+            },
+            "include_raw_text": true
         }
     },
     "CA_Page_2": {
@@ -172,7 +176,8 @@
                 "bottom": 0.5,
                 "left": 0.0,
                 "right": 1.0
-            }
+            },
+            "include_raw_text": true
         }
     },
     "2": {
@@ -238,16 +243,18 @@
     "1": {
         "prompt_override": "Extract all {description, value} pairs from BOTH columns of this split-column tax organizer form. Return as a single list of objects with keys 'description' and 'value'.",
         "unique_search_key": "Form 1",
-        "Main_Fields": {
+        "col1": {
             "method": "vision",
-            "split_column": true,
-            "crop_left": {
+            "crop": {
                 "top": 0.08,
                 "bottom": 0.95,
                 "left": 0.0,
                 "right": 0.5
-            },
-            "crop_right": {
+            }
+        },
+        "col2": {
+            "method": "vision",
+            "crop": {
                 "top": 0.08,
                 "bottom": 0.95,
                 "left": 0.5,
