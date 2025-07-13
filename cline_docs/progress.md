@@ -153,3 +153,4 @@
 - All context/statement-level info goes in StatementMetadata; use `extra` for parser/bank-specific fields
 - **Schema enforcement:** A dedicated test/validation script must be created to enforce this contract
 - **PRIORITY:** Migration to this contract is now the top priority for all parser and ingestion work 
+- [2024-07-13] Added LLM-based `priority` field to manifest page entries. All downstream consumers should update ingestion logic to handle this field. 

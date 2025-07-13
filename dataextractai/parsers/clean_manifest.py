@@ -186,14 +186,15 @@ def clean_manifest(
                 {
                     "page_number": int,
                     "label": str,
-                    "extracted_with": str,  # Provenance of extraction method
+                    "Title": str,
+                    "extracted_with": str,
                     "pdf_page_file": str,
                     "thumbnail_file": str,
                     "raw_text_file": str,
                     "data": dict,
                     "summary": str,
                     "has_user_data": bool,
-                    "priority": str  # 'high', 'medium', or 'low'
+                    "priority": str  # 'high', 'medium', or 'low' (assigned by LLM)
                 },
                 ...
             ]

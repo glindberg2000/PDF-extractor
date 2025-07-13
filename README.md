@@ -608,10 +608,51 @@ python3 -m dataextractai.parsers.organizer_extractor --pdf_path <input.pdf> --ou
   - `all_fields_manifest_cleaned.json`: Cleaned, canonical manifest for upstream use (always produced automatically)
   - Other intermediate/debug files (e.g., per-page PNGs, OCR text, LLM responses, logs)
 
-### Manifest Schema
-- The cleaned manifest (`all_fields_manifest_cleaned.json`) is the canonical output for ingestion.
-- The raw manifest (`all_fields_manifest.json`) is for debugging and post-processing.
-- The `main_area` field is config-driven and may be nested; upstream consumers may need to flatten or post-process as needed.
+### Manifest Schema (Updated)
+
+Each page entry in the cleaned manifest (`all_fields_manifest_cleaned.json`) now includes:
+
+```json
+{
+  "page_number": int,
+  "label": str,
+  "Title": str,
+  "extracted_with": str,
+  "pdf_page_file": str,
+  "thumbnail_file": str,
+  "raw_text_file": str,
+  "data": dict,
+  "summary": str,
+  "has_user_data": bool,
+  "priority": "high" | "medium" | "low"
+}
+```
+
+- **priority**: Assigned by the LLM, indicates the urgency or importance for user review/action.
+
+### Sample Output
+
+```json
+{
+  "page_number": 1,
+  "label": "Cover_Sheet",
+  "Title": "Mail/Presentation Sheet - to taxpayer",
+  "extracted_with": "Text Only",
+  "pdf_page_file": "page_1.pdf",
+  "thumbnail_file": "page_1.png",
+  "raw_text_file": "page_1.txt",
+  "data": { ... },
+  "summary": "Cover sheet for the 2023 tax organizer from Burgess & Company CPAs, Inc. ...",
+  "has_user_data": true,
+  "priority": "medium"
+}
+```
+
+### Upstream Integration Notes
+
+- The `priority` field is now present in every page entry of the cleaned manifest.
+- Upstream consumers should ingest this field and use it for sorting, filtering, or highlighting pages/items that require urgent user attention.
+- If the field is missing (for legacy manifests), default to `"medium"`.
 
 ### Logging and Status
 - All progress and errors are logged to `organizer_pipeline.log` in the output directory.
