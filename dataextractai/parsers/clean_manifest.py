@@ -42,15 +42,16 @@ def detect_user_data(fields, exclude_terms=None, include_terms=None):
 
 def llm_summarize(page, openai_api_key, model):
     import openai
+    import json
 
     prompt = f"""
-You are a helpful assistant. Given the following extracted data from a tax organizer PDF page, provide:
-1. A one-sentence summary of what this page contains (e.g., 'Signature page with taxpayer and preparer info, no user data detected').
-2. Whether the page contains any user-specific or prefilled data (names, addresses, SSNs, etc). Respond as JSON with keys: summary, has_user_data.
+You are a professional document summarizer for a tax organizer PDF. Given the following page data, provide:
+- A concise, actionable summary of the page's content (no greetings, no boilerplate, no 'Certainly!').
+- Explicitly state if any non-empty numeric or string value (including prior-year amounts) is present, unless it is a generic placeholder or in the exclusion list. If any such value is present, set has_user_data to true.
+- Return a JSON object with keys: summary (string), has_user_data (bool).
 
-Page number: {page['page_number']}
-Label: {page.get('label')}
-Data: {json.dumps(page.get('data', {}))}
+Page data:
+{page}
 """
     try:
         client = openai.OpenAI(api_key=openai_api_key)
