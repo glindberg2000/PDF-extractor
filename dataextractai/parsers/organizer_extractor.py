@@ -881,7 +881,16 @@ class OrganizerExtractor:
                     result = extract_structured_data_from_image(
                         wide_crop_img_path, "Extract the Form_Label from this region."
                     )
-                    label = result.get("Form_Label") or str(result)
+                    # PATCH: Use Wide_Form_Label if present, else Form_Label, else fallback
+                    if isinstance(result, dict):
+                        if result.get("Wide_Form_Label"):
+                            label = result["Wide_Form_Label"]
+                        elif result.get("Form_Label"):
+                            label = result["Form_Label"]
+                        else:
+                            label = str(result)
+                    else:
+                        label = str(result)
                     if label and label.strip():
                         label_source = "Wide_Form_Label (wide)"
                         crop_used = "Wide_Form_Label"
@@ -943,13 +952,19 @@ class OrganizerExtractor:
                 label = config_key
                 label_source = "config_fallback"
             # 4. Use 'Title' for display, but config_key for lookup
-            title_for_manifest = config.get(label, {}).get("Title") or label
+            # PATCH: For special pages (config_key set), use config_key and its Title for manifest
+            if config_key:
+                manifest_label = config_key
+                manifest_title = config.get(config_key, {}).get("Title") or config_key
+            else:
+                manifest_label = label
+                manifest_title = config.get(label, {}).get("Title") or label
             # Log which crop was used
             print(
                 f"[INFO] Page {page_number}: Label extracted using {label_source} ({crop_used} crop): {label}"
             )
             print(
-                f"[DEBUG] Page {page_number}: config_key={config_key}, form_code={label if label and label in config else config_key}, title_for_manifest={title_for_manifest}"
+                f"[DEBUG] Page {page_number}: config_key={config_key}, form_code={manifest_label}, manifest_title={manifest_title}"
             )
             # Determine form_code: prefer label if in config, else use config_key, else default
             form_code = None
@@ -1110,12 +1125,46 @@ class OrganizerExtractor:
                         print(f"[DEBUG] Saved OCR text to {ocr_txt_path}")
                     except Exception as e:
                         print(f"[WARN] Could not save OCR text: {e}")
-                    prompt = (
-                        field_prompt_override
-                        or f"Extract the {field} from this region."
-                    )
+                    # Determine if raw text should be included in the prompt
+                    # Priority: field > page > default
+                    include_raw_text = False
+                    if (
+                        isinstance(field_info, dict)
+                        and "include_raw_text" in field_info
+                    ):
+                        include_raw_text = field_info["include_raw_text"]
+                    elif "include_raw_text" in page_config:
+                        include_raw_text = page_config["include_raw_text"]
+                    elif "include_raw_text" in default_fields:
+                        include_raw_text = default_fields["include_raw_text"]
+                    # Build the prompt
+                    prompt = None
+                    if field_prompt_override:
+                        if "{raw_text}" in field_prompt_override:
+                            prompt = field_prompt_override.replace(
+                                "{raw_text}", raw_text
+                            )
+                        elif include_raw_text:
+                            prompt = (
+                                field_prompt_override.strip().rstrip(".")
+                                + " Use the following raw PDF text as additional context if helpful:\n\n"
+                                + raw_text
+                                + "\nReturn a JSON object with all detected fields and values."
+                            )
+                        else:
+                            prompt = field_prompt_override
+                    else:
+                        if include_raw_text:
+                            prompt = (
+                                f"Extract all structured data, tables, and user-entered fields from this region of a tax organizer page. "
+                                f"Use the following raw PDF text as additional context if helpful:\n\n"
+                                + raw_text
+                                + "\nReturn a JSON object with all detected fields and values."
+                            )
+                        else:
+                            prompt = f"Extract all structured data, tables, and user-entered fields from this region of a tax organizer page. Return a JSON object with all detected fields and values."
                     print(
-                        f"[DEBUG] Sending PNG to Vision LLM: {field_crop_img_path} with prompt: {prompt}"
+                        f"[DEBUG] Sending PNG to Vision LLM: {field_crop_img_path} with prompt: {prompt[:200]}{'...' if len(prompt) > 200 else ''}"
                     )
                     try:
                         result = extract_structured_data_from_image(
@@ -1185,10 +1234,10 @@ class OrganizerExtractor:
             manifest.append(
                 {
                     "page_number": page_number,
-                    "label": label,
+                    "label": manifest_label,
                     "label_source": label_source,
                     "label_crop_img": crop_img_path,
-                    "Title": title_for_manifest,
+                    "Title": manifest_title,
                     "extracted_fields": extracted_fields,
                     "pdf_page_file": pdf_page_file,
                     "thumbnail_file": thumbnail_file,
